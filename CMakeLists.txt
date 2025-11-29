@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(ARBORVIA_ENABLE_SVG_EXPORT "Enable SVG export module" ON)
 option(ARBORVIA_BUILD_TESTS "Build tests" ON)
+option(ARBORVIA_BUILD_EXAMPLES "Build examples" ON)
 
 # Include module definitions
 include(cmake/ArborviaCore.cmake)
@@ -61,6 +62,12 @@ if(ARBORVIA_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(arborvia_tests)
+endif()
+
+# Examples
+if(ARBORVIA_BUILD_EXAMPLES)
+    add_executable(visual_test examples/visual_test.cpp)
+    target_link_libraries(visual_test PRIVATE arborvia)
 endif()
 
 # Install
