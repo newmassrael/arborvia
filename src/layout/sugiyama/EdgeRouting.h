@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <map>
 
 namespace arborvia {
 namespace algorithms {
@@ -23,6 +24,11 @@ public:
                 const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
                 const std::unordered_set<EdgeId>& reversedEdges,
                 const LayoutOptions& options);
+    
+    /// Distribute snap points evenly for edges connecting to same node edge (Auto mode)
+    static void distributeAutoSnapPoints(
+        Result& result,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
 private:
     // Orthogonal edge routing (right-angle bends)

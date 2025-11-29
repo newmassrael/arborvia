@@ -68,6 +68,11 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
     // Phase 5: Edge Routing
     routeEdges();
     
+    // Apply manual layout state if in manual mode
+    if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
+        manualManager_->applyManualState(state_->result, graph);
+    }
+    
     return state_->result;
 }
 
@@ -115,6 +120,11 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
         minimizeCrossings();
         assignCoordinates();
         routeEdges();
+    }
+    
+    // Apply manual layout state if in manual mode
+    if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
+        manualManager_->applyManualState(state_->result, graph);
     }
     
     return state_->result;
@@ -228,6 +238,11 @@ void SugiyamaLayout::routeEdges() {
                                state_->result.nodeLayouts(),
                                state_->reversedEdges,
                                options_);
+    
+    // Apply auto snap point distribution if enabled
+    if (options_.autoSnapPoints && options_.mode == LayoutMode::Auto) {
+        algorithms::EdgeRouting::distributeAutoSnapPoints(result, state_->result.nodeLayouts());
+    }
     
     for (auto& [id, layout] : result.edgeLayouts) {
         state_->result.setEdgeLayout(id, layout);

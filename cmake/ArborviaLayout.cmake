@@ -4,6 +4,7 @@
 set(ARBORVIA_LAYOUT_SOURCES
     src/layout/LayoutResult.cpp
     src/layout/SugiyamaLayout.cpp
+    src/layout/ManualLayoutManager.cpp
     src/layout/sugiyama/CycleRemoval.cpp
     src/layout/sugiyama/LayerAssignment.cpp
     src/layout/sugiyama/CrossingMinimization.cpp
@@ -16,4 +17,6 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/LayoutResult.h
     include/arborvia/layout/ILayout.h
     include/arborvia/layout/SugiyamaLayout.h
+    include/arborvia/layout/ManualLayout.h
+    include/arborvia/layout/ManualLayoutManager.h
 )

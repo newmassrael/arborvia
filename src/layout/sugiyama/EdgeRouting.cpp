@@ -1,4 +1,5 @@
 #include "EdgeRouting.h"
+#include "arborvia/layout/ManualLayout.h"
 
 #include <cmath>
 
@@ -65,10 +66,14 @@ EdgeLayout EdgeRouting::routeOrthogonal(
             // From is above To
             layout.sourcePoint = {fromCenter.x, fromLayout.position.y + fromLayout.size.height};
             layout.targetPoint = {toCenter.x, toLayout.position.y};
+            layout.sourceEdge = NodeEdge::Bottom;
+            layout.targetEdge = NodeEdge::Top;
         } else {
             // From is below To
             layout.sourcePoint = {fromCenter.x, fromLayout.position.y};
             layout.targetPoint = {toCenter.x, toLayout.position.y + toLayout.size.height};
+            layout.sourceEdge = NodeEdge::Top;
+            layout.targetEdge = NodeEdge::Bottom;
         }
         
         // Add bend points for orthogonal routing
@@ -84,10 +89,14 @@ EdgeLayout EdgeRouting::routeOrthogonal(
             // From is left of To
             layout.sourcePoint = {fromLayout.position.x + fromLayout.size.width, fromCenter.y};
             layout.targetPoint = {toLayout.position.x, toCenter.y};
+            layout.sourceEdge = NodeEdge::Right;
+            layout.targetEdge = NodeEdge::Left;
         } else {
             // From is right of To
             layout.sourcePoint = {fromLayout.position.x, fromCenter.y};
             layout.targetPoint = {toLayout.position.x + toLayout.size.width, toCenter.y};
+            layout.sourceEdge = NodeEdge::Left;
+            layout.targetEdge = NodeEdge::Right;
         }
         
         // Add bend points for orthogonal routing
@@ -180,6 +189,91 @@ Point EdgeRouting::computeSnapPoint(
     }
     
     return center;
+}
+
+void EdgeRouting::distributeAutoSnapPoints(
+    Result& result,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    
+    // Group edges by (nodeId, nodeEdge) for sources and targets
+    // Key: (nodeId, nodeEdge, isSource)
+    std::map<std::tuple<NodeId, NodeEdge, bool>, std::vector<EdgeId>> edgeGroups;
+    
+    for (auto& [edgeId, layout] : result.edgeLayouts) {
+        // Group by source node edge
+        edgeGroups[{layout.from, layout.sourceEdge, true}].push_back(edgeId);
+        // Group by target node edge
+        edgeGroups[{layout.to, layout.targetEdge, false}].push_back(edgeId);
+    }
+    
+    // For each group, distribute snap points evenly
+    for (auto& [key, edges] : edgeGroups) {
+        auto [nodeId, nodeEdge, isSource] = key;
+        
+        auto nodeIt = nodeLayouts.find(nodeId);
+        if (nodeIt == nodeLayouts.end()) continue;
+        
+        const NodeLayout& node = nodeIt->second;
+        int count = static_cast<int>(edges.size());
+        
+        // Assign snap indices to edges in this group
+        for (int i = 0; i < count; ++i) {
+            EdgeId edgeId = edges[i];
+            EdgeLayout& layout = result.edgeLayouts[edgeId];
+            
+            // Calculate position along the edge (evenly distributed)
+            float position = static_cast<float>(i + 1) / static_cast<float>(count + 1);
+            
+            Point snapPoint;
+            switch (nodeEdge) {
+                case NodeEdge::Top:
+                    snapPoint = {
+                        node.position.x + node.size.width * position,
+                        node.position.y
+                    };
+                    break;
+                case NodeEdge::Bottom:
+                    snapPoint = {
+                        node.position.x + node.size.width * position,
+                        node.position.y + node.size.height
+                    };
+                    break;
+                case NodeEdge::Left:
+                    snapPoint = {
+                        node.position.x,
+                        node.position.y + node.size.height * position
+                    };
+                    break;
+                case NodeEdge::Right:
+                    snapPoint = {
+                        node.position.x + node.size.width,
+                        node.position.y + node.size.height * position
+                    };
+                    break;
+            }
+            
+            if (isSource) {
+                layout.sourcePoint = snapPoint;
+                layout.sourceSnapIndex = i;
+            } else {
+                layout.targetPoint = snapPoint;
+                layout.targetSnapIndex = i;
+            }
+        }
+    }
+    
+    // Recalculate bend points after snap point redistribution
+    for (auto& [edgeId, layout] : result.edgeLayouts) {
+        layout.bendPoints.clear();
+        
+        // Simple orthogonal bend
+        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
+            std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
+            float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
+            layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
+            layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+        }
+    }
 }
 
 }  // namespace algorithms
