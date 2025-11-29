@@ -1,0 +1,158 @@
+#include "CoordinateAssignment.h"
+
+#include <algorithm>
+
+namespace arborvia {
+namespace algorithms {
+
+CoordinateAssignment::Result CoordinateAssignment::assign(
+    const Graph& graph,
+    const std::vector<std::vector<NodeId>>& layers,
+    const LayoutOptions& options) {
+    
+    // Build default node sizes
+    std::unordered_map<NodeId, Size> nodeSizes;
+    for (const auto& layer : layers) {
+        for (NodeId node : layer) {
+            if (graph.hasNode(node)) {
+                nodeSizes[node] = graph.getNode(node).size;
+            } else {
+                nodeSizes[node] = options.defaultNodeSize;
+            }
+        }
+    }
+    
+    return assignWithSizes(graph, layers, nodeSizes, options);
+}
+
+CoordinateAssignment::Result CoordinateAssignment::assignWithSizes(
+    const Graph& graph,
+    const std::vector<std::vector<NodeId>>& layers,
+    const std::unordered_map<NodeId, Size>& nodeSizes,
+    const LayoutOptions& options) {
+    
+    Result result;
+    
+    if (layers.empty()) {
+        return result;
+    }
+    
+    simpleAssignment(graph, layers, nodeSizes, options, result);
+    
+    return result;
+}
+
+void CoordinateAssignment::simpleAssignment(
+    [[maybe_unused]] const Graph& graph,
+    const std::vector<std::vector<NodeId>>& layers,
+    const std::unordered_map<NodeId, Size>& nodeSizes,
+    const LayoutOptions& options,
+    Result& result) {
+    
+    // Compute positions based on direction
+    bool horizontal = (options.direction == Direction::LeftToRight || 
+                      options.direction == Direction::RightToLeft);
+    
+    float currentLayerPos = 0.0f;
+    
+    for (size_t layerIdx = 0; layerIdx < layers.size(); ++layerIdx) {
+        const auto& layer = layers[layerIdx];
+        
+        // Calculate layer height (max node height in layer)
+        float layerHeight = 0.0f;
+        float totalWidth = 0.0f;
+        
+        for (NodeId node : layer) {
+            auto it = nodeSizes.find(node);
+            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize;
+            
+            if (horizontal) {
+                layerHeight = std::max(layerHeight, size.width);
+                totalWidth += size.height;
+            } else {
+                layerHeight = std::max(layerHeight, size.height);
+                totalWidth += size.width;
+            }
+        }
+        
+        // Add spacing between nodes
+        if (!layer.empty()) {
+            totalWidth += options.nodeSpacingHorizontal * (layer.size() - 1);
+        }
+        
+        // Assign positions within layer
+        float currentNodePos = 0.0f;
+        
+        // Center alignment: offset by half of remaining space
+        // For simplicity, start at 0
+        
+        for (NodeId node : layer) {
+            auto it = nodeSizes.find(node);
+            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize;
+            
+            Point pos;
+            if (horizontal) {
+                pos.x = currentLayerPos;
+                pos.y = currentNodePos;
+                currentNodePos += size.height + options.nodeSpacingHorizontal;
+            } else {
+                pos.x = currentNodePos;
+                pos.y = currentLayerPos;
+                currentNodePos += size.width + options.nodeSpacingHorizontal;
+            }
+            
+            // Handle different directions
+            switch (options.direction) {
+                case Direction::BottomToTop:
+                    pos.y = -pos.y - (horizontal ? size.width : size.height);
+                    break;
+                case Direction::RightToLeft:
+                    pos.x = -pos.x - (horizontal ? size.height : size.width);
+                    break;
+                default:
+                    break;
+            }
+            
+            result.positions[node] = pos;
+        }
+        
+        // Move to next layer
+        currentLayerPos += layerHeight + options.nodeSpacingVertical;
+    }
+}
+
+void CoordinateAssignment::brandesKopfAssignment(
+    const Graph& graph,
+    const std::vector<std::vector<NodeId>>& layers,
+    const std::unordered_map<NodeId, Size>& nodeSizes,
+    const LayoutOptions& options,
+    Result& result) {
+    
+    // Brandes-Köpf is more complex - fall back to simple for MVP
+    simpleAssignment(graph, layers, nodeSizes, options, result);
+}
+
+float CoordinateAssignment::computeLayerY(
+    int layer,
+    const std::vector<std::vector<NodeId>>& layers,
+    const std::unordered_map<NodeId, Size>& nodeSizes,
+    const LayoutOptions& options) {
+    
+    float y = 0.0f;
+    
+    for (int i = 0; i < layer; ++i) {
+        // Find max height in this layer
+        float maxHeight = 0.0f;
+        for (NodeId node : layers[i]) {
+            auto it = nodeSizes.find(node);
+            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize;
+            maxHeight = std::max(maxHeight, size.height);
+        }
+        y += maxHeight + options.nodeSpacingVertical;
+    }
+    
+    return y;
+}
+
+}  // namespace algorithms
+}  // namespace arborvia
