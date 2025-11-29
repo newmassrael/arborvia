@@ -39,3 +39,27 @@
 
 # debug information files
 *.dwo
+
+# Build directories
+build/
+cmake-build-*/
+
+# CMake
+CMakeUserPresets.json
+compile_commands.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Cache
+.cache/
+
+# MCP servers
+.serena/
+
+# OS
+.DS_Store
+Thumbs.db
