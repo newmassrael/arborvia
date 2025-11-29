@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/Types.h"
+#include "ManualLayout.h"
 
 namespace arborvia {
 
@@ -67,6 +68,15 @@ struct LayoutOptions {
     // Default node size when not specified
     Size defaultNodeSize = {100.0f, 50.0f};
     
+    // Layout mode (Auto or Manual)
+    LayoutMode mode = LayoutMode::Auto;
+    
+    // Auto mode: dynamically generate snap points based on connection count
+    bool autoSnapPoints = true;
+    
+    // Default snap point count per edge (used in auto mode)
+    int defaultSnapPointCount = 2;
+    
     // Builder pattern for convenient configuration
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
     LayoutOptions& setNodeSpacing(float h, float v) { 
@@ -80,6 +90,9 @@ struct LayoutOptions {
         crossingMinimization = c; 
         return *this; 
     }
+    LayoutOptions& setLayoutMode(LayoutMode m) { mode = m; return *this; }
+    LayoutOptions& setAutoSnapPoints(bool enabled) { autoSnapPoints = enabled; return *this; }
+    LayoutOptions& setDefaultSnapPointCount(int count) { defaultSnapPointCount = count; return *this; }
 };
 
 }  // namespace arborvia

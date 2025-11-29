@@ -4,6 +4,7 @@
 #include "ILayout.h"
 #include "LayoutOptions.h"
 #include "LayoutResult.h"
+#include "ManualLayoutManager.h"
 
 #include <memory>
 #include <vector>
@@ -43,6 +44,10 @@ public:
     void setOptions(const LayoutOptions& options) override;
     const LayoutOptions& options() const override { return options_; }
 
+    /// Set manual layout manager for Auto/Manual mode support
+    void setManualLayoutManager(ManualLayoutManager* manager) { manualManager_ = manager; }
+    ManualLayoutManager* manualLayoutManager() const { return manualManager_; }
+
     /// Perform layout on a simple graph
     LayoutResult layout(const Graph& graph) override;
 
@@ -70,6 +75,7 @@ public:
 private:
     LayoutOptions options_;
     LayoutStats stats_;
+    ManualLayoutManager* manualManager_ = nullptr;
 
     // Incremental layout caching
     uint64_t cachedVersion_ = 0;

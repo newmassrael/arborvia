@@ -57,6 +57,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/core/GraphTest.cpp
         tests/core/CompoundGraphTest.cpp
         tests/layout/SugiyamaLayoutTest.cpp
+        tests/layout/ManualLayoutTest.cpp
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)
 
@@ -64,10 +65,64 @@ if(ARBORVIA_BUILD_TESTS)
     gtest_discover_tests(arborvia_tests)
 endif()
 
-# Examples
+# Examples (includes interactive demo with SDL3 + ImGui)
 if(ARBORVIA_BUILD_EXAMPLES)
+    set(EXAMPLES_OUTPUT_DIR ${CMAKE_BINARY_DIR}/examples)
+
+    # Simple examples
     add_executable(visual_test examples/visual_test.cpp)
     target_link_libraries(visual_test PRIVATE arborvia)
+    set_target_properties(visual_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
+
+    add_executable(drag_test examples/drag_test.cpp)
+    target_link_libraries(drag_test PRIVATE arborvia)
+    set_target_properties(drag_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
+
+    # Fetch SDL3
+    FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.2.0
+        GIT_SHALLOW TRUE
+    )
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(SDL3)
+
+    # Fetch ImGui
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.91.6
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(imgui)
+
+    # ImGui library
+    add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp
+    )
+    target_include_directories(imgui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
+
+    # Interactive demo
+    add_executable(interactive_demo examples/interactive/main.cpp)
+    target_link_libraries(interactive_demo PRIVATE arborvia imgui SDL3::SDL3-static)
+    set_target_properties(interactive_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(interactive_demo PRIVATE -Wall -Wextra)
+    endif()
 endif()
 
 # Install

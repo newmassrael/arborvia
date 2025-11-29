@@ -1,0 +1,71 @@
+#pragma once
+
+#include "ManualLayout.h"
+#include "LayoutResult.h"
+#include "../core/Graph.h"
+#include <string>
+
+namespace arborvia {
+
+/// Manages manual layout state for Auto/Manual mode switching
+class ManualLayoutManager {
+public:
+    ManualLayoutManager() = default;
+
+    // Mode management
+    LayoutMode getMode() const { return mode_; }
+    void setMode(LayoutMode mode) { mode_ = mode; }
+
+    // Manual state access
+    ManualLayoutState& getManualState() { return manualState_; }
+    const ManualLayoutState& getManualState() const { return manualState_; }
+
+    // Node position management
+    void setNodePosition(NodeId id, const Point& position);
+    Point getNodePosition(NodeId id) const;
+    bool hasNodePosition(NodeId id) const;
+
+    // Snap point configuration
+    void setSnapPointCount(NodeId id, NodeEdge edge, int count);
+    int getSnapPointCount(NodeId id, NodeEdge edge) const;
+    void setSnapConfig(NodeId id, const SnapPointConfig& config);
+    SnapPointConfig getSnapConfig(NodeId id) const;
+
+    // Edge routing configuration
+    void setEdgeRouting(EdgeId id, const EdgeRoutingConfig& config);
+    void setEdgeSourceEdge(EdgeId id, NodeEdge edge, int snapIndex = 0);
+    void setEdgeTargetEdge(EdgeId id, NodeEdge edge, int snapIndex = 0);
+    EdgeRoutingConfig getEdgeRouting(EdgeId id) const;
+    bool hasEdgeRouting(EdgeId id) const;
+
+    // Apply manual state to layout result
+    void applyManualState(LayoutResult& result, const Graph& graph) const;
+
+    // Capture current layout as manual state
+    void captureFromResult(const LayoutResult& result);
+
+    // Snap point calculation
+    static Point calculateSnapPoint(
+        const NodeLayout& node,
+        NodeEdge edge,
+        int snapIndex,
+        int totalSnapPoints);
+
+    // JSON serialization
+    std::string toJson() const;
+    bool fromJson(const std::string& json);
+    bool saveToFile(const std::string& path) const;
+    bool loadFromFile(const std::string& path);
+
+    // Clear manual state
+    void clearManualState();
+
+private:
+    LayoutMode mode_ = LayoutMode::Auto;
+    ManualLayoutState manualState_;
+
+    // Helper: get default snap config
+    static SnapPointConfig defaultSnapConfig();
+};
+
+}  // namespace arborvia

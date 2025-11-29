@@ -32,6 +32,8 @@
 #include "layout/LayoutResult.h"
 #include "layout/ILayout.h"
 #include "layout/SugiyamaLayout.h"
+#include "layout/ManualLayout.h"
+#include "layout/ManualLayoutManager.h"
 
 // Export module - Output formats
 #include "export/IExporter.h"

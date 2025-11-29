@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/Types.h"
+#include "ManualLayout.h"
 
 #include <optional>
 #include <sstream>
@@ -41,6 +42,12 @@ struct EdgeLayout {
     Point sourcePoint;        // Connection point on source node
     Point targetPoint;        // Connection point on target node
     std::vector<BendPoint> bendPoints;  // Intermediate points
+    
+    // Edge routing information (which node edge is used)
+    NodeEdge sourceEdge = NodeEdge::Bottom;  // Which edge of source node
+    NodeEdge targetEdge = NodeEdge::Top;     // Which edge of target node
+    int sourceSnapIndex = 0;                  // Which snap point on source edge
+    int targetSnapIndex = 0;                  // Which snap point on target edge
     
     /// Get all points in order (source -> bends -> target)
     std::vector<Point> allPoints() const {
