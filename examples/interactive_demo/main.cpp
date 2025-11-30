@@ -11,7 +11,6 @@
 #include <string>
 #include <cmath>
 #include <fstream>
-#include <map>
 #include <iostream>
 
 using namespace arborvia;
@@ -122,27 +121,8 @@ public:
     }
     
     void syncSnapConfigsFromEdges() {
-        // Count snap points needed per node edge based on actual edge connections
-        std::map<std::pair<NodeId, NodeEdge>, int> snapCounts;
-        
-        for (const auto& [edgeId, layout] : edgeLayouts_) {
-            // Track max snap index for each node edge
-            auto& srcCount = snapCounts[{layout.from, layout.sourceEdge}];
-            srcCount = std::max(srcCount, layout.sourceSnapIndex + 1);
-            
-            auto& tgtCount = snapCounts[{layout.to, layout.targetEdge}];
-            tgtCount = std::max(tgtCount, layout.targetSnapIndex + 1);
-        }
-        
-        // Update snap configs (only if greater than current to preserve manual settings)
-        for (const auto& [key, count] : snapCounts) {
-            auto [nodeId, edge] = key;
-            SnapPointConfig config = manualManager_.getSnapConfig(nodeId);
-            if (count > config.getCount(edge)) {
-                config.setCount(edge, count);
-                manualManager_.setSnapConfig(nodeId, config);
-            }
-        }
+        // Use library API for snap config synchronization
+        manualManager_.syncSnapConfigsFromEdgeLayouts(edgeLayouts_);
     }
     
     void update() {
@@ -192,15 +172,14 @@ public:
         hoveredEdge_ = INVALID_EDGE;
         if (hoveredNode_ == INVALID_NODE && !hoveredBendPoint_.isValid()) {
             for (const auto& [id, layout] : edgeLayouts_) {
-                int insertIdx = -1;
-                Point insertPos = {0, 0};
-                if (isPointNearEdgeWithInsertInfo(graphMouse, layout, 8.0f, insertIdx, insertPos)) {
+                auto hitResult = LayoutUtils::hitTestEdge(graphMouse, layout, 8.0f);
+                if (hitResult.hit) {
                     hoveredEdge_ = id;
                     // Show insert preview if edge is selected
                     if (id == selectedEdge_ && manualManager_.getMode() == LayoutMode::Manual) {
                         bendPointPreview_.edgeId = id;
-                        bendPointPreview_.insertIndex = insertIdx;
-                        bendPointPreview_.position = insertPos;
+                        bendPointPreview_.insertIndex = hitResult.segmentIndex;
+                        bendPointPreview_.position = hitResult.closestPoint;
                         bendPointPreview_.active = true;
                     }
                     break;
@@ -240,70 +219,16 @@ public:
             
             const auto& existingBps = manualManager_.getBendPoints(edgeId);
             
-            Point bp1, bp2;
-            size_t insertIdx = 0;
-            
-            if (existingBps.empty()) {
-                // First insertion - calculate relative to source and target only
-                // (Auto bend points will be removed when manual bends are added)
-                Point source = edgeLayout.sourcePoint;
-                Point target = edgeLayout.targetPoint;
-                
-                float dx = std::abs(target.x - source.x);
-                float dy = std::abs(target.y - source.y);
-                
-                if (dx > dy) {
-                    // More horizontal - create vertical step
-                    bp1 = {clickPos.x, source.y};
-                    bp2 = {clickPos.x, target.y};
-                } else {
-                    // More vertical - create horizontal step
-                    bp1 = {source.x, clickPos.y};
-                    bp2 = {target.x, clickPos.y};
-                }
-                insertIdx = 0;
-            } else {
-                // Existing manual bends - use current path structure
-                int segmentIdx = bendPointPreview_.insertIndex;
-                
-                // Build path: source → [manual bends] → target
-                std::vector<Point> path;
-                path.push_back(edgeLayout.sourcePoint);
-                for (const auto& bp : existingBps) {
-                    path.push_back(bp.position);
-                }
-                path.push_back(edgeLayout.targetPoint);
-                
-                Point prevPoint = path[segmentIdx];
-                Point nextPoint = path[segmentIdx + 1];
-                
-                float dx = std::abs(nextPoint.x - prevPoint.x);
-                float dy = std::abs(nextPoint.y - prevPoint.y);
-                
-                if (dx > dy) {
-                    // More horizontal segment
-                    bp1 = {clickPos.x, prevPoint.y};
-                    bp2 = {clickPos.x, nextPoint.y};
-                    if (std::abs(prevPoint.y - nextPoint.y) < 1.0f) {
-                        bp2 = {clickPos.x, clickPos.y};
-                    }
-                } else {
-                    // More vertical segment
-                    bp1 = {prevPoint.x, clickPos.y};
-                    bp2 = {nextPoint.x, clickPos.y};
-                    if (std::abs(prevPoint.x - nextPoint.x) < 1.0f) {
-                        bp2 = {clickPos.x, clickPos.y};
-                    }
-                }
-                insertIdx = static_cast<size_t>(segmentIdx);
-            }
+            // Use library API to calculate bend point pair
+            auto bpResult = OrthogonalRouter::calculateBendPointPair(
+                edgeLayout, existingBps, clickPos, bendPointPreview_.insertIndex);
             
             // Insert both points
-            manualManager_.addBendPoint(edgeId, insertIdx, bp1);
-            manualManager_.addBendPoint(edgeId, insertIdx + 1, bp2);
+            manualManager_.addBendPoint(edgeId, bpResult.insertIndex, bpResult.first);
+            manualManager_.addBendPoint(edgeId, bpResult.insertIndex + 1, bpResult.second);
             
             selectedBendPoint_.edgeId = edgeId;
-            selectedBendPoint_.bendPointIndex = static_cast<int>(insertIdx) + 1;
+            selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
             doLayout();
         } else if (ImGui::IsMouseClicked(0) && hoveredNode_ != INVALID_NODE) {
             // Handle click for node selection
@@ -401,7 +326,7 @@ public:
                 bool hasNextBend = (bpIdx < static_cast<int>(bps.size()) - 1);
                 
                 // Use library API for orthogonal drag constraint calculation
-                auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(
+                auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(
                     prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
                 
                 // Apply the calculated positions
@@ -443,65 +368,6 @@ public:
             selectedBendPoint_.clear();
             doLayout();
         }
-    }
-    
-    bool isPointNearEdge(const Point& p, const EdgeLayout& edge, float threshold) {
-        auto points = edge.allPoints();
-        for (size_t i = 1; i < points.size(); ++i) {
-            Point a = points[i-1];
-            Point b = points[i];
-            
-            // Distance from point to line segment
-            float dx = b.x - a.x;
-            float dy = b.y - a.y;
-            float len2 = dx * dx + dy * dy;
-            
-            float t = 0.0f;
-            if (len2 > 0.0001f) {
-                t = std::max(0.0f, std::min(1.0f, 
-                    ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-            }
-            
-            Point closest = {a.x + t * dx, a.y + t * dy};
-            float dist = std::sqrt((p.x - closest.x) * (p.x - closest.x) + 
-                                   (p.y - closest.y) * (p.y - closest.y));
-            
-            if (dist < threshold) return true;
-        }
-        return false;
-    }
-    
-    // Extended version that returns insertion point info
-    bool isPointNearEdgeWithInsertInfo(const Point& p, const EdgeLayout& edge, float threshold,
-                                        int& outInsertIndex, Point& outInsertPos) {
-        auto points = edge.allPoints();
-        for (size_t i = 1; i < points.size(); ++i) {
-            Point a = points[i-1];
-            Point b = points[i];
-            
-            float dx = b.x - a.x;
-            float dy = b.y - a.y;
-            float len2 = dx * dx + dy * dy;
-            
-            float t = 0.0f;
-            if (len2 > 0.0001f) {
-                t = std::max(0.0f, std::min(1.0f, 
-                    ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-            }
-            
-            Point closest = {a.x + t * dx, a.y + t * dy};
-            float dist = std::sqrt((p.x - closest.x) * (p.x - closest.x) + 
-                                   (p.y - closest.y) * (p.y - closest.y));
-            
-            if (dist < threshold) {
-                // Segment i-1 to i means bend point index i-1 
-                // (insert after (i-1)th bend point, before ith)
-                outInsertIndex = static_cast<int>(i) - 1;
-                outInsertPos = closest;
-                return true;
-            }
-        }
-        return false;
     }
     
     void rerouteAffectedEdges() {
@@ -659,7 +525,7 @@ public:
             
             auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
                 for (int i = 0; i < count; ++i) {
-                    Point p = ManualLayoutManager::calculateSnapPoint(nodeLayout, edge, i, count);
+                    Point p = LayoutUtils::calculateSnapPoint(nodeLayout, edge, i, count);
                     ImVec2 screenPos = {p.x + offset_.x, p.y + offset_.y};
                     drawList->AddCircleFilled(screenPos, 4.0f, COLOR_SNAP_POINT);
                 }

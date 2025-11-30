@@ -148,13 +148,13 @@ TEST_F(ManualLayoutTest, CalculateSnapPointTop) {
     node.size = {100, 50};
     
     // Single snap point on top edge
-    Point p = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Top, 0, 1);
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 1);
     EXPECT_FLOAT_EQ(p.x, 50.0f);  // Center
     EXPECT_FLOAT_EQ(p.y, 0.0f);   // Top edge
     
     // Two snap points on top edge
-    Point p1 = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Top, 0, 2);
-    Point p2 = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Top, 1, 2);
+    Point p1 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 2);
+    Point p2 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 1, 2);
     EXPECT_FLOAT_EQ(p1.x, 100.0f / 3.0f);
     EXPECT_FLOAT_EQ(p2.x, 200.0f / 3.0f);
 }
@@ -164,7 +164,7 @@ TEST_F(ManualLayoutTest, CalculateSnapPointBottom) {
     node.position = {0, 0};
     node.size = {100, 50};
     
-    Point p = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Bottom, 0, 1);
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Bottom, 0, 1);
     EXPECT_FLOAT_EQ(p.x, 50.0f);
     EXPECT_FLOAT_EQ(p.y, 50.0f);  // Bottom edge
 }
@@ -174,7 +174,7 @@ TEST_F(ManualLayoutTest, CalculateSnapPointLeft) {
     node.position = {0, 0};
     node.size = {100, 50};
     
-    Point p = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Left, 0, 1);
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Left, 0, 1);
     EXPECT_FLOAT_EQ(p.x, 0.0f);   // Left edge
     EXPECT_FLOAT_EQ(p.y, 25.0f);  // Center
 }
@@ -184,7 +184,7 @@ TEST_F(ManualLayoutTest, CalculateSnapPointRight) {
     node.position = {0, 0};
     node.size = {100, 50};
     
-    Point p = ManualLayoutManager::calculateSnapPoint(node, NodeEdge::Right, 0, 1);
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Right, 0, 1);
     EXPECT_FLOAT_EQ(p.x, 100.0f); // Right edge
     EXPECT_FLOAT_EQ(p.y, 25.0f);  // Center
 }
@@ -748,7 +748,7 @@ TEST_F(ManualLayoutTest, BendPoint_Orthogonal_AfterClearReaddMaintainsOrthogonal
 // ============== Drag Orthogonality Tests ==============
 
 // Helper: Calculate orthogonal-constrained position for drag
-// Orthogonal drag constraint tests use ManualLayoutManager::calculateOrthogonalDrag()
+// Orthogonal drag constraint tests use OrthogonalRouter::calculateOrthogonalDrag()
 
 TEST_F(ManualLayoutTest, BendPoint_Drag_MaintainsOrthogonalWithPrev) {
     ManualLayoutManager manager;
@@ -787,7 +787,7 @@ TEST_F(ManualLayoutTest, BendPoint_Drag_MaintainsOrthogonalWithPrev) {
     Point dragTarget = {180.0f, 50.0f};  // Would create diagonal if unconstrained
     
     // Calculate what the orthogonal-constrained position should be
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
     
     // Apply the constrained move
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
@@ -840,7 +840,7 @@ TEST_F(ManualLayoutTest, BendPoint_Drag_VerticalIncoming_HorizontalConstraint) {
     // (keep X same as source.x)
     Point dragTarget = {80.0f, 100.0f};  // Would create diagonal if X changes
     
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
     
     // The constrained position should have X = source.x (since incoming is vertical)
     EXPECT_FLOAT_EQ(dragResult.newCurrentPos.x, source.x)
@@ -898,7 +898,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_HorizontalIncoming_ConstrainsY)
     Point next{50, 200};
     Point drag{80, 150};     // diagonal drag attempt
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
     
     // Y should be constrained to prev.y (horizontal constraint)
@@ -918,7 +918,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_VerticalIncoming_ConstrainsX) {
     Point next{200, 50};
     Point drag{150, 80};     // diagonal drag attempt
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
     
     // X should be constrained to prev.x (vertical constraint)
@@ -938,7 +938,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_LastBend_HorizontalVertical) {
     Point target{50, 200};    // vertical to target
     Point drag{80, 150};      // try to drag diagonally
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
     
     // Position should be constrained to intersection: X=target.x, Y=prev.y
@@ -954,7 +954,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_LastBend_VerticalHorizontal) {
     Point target{200, 50};    // horizontal to target
     Point drag{150, 80};      // try to drag diagonally
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
     
     // Position should be constrained to intersection: X=prev.x, Y=target.y
@@ -969,7 +969,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_NoNextBend_NoAdjustment) {
     Point next{100, 100};  // doesn't matter, hasNextBend=false
     Point drag{80, 150};
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, false, false);
     
     // Should still constrain position
@@ -987,7 +987,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHorizo
     Point next{50, 100};
     Point drag{80, 80};
     
-    auto result = ManualLayoutManager::calculateOrthogonalDrag(
+    auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
     
     // Treated as horizontal: Y should be constrained to prev.y
@@ -997,7 +997,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHorizo
 
 TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
     // Verify struct is properly initialized
-    ManualLayoutManager::OrthogonalDragResult result;
+    OrthogonalRouter::OrthogonalDragResult result;
     
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 0.0f);
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 0.0f);
@@ -1007,7 +1007,7 @@ TEST_F(ManualLayoutTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
 }
 
 // ============== TDD: Drag Orthogonality Bug Detection Tests ==============
-// These tests verify ManualLayoutManager::calculateOrthogonalDrag() directly
+// These tests verify OrthogonalRouter::calculateOrthogonalDrag() directly
 
 // TDD Test 1: Drag first bend point - should maintain orthogonality with source
 TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
@@ -1045,7 +1045,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_FirstPoint_MaintainsOrthogonalWithSo
     // Simulate dragging bp1 to a diagonal position
     Point dragTarget = {80.0f, 100.0f};  // Would break orthogonality if unconstrained
 
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // Apply the drag
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
@@ -1099,7 +1099,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_MiddlePoint_CascadeAdjustment) {
     // Drag bp2 to new position
     Point dragTarget = {200.0f, 30.0f};
 
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(bp1, bp2, bp3, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, bp3, dragTarget, true, false);
 
     // Apply the drag
     manager.moveBendPoint(e1_, 1, dragResult.newCurrentPos);
@@ -1149,7 +1149,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_VerifyEachSegment) {
 
     // Drag bp1 downward
     Point dragTarget = {50.0f, 150.0f};
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
     if (dragResult.nextAdjusted) {
@@ -1207,7 +1207,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_ConsecutiveDrags) {
         Point bp1 = manager.getBendPoints(e1_)[0].position;
         Point bp2 = manager.getBendPoints(e1_)[1].position;
 
-        auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragPositions[i], true, false);
+        auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragPositions[i], true, false);
 
         manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
         if (dragResult.nextAdjusted) {
@@ -1329,7 +1329,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_DemoScenario_InsertThenDrag) {
     bp2 = manager.getBendPoints(e1_)[1].position;
 
     Point dragTarget = {bp1.x + 30, bp1.y + 20};
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
     if (dragResult.nextAdjusted) {
@@ -1429,7 +1429,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_VisualFeedbackBug) {
 
     // Calculate drag result
     Point dragTarget = {80.0f, 100.0f};
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(source, bp1_old, bp2_old, dragTarget, true, false);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1_old, bp2_old, dragTarget, true, false);
 
     // Update manualManager (correct)
     if (dragResult.nextAdjusted) {
@@ -1500,7 +1500,7 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_LastPoint_NoNextToAdjust) {
     Point dragTarget = {280.0f, 150.0f};
 
     // hasNextBend = false, isLastBend = true
-    auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(bp1, bp2, target, dragTarget, false, true);
+    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, target, dragTarget, false, true);
 
     // Apply the drag (no next bend to adjust)
     manager.moveBendPoint(e1_, 1, dragResult.newCurrentPos);
@@ -1531,4 +1531,315 @@ TEST_F(ManualLayoutTest, TDD_BendPoint_Drag_LastPoint_NoNextToAdjust) {
 
     EXPECT_TRUE(isPathOrthogonal(afterPath))
         << "Full path must remain orthogonal";
+}
+
+// ============== LayoutUtils API Tests ==============
+
+TEST_F(ManualLayoutTest, PointToSegmentDistance_PointOnSegment) {
+    Point p = {50.0f, 0.0f};
+    Point segStart = {0.0f, 0.0f};
+    Point segEnd = {100.0f, 0.0f};
+    Point closest;
+
+    float dist = LayoutUtils::pointToSegmentDistance(p, segStart, segEnd, closest);
+
+    EXPECT_FLOAT_EQ(dist, 0.0f);
+    EXPECT_FLOAT_EQ(closest.x, 50.0f);
+    EXPECT_FLOAT_EQ(closest.y, 0.0f);
+}
+
+TEST_F(ManualLayoutTest, PointToSegmentDistance_PointAboveSegment) {
+    Point p = {50.0f, 10.0f};
+    Point segStart = {0.0f, 0.0f};
+    Point segEnd = {100.0f, 0.0f};
+    Point closest;
+
+    float dist = LayoutUtils::pointToSegmentDistance(p, segStart, segEnd, closest);
+
+    EXPECT_FLOAT_EQ(dist, 10.0f);
+    EXPECT_FLOAT_EQ(closest.x, 50.0f);
+    EXPECT_FLOAT_EQ(closest.y, 0.0f);
+}
+
+TEST_F(ManualLayoutTest, PointToSegmentDistance_PointBeyondStart) {
+    Point p = {-10.0f, 0.0f};
+    Point segStart = {0.0f, 0.0f};
+    Point segEnd = {100.0f, 0.0f};
+    Point closest;
+
+    float dist = LayoutUtils::pointToSegmentDistance(p, segStart, segEnd, closest);
+
+    EXPECT_FLOAT_EQ(dist, 10.0f);
+    EXPECT_FLOAT_EQ(closest.x, 0.0f);  // Clamped to start
+    EXPECT_FLOAT_EQ(closest.y, 0.0f);
+}
+
+TEST_F(ManualLayoutTest, PointToSegmentDistance_PointBeyondEnd) {
+    Point p = {110.0f, 0.0f};
+    Point segStart = {0.0f, 0.0f};
+    Point segEnd = {100.0f, 0.0f};
+    Point closest;
+
+    float dist = LayoutUtils::pointToSegmentDistance(p, segStart, segEnd, closest);
+
+    EXPECT_FLOAT_EQ(dist, 10.0f);
+    EXPECT_FLOAT_EQ(closest.x, 100.0f);  // Clamped to end
+    EXPECT_FLOAT_EQ(closest.y, 0.0f);
+}
+
+TEST_F(ManualLayoutTest, PointToSegmentDistance_ZeroLengthSegment) {
+    Point p = {10.0f, 10.0f};
+    Point segStart = {0.0f, 0.0f};
+    Point segEnd = {0.0f, 0.0f};  // Zero-length segment
+    Point closest;
+
+    float dist = LayoutUtils::pointToSegmentDistance(p, segStart, segEnd, closest);
+
+    // Distance should be to the point itself
+    float expected = std::sqrt(10.0f * 10.0f + 10.0f * 10.0f);
+    EXPECT_NEAR(dist, expected, 0.001f);
+    EXPECT_FLOAT_EQ(closest.x, 0.0f);
+    EXPECT_FLOAT_EQ(closest.y, 0.0f);
+}
+
+TEST_F(ManualLayoutTest, HitTestEdge_Hit_ReturnsClosestSegment) {
+    // Create an edge layout with multiple segments
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {100.0f, 100.0f};
+    edge.bendPoints = {
+        {{50.0f, 0.0f}},    // First bend
+        {{50.0f, 100.0f}}   // Second bend
+    };
+    // Path: (0,0) -> (50,0) -> (50,100) -> (100,100)
+
+    // Test point near the vertical segment (should be closest)
+    Point testPoint = {45.0f, 50.0f};  // Near vertical segment at x=50
+
+    auto result = LayoutUtils::hitTestEdge(testPoint, edge, 10.0f);
+
+    EXPECT_TRUE(result.hit);
+    EXPECT_EQ(result.segmentIndex, 1);  // Vertical segment (50,0) -> (50,100)
+    EXPECT_NEAR(result.closestPoint.x, 50.0f, 0.1f);
+    EXPECT_NEAR(result.closestPoint.y, 50.0f, 0.1f);
+    EXPECT_NEAR(result.distance, 5.0f, 0.1f);
+}
+
+TEST_F(ManualLayoutTest, HitTestEdge_Miss_ReturnsNoHit) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {100.0f, 0.0f};
+
+    // Test point far from the edge
+    Point testPoint = {50.0f, 100.0f};
+
+    auto result = LayoutUtils::hitTestEdge(testPoint, edge, 10.0f);
+
+    EXPECT_FALSE(result.hit);
+    EXPECT_EQ(result.segmentIndex, -1);
+}
+
+TEST_F(ManualLayoutTest, HitTestEdge_MultipleSegmentsInRange_ReturnsClosest) {
+    // Edge with a tight corner where two segments are both within threshold
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {10.0f, 10.0f};
+    edge.bendPoints = {
+        {{10.0f, 0.0f}}  // Corner at (10, 0)
+    };
+    // Path: (0,0) -> (10,0) -> (10,10)
+
+    // Point near the corner, closer to vertical segment
+    Point testPoint = {12.0f, 5.0f};
+
+    auto result = LayoutUtils::hitTestEdge(testPoint, edge, 5.0f);
+
+    EXPECT_TRUE(result.hit);
+    EXPECT_EQ(result.segmentIndex, 1);  // Vertical segment is closer
+    EXPECT_NEAR(result.closestPoint.x, 10.0f, 0.1f);
+}
+
+// ============== calculateBendPointPair Tests ==============
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_EmptyBends_HorizontalEdge) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 50.0f};
+    edge.targetPoint = {200.0f, 50.0f};  // Horizontal edge
+
+    std::vector<BendPoint> emptyBends;
+    Point clickPos = {100.0f, 50.0f};
+
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+
+    // Horizontal edge -> vertical step
+    EXPECT_EQ(result.insertIndex, 0u);
+    EXPECT_FLOAT_EQ(result.first.x, 100.0f);
+    EXPECT_FLOAT_EQ(result.first.y, 50.0f);   // source.y
+    EXPECT_FLOAT_EQ(result.second.x, 100.0f);
+    EXPECT_FLOAT_EQ(result.second.y, 50.0f);  // target.y (same as source in this case)
+}
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_EmptyBends_VerticalEdge) {
+    EdgeLayout edge;
+    edge.sourcePoint = {50.0f, 0.0f};
+    edge.targetPoint = {50.0f, 200.0f};  // Vertical edge
+
+    std::vector<BendPoint> emptyBends;
+    Point clickPos = {50.0f, 100.0f};
+
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+
+    // Vertical edge -> horizontal step
+    EXPECT_EQ(result.insertIndex, 0u);
+    EXPECT_FLOAT_EQ(result.first.x, 50.0f);   // source.x
+    EXPECT_FLOAT_EQ(result.first.y, 100.0f);
+    EXPECT_FLOAT_EQ(result.second.x, 50.0f);  // target.x (same as source)
+    EXPECT_FLOAT_EQ(result.second.y, 100.0f);
+}
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_EmptyBends_DiagonalEdge) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {200.0f, 100.0f};  // More horizontal than vertical
+
+    std::vector<BendPoint> emptyBends;
+    Point clickPos = {100.0f, 50.0f};
+
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+
+    // dx(200) > dy(100) -> vertical step
+    EXPECT_EQ(result.insertIndex, 0u);
+    EXPECT_FLOAT_EQ(result.first.x, 100.0f);
+    EXPECT_FLOAT_EQ(result.first.y, 0.0f);    // source.y
+    EXPECT_FLOAT_EQ(result.second.x, 100.0f);
+    EXPECT_FLOAT_EQ(result.second.y, 100.0f); // target.y
+}
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_ExistingBends_MiddleSegment) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {200.0f, 200.0f};
+
+    std::vector<BendPoint> existingBends = {
+        {{100.0f, 0.0f}},
+        {{100.0f, 200.0f}}
+    };
+    // Path: (0,0) -> (100,0) -> (100,200) -> (200,200)
+    // Segment 1: (100,0) -> (100,200) is vertical
+
+    Point clickPos = {100.0f, 100.0f};
+
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, 1);
+
+    EXPECT_EQ(result.insertIndex, 1u);
+    // Vertical segment -> horizontal step
+    EXPECT_FLOAT_EQ(result.first.x, 100.0f);
+    EXPECT_FLOAT_EQ(result.first.y, 100.0f);
+}
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_InvalidSegmentIndex_UsesFallback) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {100.0f, 100.0f};
+
+    std::vector<BendPoint> existingBends = {
+        {{50.0f, 0.0f}}
+    };
+    // Path: (0,0) -> (50,0) -> (100,100)
+    // Valid segment indices: 0, 1
+
+    Point clickPos = {50.0f, 50.0f};
+
+    // Test with invalid index (too large)
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, 100);
+
+    // Should fall back to segment 0
+    EXPECT_EQ(result.insertIndex, 0u);
+}
+
+TEST_F(ManualLayoutTest, CalculateBendPointPair_NegativeSegmentIndex_UsesFallback) {
+    EdgeLayout edge;
+    edge.sourcePoint = {0.0f, 0.0f};
+    edge.targetPoint = {100.0f, 100.0f};
+
+    std::vector<BendPoint> existingBends = {
+        {{50.0f, 0.0f}}
+    };
+
+    Point clickPos = {50.0f, 50.0f};
+
+    // Test with negative index
+    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, -5);
+
+    // Should fall back to segment 0
+    EXPECT_EQ(result.insertIndex, 0u);
+}
+
+// ============== syncSnapConfigsFromEdgeLayouts Tests ==============
+
+TEST_F(ManualLayoutTest, SyncSnapConfigs_UpdatesFromEdgeLayouts) {
+    ManualLayoutManager manager;
+
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Edge using snap index 2 on node n1_'s bottom edge
+    EdgeLayout layout1;
+    layout1.from = n1_;
+    layout1.to = n2_;
+    layout1.sourceEdge = NodeEdge::Bottom;
+    layout1.targetEdge = NodeEdge::Top;
+    layout1.sourceSnapIndex = 2;  // Needs at least 3 snap points
+    layout1.targetSnapIndex = 1;  // Needs at least 2 snap points
+    edgeLayouts[e1_] = layout1;
+
+    manager.syncSnapConfigsFromEdgeLayouts(edgeLayouts);
+
+    // Check snap configs were updated
+    SnapPointConfig n1Config = manager.getSnapConfig(n1_);
+    SnapPointConfig n2Config = manager.getSnapConfig(n2_);
+
+    EXPECT_GE(n1Config.bottomCount, 3);  // At least 3 for snapIndex 2
+    EXPECT_GE(n2Config.topCount, 2);     // At least 2 for snapIndex 1
+}
+
+TEST_F(ManualLayoutTest, SyncSnapConfigs_PreservesHigherManualCounts) {
+    ManualLayoutManager manager;
+
+    // Set higher manual count first
+    SnapPointConfig manualConfig;
+    manualConfig.bottomCount = 5;
+    manager.setSnapConfig(n1_, manualConfig);
+
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    EdgeLayout layout1;
+    layout1.from = n1_;
+    layout1.to = n2_;
+    layout1.sourceEdge = NodeEdge::Bottom;
+    layout1.targetEdge = NodeEdge::Top;
+    layout1.sourceSnapIndex = 1;  // Would need only 2
+    layout1.targetSnapIndex = 0;
+    edgeLayouts[e1_] = layout1;
+
+    manager.syncSnapConfigsFromEdgeLayouts(edgeLayouts);
+
+    // Manual count (5) should be preserved
+    SnapPointConfig n1Config = manager.getSnapConfig(n1_);
+    EXPECT_EQ(n1Config.bottomCount, 5);
+}
+
+TEST_F(ManualLayoutTest, SyncSnapConfigs_EmptyEdgeLayouts) {
+    ManualLayoutManager manager;
+
+    // Set initial config
+    SnapPointConfig initialConfig;
+    initialConfig.topCount = 3;
+    manager.setSnapConfig(n1_, initialConfig);
+
+    std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
+
+    manager.syncSnapConfigsFromEdgeLayouts(emptyLayouts);
+
+    // Config should remain unchanged
+    SnapPointConfig config = manager.getSnapConfig(n1_);
+    EXPECT_EQ(config.topCount, 3);
 }

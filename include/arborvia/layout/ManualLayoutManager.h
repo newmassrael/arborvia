@@ -48,42 +48,17 @@ public:
     void clearBendPoints(EdgeId edgeId);
     void setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points);
 
-    /// Result of orthogonal drag constraint calculation
-    struct OrthogonalDragResult {
-        Point newCurrentPos{0, 0};      ///< Constrained position for the dragged bend point
-        Point adjustedNextPos{0, 0};    ///< Adjusted position for the next bend point (if applicable)
-        bool nextAdjusted = false;      ///< True if next bend point position was adjusted
-    };
-
-    /// Calculate constrained drag position to maintain orthogonality.
-    /// This is the core logic for orthogonal bend point dragging.
-    /// @param prevPoint The previous point in the path (source or previous bend)
-    /// @param currentPos Current position of the bend point being dragged
-    /// @param nextPoint The next point in the path (next bend or target)
-    /// @param dragTarget Where the user is trying to drag to
-    /// @param hasNextBend True if there is a next bend point that can be adjusted
-    /// @param isLastBend True if this is the last bend point (next is target)
-    /// @return Constrained positions that maintain orthogonality
-    static OrthogonalDragResult calculateOrthogonalDrag(
-        const Point& prevPoint,
-        const Point& currentPos,
-        const Point& nextPoint,
-        const Point& dragTarget,
-        bool hasNextBend,
-        bool isLastBend);
-
     // Apply manual state to layout result
     void applyManualState(LayoutResult& result, const Graph& graph) const;
 
     // Capture current layout as manual state
     void captureFromResult(const LayoutResult& result);
 
-    // Snap point calculation
-    static Point calculateSnapPoint(
-        const NodeLayout& node,
-        NodeEdge edge,
-        int snapIndex,
-        int totalSnapPoints);
+    /// Sync snap point configurations from edge layouts.
+    /// Updates snap counts to accommodate all edge connections.
+    /// @param edgeLayouts The edge layouts to sync from
+    void syncSnapConfigsFromEdgeLayouts(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts);
 
     // JSON serialization
     std::string toJson() const;
