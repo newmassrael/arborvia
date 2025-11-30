@@ -1,10 +1,73 @@
 #include "EdgeRouting.h"
-#include "arborvia/layout/ManualLayout.h"
+#include "arborvia/layout/LayoutTypes.h"
 
 #include <cmath>
+#include <set>
 
 namespace arborvia {
 namespace algorithms {
+
+// =============================================================================
+// Static Helper Function Implementations
+// =============================================================================
+
+Point EdgeRouting::calculateSnapPosition(const NodeLayout& node, NodeEdge edge, float position) {
+    switch (edge) {
+        case NodeEdge::Top:
+            return {node.position.x + node.size.width * position, node.position.y};
+        case NodeEdge::Bottom:
+            return {node.position.x + node.size.width * position, node.position.y + node.size.height};
+        case NodeEdge::Left:
+            return {node.position.x, node.position.y + node.size.height * position};
+        case NodeEdge::Right:
+            return {node.position.x + node.size.width, node.position.y + node.size.height * position};
+    }
+    return node.center();
+}
+
+float EdgeRouting::calculateRelativePosition(int snapIdx, int count, float rangeStart, float rangeEnd) {
+    if (count <= 0) return (rangeStart + rangeEnd) / 2.0f;
+    float range = rangeEnd - rangeStart;
+    return rangeStart + static_cast<float>(snapIdx + 1) / static_cast<float>(count + 1) * range;
+}
+
+void EdgeRouting::recalculateBendPoints(EdgeLayout& layout) {
+    layout.bendPoints.clear();
+    
+    // Simple orthogonal bend using Y midpoint
+    if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
+        std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
+        float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
+        layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
+        layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+    }
+}
+
+std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    NodeId nodeId,
+    NodeEdge nodeEdge) {
+    
+    int inCount = 0;
+    int outCount = 0;
+    
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        // Outgoing from this node on this edge
+        if (layout.from == nodeId && layout.sourceEdge == nodeEdge) {
+            outCount++;
+        }
+        // Incoming to this node on this edge
+        if (layout.to == nodeId && layout.targetEdge == nodeEdge) {
+            inCount++;
+        }
+    }
+    
+    return {inCount, outCount};
+}
+
+// =============================================================================
+// Edge Routing Core Methods
+// =============================================================================
 
 EdgeRouting::Result EdgeRouting::route(
     const Graph& graph,
@@ -191,88 +254,253 @@ Point EdgeRouting::computeSnapPoint(
     return center;
 }
 
+// =============================================================================
+// Snap Point Distribution Methods
+// =============================================================================
+
 void EdgeRouting::distributeAutoSnapPoints(
     Result& result,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    SnapDistribution distribution) {
     
-    // Group edges by (nodeId, nodeEdge) for sources and targets
-    // Key: (nodeId, nodeEdge, isSource)
-    std::map<std::tuple<NodeId, NodeEdge, bool>, std::vector<EdgeId>> edgeGroups;
-    
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        // Group by source node edge
-        edgeGroups[{layout.from, layout.sourceEdge, true}].push_back(edgeId);
-        // Group by target node edge
-        edgeGroups[{layout.to, layout.targetEdge, false}].push_back(edgeId);
-    }
-    
-    // For each group, distribute snap points evenly
-    for (auto& [key, edges] : edgeGroups) {
-        auto [nodeId, nodeEdge, isSource] = key;
+    if (distribution == SnapDistribution::Unified) {
+        // Unified mode: all connections on same edge distributed together
+        // Key: (nodeId, nodeEdge) -> list of (edgeId, isSource)
+        std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> allConnections;
         
-        auto nodeIt = nodeLayouts.find(nodeId);
-        if (nodeIt == nodeLayouts.end()) continue;
+        for (auto& [edgeId, layout] : result.edgeLayouts) {
+            allConnections[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
+            allConnections[{layout.to, layout.targetEdge}].push_back({edgeId, false});
+        }
         
-        const NodeLayout& node = nodeIt->second;
-        int count = static_cast<int>(edges.size());
-        
-        // Assign snap indices to edges in this group
-        for (int i = 0; i < count; ++i) {
-            EdgeId edgeId = edges[i];
-            EdgeLayout& layout = result.edgeLayouts[edgeId];
+        for (auto& [key, connections] : allConnections) {
+            auto [nodeId, nodeEdge] = key;
             
-            // Calculate position along the edge (evenly distributed)
-            float position = static_cast<float>(i + 1) / static_cast<float>(count + 1);
+            auto nodeIt = nodeLayouts.find(nodeId);
+            if (nodeIt == nodeLayouts.end()) continue;
             
-            Point snapPoint;
-            switch (nodeEdge) {
-                case NodeEdge::Top:
-                    snapPoint = {
-                        node.position.x + node.size.width * position,
-                        node.position.y
-                    };
-                    break;
-                case NodeEdge::Bottom:
-                    snapPoint = {
-                        node.position.x + node.size.width * position,
-                        node.position.y + node.size.height
-                    };
-                    break;
-                case NodeEdge::Left:
-                    snapPoint = {
-                        node.position.x,
-                        node.position.y + node.size.height * position
-                    };
-                    break;
-                case NodeEdge::Right:
-                    snapPoint = {
-                        node.position.x + node.size.width,
-                        node.position.y + node.size.height * position
-                    };
-                    break;
+            const NodeLayout& node = nodeIt->second;
+            int count = static_cast<int>(connections.size());
+            
+            for (int i = 0; i < count; ++i) {
+                auto [edgeId, isSource] = connections[i];
+                EdgeLayout& layout = result.edgeLayouts[edgeId];
+                
+                float position = calculateRelativePosition(i, count, 0.0f, 1.0f);
+                Point snapPoint = calculateSnapPosition(node, nodeEdge, position);
+                
+                if (isSource) {
+                    layout.sourcePoint = snapPoint;
+                    layout.sourceSnapIndex = i;
+                } else {
+                    layout.targetPoint = snapPoint;
+                    layout.targetSnapIndex = i;
+                }
+            }
+        }
+    } else {
+        // Separated mode: incoming on first half, outgoing on second half
+        // Key: (nodeId, nodeEdge) -> (incoming edges, outgoing edges)
+        std::map<std::pair<NodeId, NodeEdge>, std::pair<std::vector<EdgeId>, std::vector<EdgeId>>> separatedConnections;
+        
+        for (auto& [edgeId, layout] : result.edgeLayouts) {
+            // Outgoing from source node
+            separatedConnections[{layout.from, layout.sourceEdge}].second.push_back(edgeId);
+            // Incoming to target node
+            separatedConnections[{layout.to, layout.targetEdge}].first.push_back(edgeId);
+        }
+        
+        for (auto& [key, connections] : separatedConnections) {
+            auto [nodeId, nodeEdge] = key;
+            
+            auto nodeIt = nodeLayouts.find(nodeId);
+            if (nodeIt == nodeLayouts.end()) continue;
+            
+            const NodeLayout& node = nodeIt->second;
+            auto& [incoming, outgoing] = connections;
+            
+            int inCount = static_cast<int>(incoming.size());
+            int outCount = static_cast<int>(outgoing.size());
+            
+            // Determine ranges based on what exists
+            float inStart = 0.0f, inEnd = 0.5f;
+            float outStart = 0.5f, outEnd = 1.0f;
+            
+            if (inCount > 0 && outCount == 0) {
+                inStart = 0.0f; inEnd = 1.0f;
+            } else if (outCount > 0 && inCount == 0) {
+                outStart = 0.0f; outEnd = 1.0f;
             }
             
-            if (isSource) {
-                layout.sourcePoint = snapPoint;
-                layout.sourceSnapIndex = i;
-            } else {
-                layout.targetPoint = snapPoint;
+            // Incoming edges
+            for (int i = 0; i < inCount; ++i) {
+                EdgeId edgeId = incoming[i];
+                EdgeLayout& layout = result.edgeLayouts[edgeId];
+                
+                float position = calculateRelativePosition(i, inCount, inStart, inEnd);
+                layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
                 layout.targetSnapIndex = i;
+            }
+            
+            // Outgoing edges
+            for (int i = 0; i < outCount; ++i) {
+                EdgeId edgeId = outgoing[i];
+                EdgeLayout& layout = result.edgeLayouts[edgeId];
+                
+                float position = calculateRelativePosition(i, outCount, outStart, outEnd);
+                layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
+                layout.sourceSnapIndex = i;
             }
         }
     }
     
     // Recalculate bend points after snap point redistribution
     for (auto& [edgeId, layout] : result.edgeLayouts) {
-        layout.bendPoints.clear();
+        recalculateBendPoints(layout);
+    }
+}
+
+void EdgeRouting::updateEdgePositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    SnapDistribution distribution,
+    const std::unordered_set<NodeId>& movedNodes) {
+    
+    // Helper to check if a node should be updated
+    auto shouldUpdateNode = [&movedNodes](NodeId nodeId) -> bool {
+        return movedNodes.empty() || movedNodes.count(nodeId) > 0;
+    };
+    
+    if (distribution == SnapDistribution::Unified) {
+        // Unified mode: all connections on same edge distributed together
+        std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> affectedConnections;
         
-        // Simple orthogonal bend
-        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
-            std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
-            float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
-            layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
-            layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+        for (EdgeId edgeId : affectedEdges) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it == edgeLayouts.end()) continue;
+            const EdgeLayout& layout = it->second;
+            affectedConnections[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
+            affectedConnections[{layout.to, layout.targetEdge}].push_back({edgeId, false});
         }
+        
+        for (auto& [key, connections] : affectedConnections) {
+            auto [nodeId, nodeEdge] = key;
+            
+            // Skip nodes that haven't moved
+            if (!shouldUpdateNode(nodeId)) continue;
+            
+            auto nodeIt = nodeLayouts.find(nodeId);
+            if (nodeIt == nodeLayouts.end()) continue;
+            
+            const NodeLayout& node = nodeIt->second;
+            
+            // Get TOTAL count from all edgeLayouts, not just affected edges
+            auto [totalIn, totalOut] = countConnectionsOnNodeEdge(edgeLayouts, nodeId, nodeEdge);
+            int totalCount = totalIn + totalOut;
+            
+            for (const auto& [edgeId, isSource] : connections) {
+                EdgeLayout& layout = edgeLayouts[edgeId];
+                
+                // Use existing snap index
+                int snapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+                if (snapIdx < 0 || snapIdx >= totalCount) {
+                    // Fallback: find index based on current position in connections
+                    snapIdx = 0;
+                    for (size_t i = 0; i < connections.size(); ++i) {
+                        if (connections[i].first == edgeId) {
+                            snapIdx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                }
+                
+                float position = calculateRelativePosition(snapIdx, totalCount, 0.0f, 1.0f);
+                Point snapPoint = calculateSnapPosition(node, nodeEdge, position);
+                
+                if (isSource) {
+                    layout.sourcePoint = snapPoint;
+                } else {
+                    layout.targetPoint = snapPoint;
+                }
+            }
+        }
+    } else {
+        // Separated mode: incoming on first half, outgoing on second half
+        std::map<std::pair<NodeId, NodeEdge>, std::pair<std::vector<EdgeId>, std::vector<EdgeId>>> affectedConnections;
+        
+        for (EdgeId edgeId : affectedEdges) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it == edgeLayouts.end()) continue;
+            const EdgeLayout& layout = it->second;
+            // Outgoing from source node
+            affectedConnections[{layout.from, layout.sourceEdge}].second.push_back(edgeId);
+            // Incoming to target node
+            affectedConnections[{layout.to, layout.targetEdge}].first.push_back(edgeId);
+        }
+        
+        for (auto& [key, connections] : affectedConnections) {
+            auto [nodeId, nodeEdge] = key;
+            
+            // Skip nodes that haven't moved
+            if (!shouldUpdateNode(nodeId)) continue;
+            
+            auto nodeIt = nodeLayouts.find(nodeId);
+            if (nodeIt == nodeLayouts.end()) continue;
+            
+            const NodeLayout& node = nodeIt->second;
+            auto& [incoming, outgoing] = connections;
+            
+            // Get TOTAL counts from all edgeLayouts for this node edge
+            auto [totalIn, totalOut] = countConnectionsOnNodeEdge(edgeLayouts, nodeId, nodeEdge);
+            
+            // Determine ranges based on TOTAL counts
+            float inStart = 0.0f, inEnd = 0.5f;
+            float outStart = 0.5f, outEnd = 1.0f;
+            
+            if (totalIn > 0 && totalOut == 0) {
+                inStart = 0.0f; inEnd = 1.0f;
+            } else if (totalOut > 0 && totalIn == 0) {
+                outStart = 0.0f; outEnd = 1.0f;
+            }
+            
+            // Update incoming edges (target point on this node)
+            for (EdgeId edgeId : incoming) {
+                EdgeLayout& layout = edgeLayouts[edgeId];
+                
+                // Use existing snap index, validate against TOTAL count
+                int snapIdx = layout.targetSnapIndex;
+                if (snapIdx < 0 || snapIdx >= totalIn) {
+                    snapIdx = std::min(snapIdx, totalIn - 1);
+                    if (snapIdx < 0) snapIdx = 0;
+                }
+                
+                float position = calculateRelativePosition(snapIdx, totalIn, inStart, inEnd);
+                layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
+            }
+            
+            // Update outgoing edges (source point on this node)
+            for (EdgeId edgeId : outgoing) {
+                EdgeLayout& layout = edgeLayouts[edgeId];
+                
+                // Use existing snap index, validate against TOTAL count
+                int snapIdx = layout.sourceSnapIndex;
+                if (snapIdx < 0 || snapIdx >= totalOut) {
+                    snapIdx = std::min(snapIdx, totalOut - 1);
+                    if (snapIdx < 0) snapIdx = 0;
+                }
+                
+                float position = calculateRelativePosition(snapIdx, totalOut, outStart, outEnd);
+                layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
+            }
+        }
+    }
+    
+    // Recalculate bend points for affected edges
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it == edgeLayouts.end()) continue;
+        recalculateBendPoints(it->second);
     }
 }
 

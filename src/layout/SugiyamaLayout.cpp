@@ -241,7 +241,8 @@ void SugiyamaLayout::routeEdges() {
     
     // Apply auto snap point distribution if enabled
     if (options_.autoSnapPoints && options_.mode == LayoutMode::Auto) {
-        algorithms::EdgeRouting::distributeAutoSnapPoints(result, state_->result.nodeLayouts());
+        algorithms::EdgeRouting::distributeAutoSnapPoints(
+            result, state_->result.nodeLayouts(), options_.snapDistribution);
     }
     
     for (auto& [id, layout] : result.edgeLayouts) {

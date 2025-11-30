@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/Types.h"
-#include "ManualLayout.h"
+#include "LayoutTypes.h"
 
 #include <optional>
 #include <sstream>

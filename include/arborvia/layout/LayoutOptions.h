@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/Types.h"
-#include "ManualLayout.h"
+#include "LayoutTypes.h"
 
 namespace arborvia {
 
@@ -38,6 +38,12 @@ enum class CrossingMinimization {
 enum class LayerAssignment {
     LongestPath,   // Minimize total edge length
     NetworkSimplex // Better layer balance (future)
+};
+
+/// Snap point distribution mode for Auto layout
+enum class SnapDistribution {
+    Unified,       // All connections (incoming + outgoing) distributed evenly together
+    Separated      // Incoming on left half, outgoing on right half of each edge
 };
 
 /// Options for controlling layout behavior
@@ -77,6 +83,9 @@ struct LayoutOptions {
     // Default snap point count per edge (used in auto mode)
     int defaultSnapPointCount = 2;
     
+    // Snap distribution mode (how incoming/outgoing edges share node edges)
+    SnapDistribution snapDistribution = SnapDistribution::Separated;
+    
     // Builder pattern for convenient configuration
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
     LayoutOptions& setNodeSpacing(float h, float v) { 
@@ -93,6 +102,7 @@ struct LayoutOptions {
     LayoutOptions& setLayoutMode(LayoutMode m) { mode = m; return *this; }
     LayoutOptions& setAutoSnapPoints(bool enabled) { autoSnapPoints = enabled; return *this; }
     LayoutOptions& setDefaultSnapPointCount(int count) { defaultSnapPointCount = count; return *this; }
+    LayoutOptions& setSnapDistribution(SnapDistribution sd) { snapDistribution = sd; return *this; }
 };
 
 }  // namespace arborvia

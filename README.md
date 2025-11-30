@@ -69,7 +69,7 @@ arborvia/
 └── export/    - Output formats (SvgExport)
 ```
 
-See [docs/KR/ARCHITECTURE_KR.md](docs/KR/ARCHITECTURE_KR.md) for detailed architecture.
+See [docs/ko/ARCHITECTURE.md](docs/ko/ARCHITECTURE.md) for detailed architecture.
 
 ## License
 

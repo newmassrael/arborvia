@@ -57,7 +57,10 @@ if(ARBORVIA_BUILD_TESTS)
         tests/core/GraphTest.cpp
         tests/core/CompoundGraphTest.cpp
         tests/layout/SugiyamaLayoutTest.cpp
+        tests/layout/LayoutResultTest.cpp
         tests/layout/ManualLayoutTest.cpp
+        tests/export/SvgExportTest.cpp
+        tests/interactive/DragBehaviorTest.cpp
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)
 
@@ -70,13 +73,13 @@ if(ARBORVIA_BUILD_EXAMPLES)
     set(EXAMPLES_OUTPUT_DIR ${CMAKE_BINARY_DIR}/examples)
 
     # Simple examples
-    add_executable(visual_test examples/visual_test.cpp)
-    target_link_libraries(visual_test PRIVATE arborvia)
-    set_target_properties(visual_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
+    add_executable(visual_demo examples/visual_demo/main.cpp)
+    target_link_libraries(visual_demo PRIVATE arborvia)
+    set_target_properties(visual_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 
-    add_executable(drag_test examples/drag_test.cpp)
-    target_link_libraries(drag_test PRIVATE arborvia)
-    set_target_properties(drag_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
+    add_executable(drag_demo examples/drag_demo/main.cpp)
+    target_link_libraries(drag_demo PRIVATE arborvia)
+    set_target_properties(drag_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 
     # Fetch SDL3
     FetchContent_Declare(
@@ -116,7 +119,7 @@ if(ARBORVIA_BUILD_EXAMPLES)
     target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
 
     # Interactive demo
-    add_executable(interactive_demo examples/interactive/main.cpp)
+    add_executable(interactive_demo examples/interactive_demo/main.cpp)
     target_link_libraries(interactive_demo PRIVATE arborvia imgui SDL3::SDL3-static)
     set_target_properties(interactive_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 
