@@ -13,6 +13,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/CrossingMinimization.cpp
     src/layout/sugiyama/CoordinateAssignment.cpp
     src/layout/sugiyama/EdgeRouting.cpp
+    src/layout/sugiyama/SnapIndexManager.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS

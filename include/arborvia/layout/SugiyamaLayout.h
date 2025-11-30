@@ -91,6 +91,7 @@ private:
     void minimizeCrossings();
     void assignCoordinates();
     void routeEdges();
+    void updateEdgePositionsAfterManualState();
     
     // Compound graph specific
     void layoutCompoundNode(NodeId id, const CompoundGraph& graph);

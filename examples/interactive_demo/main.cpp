@@ -71,7 +71,34 @@ public:
     }
     
     void saveLayout(const std::string& path) {
-        manualManager_.saveToFile(path);
+        // Create LayoutResult from current state (nodeLayouts_ and edgeLayouts_)
+        // This ensures we save the dragged positions, not the original layoutResult_
+        LayoutResult currentResult;
+        for (const auto& [id, layout] : nodeLayouts_) {
+            currentResult.setNodeLayout(id, layout);
+        }
+        for (const auto& [id, layout] : edgeLayouts_) {
+            currentResult.setEdgeLayout(id, layout);
+        }
+        currentResult.setLayerCount(layoutResult_.layerCount());
+
+        // Get full layout result JSON (includes all coordinates)
+        std::string layoutJson = LayoutSerializer::toJson(currentResult);
+
+        // Print formatted JSON to console
+        std::cout << "\n=== Full Layout Saved to " << path << " ===" << std::endl;
+        std::cout << layoutJson << std::endl;
+        std::cout << "==========================================\n" << std::endl;
+
+        // Save full layout result to file
+        std::ofstream file(path);
+        if (file.is_open()) {
+            file << layoutJson;
+            file.close();
+            std::cout << "Layout saved successfully to: " << path << std::endl;
+        } else {
+            std::cerr << "Error: Failed to save layout to " << path << std::endl;
+        }
     }
     
     void loadLayout(const std::string& path) {
@@ -82,11 +109,11 @@ public:
     
     void setupGraph() {
         // Create sample state machine graph
-        auto idle = graph_.addNode(Size{100, 50}, "Idle");
-        auto running = graph_.addNode(Size{100, 50}, "Running");
-        auto paused = graph_.addNode(Size{100, 50}, "Paused");
-        auto stopped = graph_.addNode(Size{100, 50}, "Stopped");
-        auto error = graph_.addNode(Size{100, 50}, "Error");
+        auto idle = graph_.addNode(Size{200, 100}, "Idle");
+        auto running = graph_.addNode(Size{200, 100}, "Running");
+        auto paused = graph_.addNode(Size{200, 100}, "Paused");
+        auto stopped = graph_.addNode(Size{200, 100}, "Stopped");
+        auto error = graph_.addNode(Size{200, 100}, "Error");
         
         graph_.addEdge(idle, running, "start");
         graph_.addEdge(running, paused, "pause");
@@ -95,6 +122,7 @@ public:
         graph_.addEdge(paused, stopped, "stop");
         graph_.addEdge(running, error, "fail");
         graph_.addEdge(error, idle, "reset");
+        graph_.addEdge(error, error, "retry");  // Self-loop for demo
     }
     
     void doLayout() {
@@ -118,6 +146,41 @@ public:
         
         // Offset for centering
         offset_ = {100.0f, 50.0f};
+    }
+    
+    // Re-route edges only, preserving current node positions
+    void reRouteEdgesOnly() {
+        // Save current node positions to manual manager
+        for (const auto& [id, layout] : nodeLayouts_) {
+            manualManager_.setNodePosition(id, layout.position);
+        }
+        
+        // Clear edge routings so fresh routing from algorithm is used
+        // This prevents applyManualState from overwriting new snap points
+        manualManager_.clearAllEdgeRoutings();
+        
+        // Switch to manual mode temporarily to preserve positions
+        LayoutMode prevMode = manualManager_.getMode();
+        if (prevMode == LayoutMode::Auto) {
+            manualManager_.setMode(LayoutMode::Manual);
+        }
+        
+        // Do layout (will use manual positions, but fresh edge routing)
+        doLayout();
+        
+        // Update edge positions to match current node positions
+        std::vector<EdgeId> allEdges;
+        for (const auto& [edgeId, _] : edgeLayouts_) {
+            allEdges.push_back(edgeId);
+        }
+        LayoutUtils::updateEdgePositions(
+            edgeLayouts_, nodeLayouts_, allEdges,
+            layoutOptions_.snapDistribution, {});
+        
+        // Restore previous mode
+        if (prevMode == LayoutMode::Auto) {
+            manualManager_.setMode(prevMode);
+        }
     }
     
     void syncSnapConfigsFromEdges() {
@@ -519,39 +582,114 @@ public:
     }
     
     void drawSnapPoints(ImDrawList* drawList, const NodeLayout& nodeLayout) {
-        // In Manual mode, draw configured snap points
+        // In Manual mode, draw configured snap points with indices
         if (manualManager_.getMode() == LayoutMode::Manual) {
             SnapPointConfig config = manualManager_.getSnapConfig(nodeLayout.id);
-            
+
             auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
                 for (int i = 0; i < count; ++i) {
                     Point p = LayoutUtils::calculateSnapPoint(nodeLayout, edge, i, count);
                     ImVec2 screenPos = {p.x + offset_.x, p.y + offset_.y};
                     drawList->AddCircleFilled(screenPos, 4.0f, COLOR_SNAP_POINT);
+
+                    // Draw index label
+                    if (showSnapIndices_) {
+                        char label[16];
+                        snprintf(label, sizeof(label), "%d", i);
+                        ImVec2 textPos = {screenPos.x - 3, screenPos.y - 12};
+                        drawList->AddText(textPos, IM_COL32(0, 100, 200, 255), label);
+                    }
                 }
             };
-            
+
             drawEdgeSnaps(NodeEdge::Top, config.topCount);
             drawEdgeSnaps(NodeEdge::Bottom, config.bottomCount);
             drawEdgeSnaps(NodeEdge::Left, config.leftCount);
             drawEdgeSnaps(NodeEdge::Right, config.rightCount);
         }
-        
-        // Draw actual edge connection points (for both modes)
+
+        // Draw actual edge connection points with snap indices (for both modes)
+        // Use foreground draw list for labels to ensure they're on top
+        ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+
         for (const auto& [edgeId, edgeLayout] : edgeLayouts_) {
-            // Source point on this node
+            // Source point on this node (outgoing - green)
             if (edgeLayout.from == nodeLayout.id) {
-                ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x, 
+                ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x,
                                     edgeLayout.sourcePoint.y + offset_.y};
                 drawList->AddCircleFilled(screenPos, 5.0f, IM_COL32(100, 200, 100, 255));
                 drawList->AddCircle(screenPos, 5.0f, IM_COL32(50, 150, 50, 255), 0, 1.5f);
+
+                // Draw snap index label for source
+                if (showSnapIndices_) {
+                    char label[32];
+                    const char* edgeName = "";
+                    switch (edgeLayout.sourceEdge) {
+                        case NodeEdge::Top: edgeName = "T"; break;
+                        case NodeEdge::Bottom: edgeName = "B"; break;
+                        case NodeEdge::Left: edgeName = "L"; break;
+                        case NodeEdge::Right: edgeName = "R"; break;
+                    }
+                    snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.sourceSnapIndex);
+
+                    // Position label based on edge direction
+                    ImVec2 textPos = screenPos;
+                    switch (edgeLayout.sourceEdge) {
+                        case NodeEdge::Top: textPos.y -= 22; textPos.x -= 10; break;
+                        case NodeEdge::Bottom: textPos.y += 10; textPos.x -= 10; break;
+                        case NodeEdge::Left: textPos.x -= 32; textPos.y -= 7; break;
+                        case NodeEdge::Right: textPos.x += 12; textPos.y -= 7; break;
+                    }
+
+                    // Draw bold text with white background
+                    ImVec2 textSize = ImGui::CalcTextSize(label);
+                    ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
+                    ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
+                    fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
+                    fgDrawList->AddRect(bgMin, bgMax, IM_COL32(40, 140, 40, 255), 3.0f, 0, 2.0f);
+                    // Bold effect: draw text twice with offset
+                    fgDrawList->AddText({textPos.x + 1, textPos.y}, IM_COL32(20, 100, 20, 255), label);
+                    fgDrawList->AddText(textPos, IM_COL32(20, 100, 20, 255), label);
+                }
             }
-            // Target point on this node
+            // Target point on this node (incoming - red)
             if (edgeLayout.to == nodeLayout.id) {
-                ImVec2 screenPos = {edgeLayout.targetPoint.x + offset_.x, 
+                ImVec2 screenPos = {edgeLayout.targetPoint.x + offset_.x,
                                     edgeLayout.targetPoint.y + offset_.y};
                 drawList->AddCircleFilled(screenPos, 5.0f, IM_COL32(200, 100, 100, 255));
                 drawList->AddCircle(screenPos, 5.0f, IM_COL32(150, 50, 50, 255), 0, 1.5f);
+
+                // Draw snap index label for target
+                if (showSnapIndices_) {
+                    char label[32];
+                    const char* edgeName = "";
+                    switch (edgeLayout.targetEdge) {
+                        case NodeEdge::Top: edgeName = "T"; break;
+                        case NodeEdge::Bottom: edgeName = "B"; break;
+                        case NodeEdge::Left: edgeName = "L"; break;
+                        case NodeEdge::Right: edgeName = "R"; break;
+                    }
+                    snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.targetSnapIndex);
+
+                    // Position label based on edge direction
+                    ImVec2 textPos = screenPos;
+                    switch (edgeLayout.targetEdge) {
+                        case NodeEdge::Top: textPos.y -= 22; textPos.x -= 10; break;
+                        case NodeEdge::Bottom: textPos.y += 10; textPos.x -= 10; break;
+                        case NodeEdge::Left: textPos.x -= 32; textPos.y -= 7; break;
+                        case NodeEdge::Right: textPos.x += 12; textPos.y -= 7; break;
+                    }
+
+                    // Draw bold text with white background
+                    ImVec2 textSize = ImGui::CalcTextSize(label);
+                    ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
+                    ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
+                    fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
+                    fgDrawList->AddRect(bgMin, bgMax, IM_COL32(180, 40, 40, 255), 3.0f, 0, 2.0f);
+                    // Bold effect: draw text twice with offset
+                    fgDrawList->AddText({textPos.x + 1, textPos.y}, IM_COL32(160, 20, 20, 255), label);
+                    fgDrawList->AddText(textPos, IM_COL32(160, 20, 20, 255), label);
+                }
             }
         }
     }
@@ -592,8 +730,69 @@ public:
             setLayoutMode(LayoutMode::Manual);
         }
         
-        // Snap Distribution (only in Auto mode)
+        // Edge Routing Mode (Auto mode only)
         if (manualManager_.getMode() == LayoutMode::Auto) {
+            ImGui::Text("Edge Routing:");
+            const char* routingModes[] = {"Orthogonal", "Channel", "Polyline"};
+            int currentRouting = 0;
+            if (layoutOptions_.edgeRouting == EdgeRouting::ChannelOrthogonal) currentRouting = 1;
+            else if (layoutOptions_.edgeRouting == EdgeRouting::Polyline) currentRouting = 2;
+
+            if (ImGui::Combo("##EdgeRouting", &currentRouting, routingModes, 3)) {
+                switch (currentRouting) {
+                    case 0: layoutOptions_.edgeRouting = EdgeRouting::Orthogonal; break;
+                    case 1: layoutOptions_.edgeRouting = EdgeRouting::ChannelOrthogonal; break;
+                    case 2: layoutOptions_.edgeRouting = EdgeRouting::Polyline; break;
+                }
+                doLayout();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Orthogonal: Simple right-angle bends\nChannel: Circuit-style routing\nPolyline: Straight lines");
+            }
+
+            // Channel routing options (only when Channel mode is selected)
+            if (layoutOptions_.edgeRouting == EdgeRouting::ChannelOrthogonal) {
+                if (ImGui::TreeNode("Channel Options")) {
+                    bool changed = false;
+
+                    if (ImGui::SliderFloat("Spacing", &layoutOptions_.channelRouting.channelSpacing, 5.0f, 30.0f)) {
+                        changed = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Spacing between parallel edge channels");
+                    }
+
+                    if (ImGui::SliderFloat("Offset", &layoutOptions_.channelRouting.channelOffset, 10.0f, 50.0f)) {
+                        changed = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Minimum offset from layer boundary");
+                    }
+
+                    ImGui::Checkbox("Center Single Edge", &layoutOptions_.channelRouting.centerSingleEdge);
+
+                    // Self-loop direction
+                    ImGui::Text("Self-Loop Direction:");
+                    const char* loopDirs[] = {"Right", "Left", "Top", "Bottom", "Auto"};
+                    int currentDir = static_cast<int>(layoutOptions_.channelRouting.selfLoop.preferredDirection);
+                    if (ImGui::Combo("##LoopDir", &currentDir, loopDirs, 5)) {
+                        layoutOptions_.channelRouting.selfLoop.preferredDirection =
+                            static_cast<SelfLoopDirection>(currentDir);
+                        changed = true;
+                    }
+
+                    if (ImGui::SliderFloat("Loop Offset", &layoutOptions_.channelRouting.selfLoop.loopOffset, 10.0f, 50.0f)) {
+                        changed = true;
+                    }
+
+                    if (changed) {
+                        reRouteEdgesOnly();
+                    }
+                    ImGui::TreePop();
+                }
+            }
+
+            ImGui::Separator();
             ImGui::Text("Snap Distribution:");
             int snapDist = (layoutOptions_.snapDistribution == SnapDistribution::Unified) ? 0 : 1;
             if (ImGui::RadioButton("Unified", &snapDist, 0)) {
@@ -624,6 +823,13 @@ public:
         
         ImGui::Separator();
         ImGui::Checkbox("Show Snap Points", &showSnapPoints_);
+        if (showSnapPoints_) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Show Indices", &showSnapIndices_);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("T=Top, B=Bottom, L=Left, R=Right\nGreen=Outgoing, Red=Incoming");
+            }
+        }
         
         // Snap point configuration for selected node
         if (selectedNode_ != INVALID_NODE && manualManager_.getMode() == LayoutMode::Manual) {
@@ -771,6 +977,7 @@ private:
     Point dragOffset_ = {0, 0};
     std::vector<EdgeId> affectedEdges_;
     bool showSnapPoints_ = true;
+    bool showSnapIndices_ = true;
     
     // Bend point interaction state
     HoveredBendPoint hoveredBendPoint_;

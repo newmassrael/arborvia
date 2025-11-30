@@ -71,6 +71,9 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
     // Apply manual layout state if in manual mode
     if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
         manualManager_->applyManualState(state_->result, graph);
+        
+        // Update edge positions to match manual node positions
+        updateEdgePositionsAfterManualState();
     }
     
     return state_->result;
@@ -125,6 +128,9 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
     // Apply manual layout state if in manual mode
     if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
         manualManager_->applyManualState(state_->result, graph);
+        
+        // Update edge positions to match manual node positions
+        updateEdgePositionsAfterManualState();
     }
     
     return state_->result;
@@ -253,6 +259,30 @@ void SugiyamaLayout::routeEdges() {
         for (size_t i = 1; i < points.size(); ++i) {
             stats_.totalEdgeLength += points[i].distanceTo(points[i - 1]);
         }
+    }
+}
+
+void SugiyamaLayout::updateEdgePositionsAfterManualState() {
+    // Get all edge IDs
+    std::vector<EdgeId> allEdges;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (const auto& [id, layout] : state_->result.edgeLayouts()) {
+        allEdges.push_back(id);
+        edgeLayouts[id] = layout;
+    }
+    
+    // Update edge positions based on current (manual) node positions
+    algorithms::EdgeRouting::updateEdgePositions(
+        edgeLayouts,
+        state_->result.nodeLayouts(),
+        allEdges,
+        options_.snapDistribution,
+        {}  // Empty set = update all nodes
+    );
+    
+    // Apply updated edge layouts back to result
+    for (const auto& [id, layout] : edgeLayouts) {
+        state_->result.setEdgeLayout(id, layout);
     }
 }
 

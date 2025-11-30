@@ -15,9 +15,35 @@ enum class Direction {
 
 /// Edge routing style
 enum class EdgeRouting {
-    Orthogonal,    // Right-angle bends only
-    Polyline,      // Straight line segments
-    Splines        // Smooth curves (future)
+    Orthogonal,        // Right-angle bends only (simple midpoint)
+    ChannelOrthogonal, // Channel-based orthogonal routing (circuit diagram style)
+    Polyline,          // Straight line segments
+    Splines            // Smooth curves (future)
+};
+
+/// Self-loop routing direction
+enum class SelfLoopDirection {
+    Right,   // Loop exits to the right
+    Left,    // Loop exits to the left
+    Top,     // Loop exits upward
+    Bottom,  // Loop exits downward
+    Auto     // Automatically choose best direction
+};
+
+/// Configuration for self-loop routing
+struct SelfLoopConfig {
+    SelfLoopDirection preferredDirection = SelfLoopDirection::Auto;
+    float loopOffset = 20.0f;       // Distance from node edge
+    float stackSpacing = 15.0f;     // Spacing between multiple self-loops
+};
+
+/// Configuration for channel-based edge routing
+struct ChannelRoutingOptions {
+    float channelSpacing = 15.0f;     // Spacing between parallel channels
+    float channelOffset = 25.0f;      // Minimum offset from layer boundary
+    bool centerSingleEdge = true;     // Center edge when only one in channel region
+    int maxChannelsPerRegion = 10;    // Maximum channels per region
+    SelfLoopConfig selfLoop;          // Self-loop configuration
 };
 
 /// Node alignment within a layer
@@ -62,6 +88,7 @@ struct LayoutOptions {
     // Edge routing
     EdgeRouting edgeRouting = EdgeRouting::Orthogonal;
     float edgeBendRadius = 5.0f;          // Radius for rounded bends
+    ChannelRoutingOptions channelRouting; // Options for ChannelOrthogonal mode
     
     // Algorithm settings
     NodeAlignment nodeAlignment = NodeAlignment::Center;
@@ -95,6 +122,18 @@ struct LayoutOptions {
     }
     LayoutOptions& setCompoundPadding(float p) { compoundPadding = p; return *this; }
     LayoutOptions& setEdgeRouting(EdgeRouting r) { edgeRouting = r; return *this; }
+    LayoutOptions& setChannelSpacing(float spacing) {
+        channelRouting.channelSpacing = spacing;
+        return *this;
+    }
+    LayoutOptions& setChannelOffset(float offset) {
+        channelRouting.channelOffset = offset;
+        return *this;
+    }
+    LayoutOptions& setSelfLoopDirection(SelfLoopDirection dir) {
+        channelRouting.selfLoop.preferredDirection = dir;
+        return *this;
+    }
     LayoutOptions& setCrossingMinimization(CrossingMinimization c) { 
         crossingMinimization = c; 
         return *this; 

@@ -12,11 +12,69 @@
 namespace arborvia {
 namespace algorithms {
 
+// Forward declaration
+class SnapIndexManager;
+
+/// Channel assignment info for an edge
+struct ChannelAssignment {
+    int channel = 0;         // Channel index (0-based)
+    float yPosition = 0.0f;  // Computed Y coordinate for horizontal segment
+    int sourceLayer = 0;     // Source node's layer
+    int targetLayer = 0;     // Target node's layer
+    bool isSelfLoop = false; // True if source == target
+};
+
+/// Channel region between two adjacent layers
+struct ChannelRegion {
+    int fromLayer = 0;       // Source layer index
+    int toLayer = 0;         // Target layer index
+    float regionStart = 0;   // Y coordinate where region starts
+    float regionEnd = 0;     // Y coordinate where region ends
+    std::vector<EdgeId> edges;  // Edges routed through this region
+};
+
 /// Routes edges with appropriate bend points
 class EdgeRouting {
 public:
+    /// Result of edge routing operation
     struct Result {
         std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+        // Optional: channel assignments for debugging/visualization
+        std::unordered_map<EdgeId, ChannelAssignment> channelAssignments;
+        
+        // === Helper methods ===
+        
+        /// Get edge layout by ID, returns nullptr if not found
+        const EdgeLayout* getEdgeLayout(EdgeId id) const {
+            auto it = edgeLayouts.find(id);
+            return it != edgeLayouts.end() ? &it->second : nullptr;
+        }
+        
+        /// Get mutable edge layout by ID, returns nullptr if not found
+        EdgeLayout* getEdgeLayout(EdgeId id) {
+            auto it = edgeLayouts.find(id);
+            return it != edgeLayouts.end() ? &it->second : nullptr;
+        }
+        
+        /// Check if edge layout exists
+        bool hasEdgeLayout(EdgeId id) const {
+            return edgeLayouts.count(id) > 0;
+        }
+        
+        /// Get channel assignment by ID, returns nullptr if not found
+        const ChannelAssignment* getChannelAssignment(EdgeId id) const {
+            auto it = channelAssignments.find(id);
+            return it != channelAssignments.end() ? &it->second : nullptr;
+        }
+        
+        /// Get number of edges
+        size_t edgeCount() const { return edgeLayouts.size(); }
+        
+        /// Clear all layouts
+        void clear() {
+            edgeLayouts.clear();
+            channelAssignments.clear();
+        }
     };
     
     /// Route edges based on node positions
@@ -63,7 +121,16 @@ private:
     /// @param rangeEnd End of the range (0.0 to 1.0)
     /// @return Relative position (0.0 to 1.0)
     static float calculateRelativePosition(int snapIdx, int count, float rangeStart, float rangeEnd);
-    
+
+    /// Convert unified snap index to local index within a group
+    /// In Separated mode, indices are unified: incoming [0, inCount), outgoing [inCount, total)
+    /// This function converts to local index [0, count) for position calculation
+    /// @param unifiedIdx The unified snap index from EdgeLayout
+    /// @param offset The offset for this group (0 for incoming, inCount for outgoing)
+    /// @param count The count of items in this group
+    /// @return Local index clamped to [0, count)
+    static int unifiedToLocalIndex(int unifiedIdx, int offset, int count);
+
     /// Recalculate bend points for an edge based on source and target points
     static void recalculateBendPoints(EdgeLayout& layout);
     
@@ -102,6 +169,48 @@ private:
     Point computeSnapPoint(const NodeLayout& node,
                           Direction direction,
                           bool isSource);
+
+    // === Channel-based routing methods ===
+
+    /// Compute channel regions between adjacent layers
+    std::vector<ChannelRegion> computeChannelRegions(
+        const Graph& graph,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_set<EdgeId>& reversedEdges);
+
+    /// Allocate edges to channels
+    std::unordered_map<EdgeId, ChannelAssignment> allocateChannels(
+        const Graph& graph,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_set<EdgeId>& reversedEdges,
+        const LayoutOptions& options);
+
+    /// Compute channel Y position
+    float computeChannelY(const ChannelRegion& region,
+                         int channelIndex,
+                         const ChannelRoutingOptions& opts);
+
+    /// Route edge using channel assignment
+    EdgeLayout routeChannelOrthogonal(
+        const EdgeData& edge,
+        const NodeLayout& fromLayout,
+        const NodeLayout& toLayout,
+        bool isReversed,
+        const ChannelAssignment& channel,
+        const LayoutOptions& options);
+
+    /// Route self-loop edge
+    EdgeLayout routeSelfLoop(
+        const EdgeData& edge,
+        const NodeLayout& nodeLayout,
+        int loopIndex,
+        const LayoutOptions& options);
+
+    /// Analyze best direction for self-loop
+    SelfLoopDirection analyzeSelfLoopDirection(
+        const NodeLayout& node,
+        const std::unordered_map<EdgeId, EdgeLayout>& existingLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& allNodes);
 };
 
 }  // namespace algorithms

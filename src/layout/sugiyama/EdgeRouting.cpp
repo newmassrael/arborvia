@@ -1,7 +1,9 @@
 #include "EdgeRouting.h"
+#include "SnapIndexManager.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -17,9 +19,14 @@ Point EdgeRouting::calculateSnapPosition(const NodeLayout& node, NodeEdge edge, 
 }
 
 float EdgeRouting::calculateRelativePosition(int snapIdx, int count, float rangeStart, float rangeEnd) {
-    if (count <= 0) return (rangeStart + rangeEnd) / 2.0f;
-    float range = rangeEnd - rangeStart;
-    return rangeStart + static_cast<float>(snapIdx + 1) / static_cast<float>(count + 1) * range;
+    // Delegate to SnapIndexManager for centralized logic
+    SnapRange range{rangeStart, rangeEnd};
+    return SnapIndexManager::calculatePosition(snapIdx, count, range);
+}
+
+int EdgeRouting::unifiedToLocalIndex(int unifiedIdx, int offset, int count) {
+    // Delegate to SnapIndexManager for centralized logic
+    return SnapIndexManager::unifiedToLocal(unifiedIdx, offset, count);
 }
 
 void EdgeRouting::recalculateBendPoints(EdgeLayout& layout) {
@@ -39,21 +46,9 @@ std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
     NodeId nodeId,
     NodeEdge nodeEdge) {
     
-    int inCount = 0;
-    int outCount = 0;
-    
-    for (const auto& [edgeId, layout] : edgeLayouts) {
-        // Outgoing from this node on this edge
-        if (layout.from == nodeId && layout.sourceEdge == nodeEdge) {
-            outCount++;
-        }
-        // Incoming to this node on this edge
-        if (layout.to == nodeId && layout.targetEdge == nodeEdge) {
-            inCount++;
-        }
-    }
-    
-    return {inCount, outCount};
+    // Delegate to SnapIndexManager for centralized logic
+    auto connections = SnapIndexManager::getConnections(edgeLayouts, nodeId, nodeEdge);
+    return {connections.incomingCount(), connections.outgoingCount()};
 }
 
 // =============================================================================
@@ -65,33 +60,80 @@ EdgeRouting::Result EdgeRouting::route(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::unordered_set<EdgeId>& reversedEdges,
     const LayoutOptions& options) {
-    
+
     Result result;
-    
+
+    // Channel-based routing mode
+    if (options.edgeRouting == arborvia::EdgeRouting::ChannelOrthogonal) {
+        // Allocate channels for all edges
+        auto channelAssignments = allocateChannels(graph, nodeLayouts, reversedEdges, options);
+        result.channelAssignments = channelAssignments;
+
+        // Track self-loop counts per node
+        std::map<NodeId, int> selfLoopIndices;
+
+        for (EdgeId edgeId : graph.edges()) {
+            const EdgeData& edge = graph.getEdge(edgeId);
+
+            auto fromIt = nodeLayouts.find(edge.from);
+            auto toIt = nodeLayouts.find(edge.to);
+
+            if (fromIt == nodeLayouts.end() || toIt == nodeLayouts.end()) {
+                continue;
+            }
+
+            bool isReversed = reversedEdges.count(edgeId) > 0;
+
+            EdgeLayout layout;
+
+            // Self-loop handling
+            if (edge.from == edge.to) {
+                int loopIndex = selfLoopIndices[edge.from]++;
+                layout = routeSelfLoop(edge, fromIt->second, loopIndex, options);
+            } else {
+                // Regular edge with channel assignment
+                auto channelIt = channelAssignments.find(edgeId);
+                if (channelIt != channelAssignments.end()) {
+                    layout = routeChannelOrthogonal(edge, fromIt->second, toIt->second,
+                                                   isReversed, channelIt->second, options);
+                } else {
+                    // Fallback to simple orthogonal if no channel assigned
+                    layout = routeOrthogonal(edge, fromIt->second, toIt->second,
+                                            isReversed, options);
+                }
+            }
+
+            result.edgeLayouts[edgeId] = layout;
+        }
+
+        return result;
+    }
+
+    // Standard routing modes
     for (EdgeId edgeId : graph.edges()) {
         const EdgeData& edge = graph.getEdge(edgeId);
-        
+
         auto fromIt = nodeLayouts.find(edge.from);
         auto toIt = nodeLayouts.find(edge.to);
-        
+
         if (fromIt == nodeLayouts.end() || toIt == nodeLayouts.end()) {
             continue;
         }
-        
+
         bool isReversed = reversedEdges.count(edgeId) > 0;
-        
+
         EdgeLayout layout;
         if (options.edgeRouting == arborvia::EdgeRouting::Orthogonal) {
-            layout = routeOrthogonal(edge, fromIt->second, toIt->second, 
+            layout = routeOrthogonal(edge, fromIt->second, toIt->second,
                                     isReversed, options);
         } else {
-            layout = routePolyline(edge, fromIt->second, toIt->second, 
+            layout = routePolyline(edge, fromIt->second, toIt->second,
                                   isReversed, options);
         }
-        
+
         result.edgeLayouts[edgeId] = layout;
     }
-    
+
     return result;
 }
 
@@ -323,6 +365,9 @@ void EdgeRouting::distributeAutoSnapPoints(
                 outStart = 0.0f; outEnd = 1.0f;
             }
             
+            // Unified snap index counter for this node edge
+            int unifiedIndex = 0;
+            
             // Incoming edges
             for (int i = 0; i < inCount; ++i) {
                 EdgeId edgeId = incoming[i];
@@ -330,17 +375,17 @@ void EdgeRouting::distributeAutoSnapPoints(
                 
                 float position = calculateRelativePosition(i, inCount, inStart, inEnd);
                 layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
-                layout.targetSnapIndex = i;
+                layout.targetSnapIndex = unifiedIndex++;
             }
             
-            // Outgoing edges
+            // Outgoing edges (continue from where incoming left off)
             for (int i = 0; i < outCount; ++i) {
                 EdgeId edgeId = outgoing[i];
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
                 
                 float position = calculateRelativePosition(i, outCount, outStart, outEnd);
                 layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
-                layout.sourceSnapIndex = i;
+                layout.sourceSnapIndex = unifiedIndex++;
             }
         }
     }
@@ -456,32 +501,20 @@ void EdgeRouting::updateEdgePositions(
             }
             
             // Update incoming edges (target point on this node)
+            // Note: In Separated mode, snap indices are unified:
+            //   incoming get [0, totalIn), outgoing get [totalIn, totalIn+totalOut)
             for (EdgeId edgeId : incoming) {
                 EdgeLayout& layout = edgeLayouts[edgeId];
-                
-                // Use existing snap index, validate against TOTAL count
-                int snapIdx = layout.targetSnapIndex;
-                if (snapIdx < 0 || snapIdx >= totalIn) {
-                    snapIdx = std::min(snapIdx, totalIn - 1);
-                    if (snapIdx < 0) snapIdx = 0;
-                }
-                
-                float position = calculateRelativePosition(snapIdx, totalIn, inStart, inEnd);
+                int localIdx = unifiedToLocalIndex(layout.targetSnapIndex, 0, totalIn);
+                float position = calculateRelativePosition(localIdx, totalIn, inStart, inEnd);
                 layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
             }
-            
+
             // Update outgoing edges (source point on this node)
             for (EdgeId edgeId : outgoing) {
                 EdgeLayout& layout = edgeLayouts[edgeId];
-                
-                // Use existing snap index, validate against TOTAL count
-                int snapIdx = layout.sourceSnapIndex;
-                if (snapIdx < 0 || snapIdx >= totalOut) {
-                    snapIdx = std::min(snapIdx, totalOut - 1);
-                    if (snapIdx < 0) snapIdx = 0;
-                }
-                
-                float position = calculateRelativePosition(snapIdx, totalOut, outStart, outEnd);
+                int localIdx = unifiedToLocalIndex(layout.sourceSnapIndex, totalIn, totalOut);
+                float position = calculateRelativePosition(localIdx, totalOut, outStart, outEnd);
                 layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
             }
         }
@@ -493,6 +526,429 @@ void EdgeRouting::updateEdgePositions(
         if (it == edgeLayouts.end()) continue;
         recalculateBendPoints(it->second);
     }
+}
+
+// =============================================================================
+// Channel-Based Routing Methods
+// =============================================================================
+
+std::vector<ChannelRegion> EdgeRouting::computeChannelRegions(
+    const Graph& graph,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_set<EdgeId>& reversedEdges) {
+
+    // Find min/max Y for each layer
+    std::map<int, std::pair<float, float>> layerBounds;  // layer -> (minY, maxY)
+
+    for (const auto& [nodeId, layout] : nodeLayouts) {
+        int layer = layout.layer;
+        float nodeTop = layout.position.y;
+        float nodeBottom = layout.position.y + layout.size.height;
+
+        auto it = layerBounds.find(layer);
+        if (it == layerBounds.end()) {
+            layerBounds[layer] = {nodeTop, nodeBottom};
+        } else {
+            it->second.first = std::min(it->second.first, nodeTop);
+            it->second.second = std::max(it->second.second, nodeBottom);
+        }
+    }
+
+    if (layerBounds.empty()) {
+        return {};
+    }
+
+    // Create channel regions between adjacent layers
+    std::vector<ChannelRegion> regions;
+    std::vector<int> sortedLayers;
+    for (const auto& [layer, bounds] : layerBounds) {
+        sortedLayers.push_back(layer);
+    }
+    std::sort(sortedLayers.begin(), sortedLayers.end());
+
+    for (size_t i = 0; i + 1 < sortedLayers.size(); ++i) {
+        int fromLayer = sortedLayers[i];
+        int toLayer = sortedLayers[i + 1];
+
+        ChannelRegion region;
+        region.fromLayer = fromLayer;
+        region.toLayer = toLayer;
+        region.regionStart = layerBounds[fromLayer].second;  // Bottom of upper layer
+        region.regionEnd = layerBounds[toLayer].first;       // Top of lower layer
+
+        regions.push_back(region);
+    }
+
+    // Assign edges to regions based on their layer span
+    for (EdgeId edgeId : graph.edges()) {
+        const EdgeData& edge = graph.getEdge(edgeId);
+
+        auto fromIt = nodeLayouts.find(edge.from);
+        auto toIt = nodeLayouts.find(edge.to);
+        if (fromIt == nodeLayouts.end() || toIt == nodeLayouts.end()) {
+            continue;
+        }
+
+        int fromLayer = fromIt->second.layer;
+        int toLayer = toIt->second.layer;
+
+        // Skip self-loops (handled separately)
+        if (edge.from == edge.to) {
+            continue;
+        }
+
+        // Handle reversed edges (swap layers for routing purposes)
+        if (reversedEdges.count(edgeId) > 0) {
+            std::swap(fromLayer, toLayer);
+        }
+
+        // Find regions this edge passes through
+        int minLayer = std::min(fromLayer, toLayer);
+        int maxLayer = std::max(fromLayer, toLayer);
+
+        for (auto& region : regions) {
+            if (region.fromLayer >= minLayer && region.toLayer <= maxLayer) {
+                region.edges.push_back(edgeId);
+            }
+        }
+    }
+
+    return regions;
+}
+
+std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
+    const Graph& graph,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_set<EdgeId>& reversedEdges,
+    const LayoutOptions& options) {
+
+    std::unordered_map<EdgeId, ChannelAssignment> assignments;
+
+    // Handle self-loops first
+    std::map<NodeId, int> selfLoopCounts;
+    for (EdgeId edgeId : graph.edges()) {
+        const EdgeData& edge = graph.getEdge(edgeId);
+        if (edge.from == edge.to) {
+            auto nodeIt = nodeLayouts.find(edge.from);
+            if (nodeIt != nodeLayouts.end()) {
+                ChannelAssignment assignment;
+                assignment.channel = selfLoopCounts[edge.from]++;
+                assignment.sourceLayer = nodeIt->second.layer;
+                assignment.targetLayer = nodeIt->second.layer;
+                assignment.isSelfLoop = true;
+                assignments[edgeId] = assignment;
+            }
+        }
+    }
+
+    // Compute channel regions
+    auto regions = computeChannelRegions(graph, nodeLayouts, reversedEdges);
+
+    // Sort edges within each region by source X coordinate to minimize crossings
+    for (auto& region : regions) {
+        std::sort(region.edges.begin(), region.edges.end(),
+            [&](EdgeId a, EdgeId b) {
+                const EdgeData& edgeA = graph.getEdge(a);
+                const EdgeData& edgeB = graph.getEdge(b);
+
+                auto fromAIt = nodeLayouts.find(edgeA.from);
+                auto fromBIt = nodeLayouts.find(edgeB.from);
+
+                if (fromAIt == nodeLayouts.end() || fromBIt == nodeLayouts.end()) {
+                    return a < b;
+                }
+
+                return fromAIt->second.position.x < fromBIt->second.position.x;
+            });
+
+        // Assign channels sequentially
+        int maxChannels = options.channelRouting.maxChannelsPerRegion;
+        for (size_t i = 0; i < region.edges.size(); ++i) {
+            EdgeId edgeId = region.edges[i];
+
+            // Skip if already has assignment (e.g., from another region)
+            if (assignments.find(edgeId) != assignments.end()) {
+                continue;
+            }
+
+            const EdgeData& edge = graph.getEdge(edgeId);
+            auto fromIt = nodeLayouts.find(edge.from);
+            auto toIt = nodeLayouts.find(edge.to);
+
+            ChannelAssignment assignment;
+            assignment.channel = static_cast<int>(i) % maxChannels;
+            assignment.sourceLayer = fromIt->second.layer;
+            assignment.targetLayer = toIt->second.layer;
+            assignment.isSelfLoop = false;
+
+            // Compute Y position using region info
+            assignment.yPosition = computeChannelY(region, assignment.channel,
+                                                   options.channelRouting);
+
+            assignments[edgeId] = assignment;
+        }
+    }
+
+    return assignments;
+}
+
+float EdgeRouting::computeChannelY(
+    const ChannelRegion& region,
+    int channelIndex,
+    const ChannelRoutingOptions& opts) {
+
+    float regionHeight = region.regionEnd - region.regionStart;
+
+    // Edge count in this region
+    int count = static_cast<int>(region.edges.size());
+
+    // Single edge centered
+    if (count == 1 && opts.centerSingleEdge) {
+        return region.regionStart + regionHeight / 2.0f;
+    }
+
+    // Compute usable height (excluding offset margins)
+    float usableHeight = regionHeight - 2 * opts.channelOffset;
+    if (usableHeight < 0) {
+        usableHeight = regionHeight;  // Fall back if region too small
+    }
+
+    // Compute spacing between channels
+    float spacing = opts.channelSpacing;
+    if (count > 1) {
+        float maxSpacing = usableHeight / static_cast<float>(count - 1);
+        spacing = std::min(spacing, maxSpacing);
+    }
+
+    // Compute channel Y position
+    float startY = region.regionStart + opts.channelOffset;
+    if (usableHeight < regionHeight) {
+        startY = region.regionStart + (regionHeight - (count - 1) * spacing) / 2.0f;
+    }
+
+    return startY + static_cast<float>(channelIndex) * spacing;
+}
+
+EdgeLayout EdgeRouting::routeChannelOrthogonal(
+    const EdgeData& edge,
+    const NodeLayout& fromLayout,
+    const NodeLayout& toLayout,
+    bool isReversed,
+    const ChannelAssignment& channel,
+    const LayoutOptions& options) {
+
+    EdgeLayout layout;
+    layout.id = edge.id;
+    layout.from = edge.from;
+    layout.to = edge.to;
+
+    Point fromCenter = fromLayout.center();
+    Point toCenter = toLayout.center();
+
+    bool isVertical = (options.direction == Direction::TopToBottom ||
+                       options.direction == Direction::BottomToTop);
+
+    if (isVertical) {
+        // Vertical layout: source bottom, target top
+        if (fromCenter.y < toCenter.y) {
+            layout.sourcePoint = {fromCenter.x, fromLayout.position.y + fromLayout.size.height};
+            layout.targetPoint = {toCenter.x, toLayout.position.y};
+            layout.sourceEdge = NodeEdge::Bottom;
+            layout.targetEdge = NodeEdge::Top;
+        } else {
+            layout.sourcePoint = {fromCenter.x, fromLayout.position.y};
+            layout.targetPoint = {toCenter.x, toLayout.position.y + toLayout.size.height};
+            layout.sourceEdge = NodeEdge::Top;
+            layout.targetEdge = NodeEdge::Bottom;
+        }
+
+        // Use channel Y for horizontal segment
+        float channelY = channel.yPosition;
+
+        // Create orthogonal bend points using channel
+        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f) {
+            layout.bendPoints.push_back({{layout.sourcePoint.x, channelY}});
+            layout.bendPoints.push_back({{layout.targetPoint.x, channelY}});
+        } else {
+            // Nodes are vertically aligned - simple straight connection
+            // No bend points needed
+        }
+    } else {
+        // Horizontal layout: source right, target left
+        if (fromCenter.x < toCenter.x) {
+            layout.sourcePoint = {fromLayout.position.x + fromLayout.size.width, fromCenter.y};
+            layout.targetPoint = {toLayout.position.x, toCenter.y};
+            layout.sourceEdge = NodeEdge::Right;
+            layout.targetEdge = NodeEdge::Left;
+        } else {
+            layout.sourcePoint = {fromLayout.position.x, fromCenter.y};
+            layout.targetPoint = {toLayout.position.x + toLayout.size.width, toCenter.y};
+            layout.sourceEdge = NodeEdge::Left;
+            layout.targetEdge = NodeEdge::Right;
+        }
+
+        // For horizontal layout, channel Y becomes channel X
+        float channelX = channel.yPosition;  // Reused as X coordinate
+
+        if (std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
+            layout.bendPoints.push_back({{channelX, layout.sourcePoint.y}});
+            layout.bendPoints.push_back({{channelX, layout.targetPoint.y}});
+        }
+    }
+
+    // Mark as reversed if needed (for arrow rendering)
+    (void)isReversed;  // Could be used for visual indication
+
+    return layout;
+}
+
+EdgeLayout EdgeRouting::routeSelfLoop(
+    const EdgeData& edge,
+    const NodeLayout& nodeLayout,
+    int loopIndex,
+    const LayoutOptions& options) {
+
+    EdgeLayout layout;
+    layout.id = edge.id;
+    layout.from = edge.from;
+    layout.to = edge.to;
+
+    const auto& config = options.channelRouting.selfLoop;
+    float offset = config.loopOffset + static_cast<float>(loopIndex) * config.stackSpacing;
+
+    // Determine direction based on config or auto-detect
+    SelfLoopDirection dir = config.preferredDirection;
+
+    // For auto, default to Right (most common for state diagrams)
+    if (dir == SelfLoopDirection::Auto) {
+        dir = SelfLoopDirection::Right;
+    }
+
+    Point center = nodeLayout.center();
+    float spacing = 10.0f;  // Source/target point spacing
+
+    switch (dir) {
+        case SelfLoopDirection::Right:
+            layout.sourcePoint = {nodeLayout.position.x + nodeLayout.size.width,
+                                  center.y + spacing};
+            layout.targetPoint = {nodeLayout.position.x + nodeLayout.size.width,
+                                  center.y - spacing};
+            layout.sourceEdge = NodeEdge::Right;
+            layout.targetEdge = NodeEdge::Right;
+            layout.bendPoints.push_back({{nodeLayout.position.x + nodeLayout.size.width + offset,
+                                          layout.sourcePoint.y}});
+            layout.bendPoints.push_back({{nodeLayout.position.x + nodeLayout.size.width + offset,
+                                          layout.targetPoint.y}});
+            break;
+
+        case SelfLoopDirection::Left:
+            layout.sourcePoint = {nodeLayout.position.x, center.y - spacing};
+            layout.targetPoint = {nodeLayout.position.x, center.y + spacing};
+            layout.sourceEdge = NodeEdge::Left;
+            layout.targetEdge = NodeEdge::Left;
+            layout.bendPoints.push_back({{nodeLayout.position.x - offset, layout.sourcePoint.y}});
+            layout.bendPoints.push_back({{nodeLayout.position.x - offset, layout.targetPoint.y}});
+            break;
+
+        case SelfLoopDirection::Top:
+            layout.sourcePoint = {center.x - spacing, nodeLayout.position.y};
+            layout.targetPoint = {center.x + spacing, nodeLayout.position.y};
+            layout.sourceEdge = NodeEdge::Top;
+            layout.targetEdge = NodeEdge::Top;
+            layout.bendPoints.push_back({{layout.sourcePoint.x, nodeLayout.position.y - offset}});
+            layout.bendPoints.push_back({{layout.targetPoint.x, nodeLayout.position.y - offset}});
+            break;
+
+        case SelfLoopDirection::Bottom:
+            layout.sourcePoint = {center.x + spacing,
+                                  nodeLayout.position.y + nodeLayout.size.height};
+            layout.targetPoint = {center.x - spacing,
+                                  nodeLayout.position.y + nodeLayout.size.height};
+            layout.sourceEdge = NodeEdge::Bottom;
+            layout.targetEdge = NodeEdge::Bottom;
+            layout.bendPoints.push_back({{layout.sourcePoint.x,
+                                          nodeLayout.position.y + nodeLayout.size.height + offset}});
+            layout.bendPoints.push_back({{layout.targetPoint.x,
+                                          nodeLayout.position.y + nodeLayout.size.height + offset}});
+            break;
+
+        case SelfLoopDirection::Auto:
+            // Already handled above, but keep for completeness
+            break;
+    }
+
+    return layout;
+}
+
+SelfLoopDirection EdgeRouting::analyzeSelfLoopDirection(
+    const NodeLayout& node,
+    const std::unordered_map<EdgeId, EdgeLayout>& existingLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& allNodes) {
+
+    // Cost analysis for each direction
+    std::map<SelfLoopDirection, float> costs;
+    costs[SelfLoopDirection::Right] = 0.0f;
+    costs[SelfLoopDirection::Left] = 0.0f;
+    costs[SelfLoopDirection::Top] = 0.0f;
+    costs[SelfLoopDirection::Bottom] = 0.0f;
+
+    // Check for edges using each direction
+    for (const auto& [edgeId, layout] : existingLayouts) {
+        if (layout.from == node.id || layout.to == node.id) {
+            // Penalize directions with existing connections
+            if (layout.sourceEdge == NodeEdge::Right || layout.targetEdge == NodeEdge::Right) {
+                costs[SelfLoopDirection::Right] += 10.0f;
+            }
+            if (layout.sourceEdge == NodeEdge::Left || layout.targetEdge == NodeEdge::Left) {
+                costs[SelfLoopDirection::Left] += 10.0f;
+            }
+            if (layout.sourceEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Top) {
+                costs[SelfLoopDirection::Top] += 10.0f;
+            }
+            if (layout.sourceEdge == NodeEdge::Bottom || layout.targetEdge == NodeEdge::Bottom) {
+                costs[SelfLoopDirection::Bottom] += 10.0f;
+            }
+        }
+    }
+
+    // Check for nearby nodes in each direction
+    Point center = node.center();
+    for (const auto& [otherId, otherNode] : allNodes) {
+        if (otherId == node.id) continue;
+
+        Point otherCenter = otherNode.center();
+        float dx = otherCenter.x - center.x;
+        float dy = otherCenter.y - center.y;
+
+        // Proximity penalty based on direction
+        float proximity = 100.0f / (std::abs(dx) + std::abs(dy) + 1.0f);
+
+        if (dx > 0 && std::abs(dx) > std::abs(dy)) {
+            costs[SelfLoopDirection::Right] += proximity;
+        }
+        if (dx < 0 && std::abs(dx) > std::abs(dy)) {
+            costs[SelfLoopDirection::Left] += proximity;
+        }
+        if (dy < 0 && std::abs(dy) > std::abs(dx)) {
+            costs[SelfLoopDirection::Top] += proximity;
+        }
+        if (dy > 0 && std::abs(dy) > std::abs(dx)) {
+            costs[SelfLoopDirection::Bottom] += proximity;
+        }
+    }
+
+    // Find minimum cost direction
+    SelfLoopDirection bestDir = SelfLoopDirection::Right;
+    float minCost = costs[SelfLoopDirection::Right];
+
+    for (const auto& [dir, cost] : costs) {
+        if (cost < minCost) {
+            minCost = cost;
+            bestDir = dir;
+        }
+    }
+
+    return bestDir;
 }
 
 }  // namespace algorithms

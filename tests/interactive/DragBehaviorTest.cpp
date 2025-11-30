@@ -686,22 +686,31 @@ TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
     }
     
     // Verify all initial indices are within valid range
+    // With unified indexing, all connections on (node, edge) share index space
     std::cout << "Checking initial indices..." << std::endl;
     for (const auto& [edgeId, el] : result.edgeLayouts()) {
-        // Count edges on same source edge
-        int srcCount = 0;
-        int tgtCount = 0;
+        // Count ALL connections on same source node edge (both source and target)
+        int srcEdgeTotal = 0;
+        int tgtEdgeTotal = 0;
         for (const auto& [otherId, otherEl] : result.edgeLayouts()) {
-            if (otherEl.from == el.from && otherEl.sourceEdge == el.sourceEdge) srcCount++;
-            if (otherEl.to == el.to && otherEl.targetEdge == el.targetEdge) tgtCount++;
+            // Count connections on the source node's edge
+            if ((otherEl.from == el.from && otherEl.sourceEdge == el.sourceEdge) ||
+                (otherEl.to == el.from && otherEl.targetEdge == el.sourceEdge)) {
+                srcEdgeTotal++;
+            }
+            // Count connections on the target node's edge
+            if ((otherEl.from == el.to && otherEl.sourceEdge == el.targetEdge) ||
+                (otherEl.to == el.to && otherEl.targetEdge == el.targetEdge)) {
+                tgtEdgeTotal++;
+            }
         }
         
-        EXPECT_LT(el.sourceSnapIndex, srcCount) 
+        EXPECT_LT(el.sourceSnapIndex, srcEdgeTotal) 
             << "Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex 
-            << " >= srcCount=" << srcCount;
-        EXPECT_LT(el.targetSnapIndex, tgtCount)
+            << " >= srcEdgeTotal=" << srcEdgeTotal;
+        EXPECT_LT(el.targetSnapIndex, tgtEdgeTotal)
             << "Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex 
-            << " >= tgtCount=" << tgtCount;
+            << " >= tgtEdgeTotal=" << tgtEdgeTotal;
     }
     
     // Simulate multiple drags on different nodes
@@ -715,23 +724,29 @@ TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
         
         result = layout.layout(graph_);
         
-        // After each drag, verify indices are still valid
+        // After each drag, verify indices are still valid (unified indexing)
         for (const auto& [edgeId, el] : result.edgeLayouts()) {
-            int srcCount = 0;
-            int tgtCount = 0;
+            int srcEdgeTotal = 0;
+            int tgtEdgeTotal = 0;
             for (const auto& [otherId, otherEl] : result.edgeLayouts()) {
-                if (otherEl.from == el.from && otherEl.sourceEdge == el.sourceEdge) srcCount++;
-                if (otherEl.to == el.to && otherEl.targetEdge == el.targetEdge) tgtCount++;
+                if ((otherEl.from == el.from && otherEl.sourceEdge == el.sourceEdge) ||
+                    (otherEl.to == el.from && otherEl.targetEdge == el.sourceEdge)) {
+                    srcEdgeTotal++;
+                }
+                if ((otherEl.from == el.to && otherEl.sourceEdge == el.targetEdge) ||
+                    (otherEl.to == el.to && otherEl.targetEdge == el.targetEdge)) {
+                    tgtEdgeTotal++;
+                }
             }
             
-            EXPECT_LT(el.sourceSnapIndex, srcCount) 
+            EXPECT_LT(el.sourceSnapIndex, srcEdgeTotal) 
                 << "After dragging node " << dragNode 
                 << ", Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex 
-                << " >= srcCount=" << srcCount;
-            EXPECT_LT(el.targetSnapIndex, tgtCount)
+                << " >= srcEdgeTotal=" << srcEdgeTotal;
+            EXPECT_LT(el.targetSnapIndex, tgtEdgeTotal)
                 << "After dragging node " << dragNode
                 << ", Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex 
-                << " >= tgtCount=" << tgtCount;
+                << " >= tgtEdgeTotal=" << tgtEdgeTotal;
         }
     }
     

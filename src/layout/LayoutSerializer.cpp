@@ -189,8 +189,16 @@ std::string LayoutSerializer::toJson(const LayoutResult& result) {
         edgeJson["id"] = id;
         edgeJson["from"] = layout.from;
         edgeJson["to"] = layout.to;
+        
+        // Source snap point info
         edgeJson["sourcePoint"] = {{"x", layout.sourcePoint.x}, {"y", layout.sourcePoint.y}};
+        edgeJson["sourceEdge"] = nodeEdgeToString(layout.sourceEdge);
+        edgeJson["sourceSnapIndex"] = layout.sourceSnapIndex;
+        
+        // Target snap point info
         edgeJson["targetPoint"] = {{"x", layout.targetPoint.x}, {"y", layout.targetPoint.y}};
+        edgeJson["targetEdge"] = nodeEdgeToString(layout.targetEdge);
+        edgeJson["targetSnapIndex"] = layout.targetSnapIndex;
 
         json bendPoints = json::array();
         for (const auto& bp : layout.bendPoints) {

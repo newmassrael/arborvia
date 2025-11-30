@@ -47,6 +47,10 @@ public:
     bool hasManualBendPoints(EdgeId edgeId) const;
     void clearBendPoints(EdgeId edgeId);
     void setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points);
+    
+    /// Clear all edge routing configurations (snap edges and indices).
+    /// Use this before re-routing to allow fresh routing from algorithm.
+    void clearAllEdgeRoutings();
 
     // Apply manual state to layout result
     void applyManualState(LayoutResult& result, const Graph& graph) const;

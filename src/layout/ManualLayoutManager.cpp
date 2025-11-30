@@ -137,6 +137,10 @@ void ManualLayoutManager::setBendPoints(EdgeId edgeId, const std::vector<BendPoi
     manualState_.edgeRoutings[edgeId].manualBendPoints = points;
 }
 
+void ManualLayoutManager::clearAllEdgeRoutings() {
+    manualState_.edgeRoutings.clear();
+}
+
 void ManualLayoutManager::syncSnapConfigsFromEdgeLayouts(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts)
 {
