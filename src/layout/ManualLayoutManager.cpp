@@ -74,6 +74,135 @@ bool ManualLayoutManager::hasEdgeRouting(EdgeId id) const {
     return manualState_.hasEdgeRouting(id);
 }
 
+// Bend point management
+void ManualLayoutManager::addBendPoint(EdgeId edgeId, size_t index, const Point& position) {
+    auto& config = manualState_.edgeRoutings[edgeId];
+    BendPoint bp{position, false};
+    if (index >= config.manualBendPoints.size()) {
+        config.manualBendPoints.push_back(bp);
+    } else {
+        config.manualBendPoints.insert(config.manualBendPoints.begin() + static_cast<std::ptrdiff_t>(index), bp);
+    }
+}
+
+void ManualLayoutManager::appendBendPoint(EdgeId edgeId, const Point& position) {
+    auto& config = manualState_.edgeRoutings[edgeId];
+    config.manualBendPoints.push_back({position, false});
+}
+
+void ManualLayoutManager::removeBendPoint(EdgeId edgeId, size_t index) {
+    auto it = manualState_.edgeRoutings.find(edgeId);
+    if (it != manualState_.edgeRoutings.end() && 
+        index < it->second.manualBendPoints.size()) {
+        it->second.manualBendPoints.erase(
+            it->second.manualBendPoints.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+}
+
+void ManualLayoutManager::moveBendPoint(EdgeId edgeId, size_t index, const Point& position) {
+    auto it = manualState_.edgeRoutings.find(edgeId);
+    if (it != manualState_.edgeRoutings.end() && 
+        index < it->second.manualBendPoints.size()) {
+        it->second.manualBendPoints[index].position = position;
+    }
+}
+
+const std::vector<BendPoint>& ManualLayoutManager::getBendPoints(EdgeId edgeId) const {
+    static const std::vector<BendPoint> empty;
+    auto it = manualState_.edgeRoutings.find(edgeId);
+    if (it != manualState_.edgeRoutings.end()) {
+        return it->second.manualBendPoints;
+    }
+    return empty;
+}
+
+bool ManualLayoutManager::hasManualBendPoints(EdgeId edgeId) const {
+    auto it = manualState_.edgeRoutings.find(edgeId);
+    return it != manualState_.edgeRoutings.end() && 
+           !it->second.manualBendPoints.empty();
+}
+
+void ManualLayoutManager::clearBendPoints(EdgeId edgeId) {
+    auto it = manualState_.edgeRoutings.find(edgeId);
+    if (it != manualState_.edgeRoutings.end()) {
+        it->second.manualBendPoints.clear();
+    }
+}
+
+void ManualLayoutManager::setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points) {
+    manualState_.edgeRoutings[edgeId].manualBendPoints = points;
+}
+
+ManualLayoutManager::OrthogonalDragResult ManualLayoutManager::calculateOrthogonalDrag(
+    const Point& prevPoint,
+    const Point& currentPos,
+    const Point& nextPoint,
+    const Point& dragTarget,
+    bool hasNextBend,
+    bool isLastBend)
+{
+    // Tolerance for floating-point comparison (handles 45-degree edge case)
+    constexpr float EPSILON = 0.001f;
+    
+    OrthogonalDragResult result;
+    // result members are already default-initialized via struct definition
+
+    // Determine incoming segment direction
+    // Using EPSILON to handle edge case where dx == dy (45 degrees)
+    // In that case, we default to treating it as horizontal
+    float incomingDx = std::abs(currentPos.x - prevPoint.x);
+    float incomingDy = std::abs(currentPos.y - prevPoint.y);
+    bool incomingHorizontal = (incomingDx > incomingDy + EPSILON) || 
+                               (std::abs(incomingDx - incomingDy) <= EPSILON);
+
+    if (isLastBend) {
+        // For the last bend point, must maintain orthogonality with BOTH prev and target
+        float outgoingDx = std::abs(currentPos.x - nextPoint.x);
+        float outgoingDy = std::abs(currentPos.y - nextPoint.y);
+        bool outgoingHorizontal = (outgoingDx > outgoingDy + EPSILON) ||
+                                   (std::abs(outgoingDx - outgoingDy) <= EPSILON);
+
+        if (incomingHorizontal && !outgoingHorizontal) {
+            // Incoming horizontal, outgoing vertical
+            // Keep Y = prev.y (for horizontal) and X = target.x (for vertical)
+            result.newCurrentPos = {nextPoint.x, prevPoint.y};
+        } else if (!incomingHorizontal && outgoingHorizontal) {
+            // Incoming vertical, outgoing horizontal
+            // Keep X = prev.x (for vertical) and Y = target.y (for horizontal)
+            result.newCurrentPos = {prevPoint.x, nextPoint.y};
+        } else if (incomingHorizontal && outgoingHorizontal) {
+            // Both horizontal - only change X freely
+            result.newCurrentPos = {dragTarget.x, prevPoint.y};
+        } else {
+            // Both vertical - only change Y freely
+            result.newCurrentPos = {prevPoint.x, dragTarget.y};
+        }
+    } else {
+        // Not the last bend - constrain based on incoming direction only
+        if (incomingHorizontal) {
+            // Incoming is horizontal - keep Y same as prevPoint
+            result.newCurrentPos = {dragTarget.x, prevPoint.y};
+        } else {
+            // Incoming is vertical - keep X same as prevPoint
+            result.newCurrentPos = {prevPoint.x, dragTarget.y};
+        }
+    }
+
+    // Adjust the next bend point to maintain orthogonality on outgoing segment
+    if (hasNextBend) {
+        if (incomingHorizontal) {
+            // Outgoing should be vertical, so next.x = current.x
+            result.adjustedNextPos = {result.newCurrentPos.x, nextPoint.y};
+        } else {
+            // Outgoing should be horizontal, so next.y = current.y
+            result.adjustedNextPos = {nextPoint.x, result.newCurrentPos.y};
+        }
+        result.nextAdjusted = true;
+    }
+
+    return result;
+}
+
 void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]] const Graph& graph) const {
     if (mode_ != LayoutMode::Manual) {
         return;
@@ -115,14 +244,19 @@ void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]
         layout->sourceSnapIndex = routing.sourceSnapIndex;
         layout->targetSnapIndex = routing.targetSnapIndex;
 
-        // Recalculate bend points for orthogonal routing
+        // Apply bend points - manual takes priority over auto
         layout->bendPoints.clear();
-        if (std::abs(layout->sourcePoint.x - layout->targetPoint.x) > 1.0f ||
-            std::abs(layout->sourcePoint.y - layout->targetPoint.y) > 1.0f) {
-            // Simple orthogonal bend
-            float midY = (layout->sourcePoint.y + layout->targetPoint.y) / 2.0f;
-            layout->bendPoints.push_back({{layout->sourcePoint.x, midY}});
-            layout->bendPoints.push_back({{layout->targetPoint.x, midY}});
+        if (routing.hasManualBendPoints()) {
+            // Use manual bend points
+            layout->bendPoints = routing.manualBendPoints;
+        } else {
+            // Auto orthogonal bend points
+            if (std::abs(layout->sourcePoint.x - layout->targetPoint.x) > 1.0f ||
+                std::abs(layout->sourcePoint.y - layout->targetPoint.y) > 1.0f) {
+                float midY = (layout->sourcePoint.y + layout->targetPoint.y) / 2.0f;
+                layout->bendPoints.push_back({{layout->sourcePoint.x, midY}});
+                layout->bendPoints.push_back({{layout->targetPoint.x, midY}});
+            }
         }
     }
 }
@@ -266,7 +400,21 @@ std::string ManualLayoutManager::toJson() const {
         ss << "    \"" << id << "\": {\"sourceEdge\": \"" << nodeEdgeToString(routing.sourceEdge)
            << "\", \"targetEdge\": \"" << nodeEdgeToString(routing.targetEdge)
            << "\", \"sourceSnapIndex\": " << routing.sourceSnapIndex
-           << ", \"targetSnapIndex\": " << routing.targetSnapIndex << "}";
+           << ", \"targetSnapIndex\": " << routing.targetSnapIndex;
+        
+        // Include manual bend points if present
+        if (!routing.manualBendPoints.empty()) {
+            ss << ", \"bendPoints\": [";
+            bool firstBp = true;
+            for (const auto& bp : routing.manualBendPoints) {
+                if (!firstBp) ss << ", ";
+                ss << "{\"x\": " << bp.position.x << ", \"y\": " << bp.position.y
+                   << ", \"isControl\": " << (bp.isControlPoint ? "true" : "false") << "}";
+                firstBp = false;
+            }
+            ss << "]";
+        }
+        ss << "}";
         first = false;
     }
     ss << "\n  }\n";
@@ -403,6 +551,25 @@ bool ManualLayoutManager::fromJson(const std::string& json) {
         }
     }
 
+    // Helper to find matching bracket (for arrays)
+    auto findMatchingBracket = [](const std::string& s, size_t start) -> size_t {
+        int depth = 1;
+        for (size_t i = start + 1; i < s.size(); ++i) {
+            if (s[i] == '[') depth++;
+            else if (s[i] == ']') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return std::string::npos;
+    };
+
+    // Helper to parse a boolean after a colon
+    auto parseBool = [](const std::string& s, size_t pos) -> bool {
+        while (pos < s.size() && (s[pos] == ':' || s[pos] == ' ')) pos++;
+        return s.substr(pos, 4) == "true";
+    };
+
     // Parse edgeRoutings
     auto routeStart = json.find("\"edgeRoutings\"");
     if (routeStart != std::string::npos) {
@@ -424,7 +591,8 @@ bool ManualLayoutManager::fromJson(const std::string& json) {
                     
                     auto objStart = block.find("{", idEnd);
                     if (objStart == std::string::npos) break;
-                    auto objEnd = block.find("}", objStart);
+                    // Use findMatchingBrace to handle nested structures (bendPoints array)
+                    auto objEnd = findMatchingBrace(block, objStart);
                     if (objEnd == std::string::npos) break;
                     
                     std::string obj = block.substr(objStart, objEnd - objStart + 1);
@@ -461,6 +629,43 @@ bool ManualLayoutManager::fromJson(const std::string& json) {
                     auto tgtSnapPos = obj.find("\"targetSnapIndex\"");
                     if (tgtSnapPos != std::string::npos) {
                         routing.targetSnapIndex = parseInt(obj, tgtSnapPos + 17);
+                    }
+                    
+                    // Parse bendPoints array
+                    auto bpArrayPos = obj.find("\"bendPoints\"");
+                    if (bpArrayPos != std::string::npos) {
+                        auto arrayStart = obj.find("[", bpArrayPos);
+                        if (arrayStart != std::string::npos) {
+                            auto arrayEnd = findMatchingBracket(obj, arrayStart);
+                            if (arrayEnd != std::string::npos) {
+                                std::string bpArray = obj.substr(arrayStart + 1, arrayEnd - arrayStart - 1);
+                                size_t bpPos = 0;
+                                while ((bpPos = bpArray.find("{", bpPos)) != std::string::npos) {
+                                    auto bpEnd = bpArray.find("}", bpPos);
+                                    if (bpEnd == std::string::npos) break;
+                                    
+                                    std::string bpObj = bpArray.substr(bpPos, bpEnd - bpPos + 1);
+                                    
+                                    BendPoint bp;
+                                    auto xPos = bpObj.find("\"x\"");
+                                    auto yPos = bpObj.find("\"y\"");
+                                    auto ctrlPos = bpObj.find("\"isControl\"");
+                                    
+                                    if (xPos != std::string::npos) {
+                                        bp.position.x = parseNumber(bpObj, xPos + 3);
+                                    }
+                                    if (yPos != std::string::npos) {
+                                        bp.position.y = parseNumber(bpObj, yPos + 3);
+                                    }
+                                    if (ctrlPos != std::string::npos) {
+                                        bp.isControlPoint = parseBool(bpObj, ctrlPos + 11);
+                                    }
+                                    
+                                    routing.manualBendPoints.push_back(bp);
+                                    bpPos = bpEnd + 1;
+                                }
+                            }
+                        }
                     }
                     
                     EdgeId id = static_cast<EdgeId>(std::stoul(idStr));

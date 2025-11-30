@@ -104,7 +104,7 @@ arborvia/
 │   │   ├── ILayout.h           # 레이아웃 인터페이스
 │   │   ├── LayoutOptions.h     # 레이아웃 설정
 │   │   ├── LayoutResult.h      # 레이아웃 결과
-│   │   ├── LayoutTypes.h       # LayoutMode, NodeEdge, SnapPointConfig 등
+│   │   ├── LayoutTypes.h       # LayoutMode, NodeEdge, SnapPointConfig, BendPoint, EdgeRoutingConfig 등
 │   │   ├── LayoutUtils.h       # 레이아웃 유틸리티 함수
 │   │   ├── ManualLayoutManager.h # 수동 레이아웃 관리자
 │   │   └── SugiyamaLayout.h    # Sugiyama 알고리즘 구현
@@ -248,6 +248,56 @@ struct Rect {
 ```
 
 **핵심:** 렌더링 프레임워크 의존성 없음. 순수 수학적 타입.
+
+### LayoutTypes.h
+
+레이아웃 관련 타입 정의:
+
+```cpp
+namespace arborvia {
+
+/// 레이아웃 모드
+enum class LayoutMode { Auto, Manual };
+
+/// 노드 면 (엣지 연결 위치)
+enum class NodeEdge { Top, Bottom, Left, Right };
+
+/// Bend Point (엣지 꺾임점)
+struct BendPoint {
+    Point position{0, 0};
+    bool isControlPoint = false;  // 스플라인 제어점 여부
+};
+
+/// 엣지 라우팅 설정
+struct EdgeRoutingConfig {
+    NodeEdge sourceEdge = NodeEdge::Bottom;
+    NodeEdge targetEdge = NodeEdge::Top;
+    int sourceSnapIndex = 0;
+    int targetSnapIndex = 0;
+    
+    // 수동 bend points (비어있으면 자동 라우팅 사용)
+    std::vector<BendPoint> manualBendPoints;
+    
+    bool hasManualBendPoints() const {
+        return !manualBendPoints.empty();
+    }
+};
+
+/// 스냅 포인트 설정
+struct SnapPointConfig {
+    int topCount = 1;
+    int bottomCount = 1;
+    int leftCount = 1;
+    int rightCount = 1;
+    
+    int getCount(NodeEdge edge) const;
+    void setCount(NodeEdge edge, int count);
+};
+
+}
+```
+
+**핵심:** 수동 bend point가 있으면 자동 라우팅 비활성화.
 
 ---
 
@@ -574,11 +624,73 @@ public:
 };
 ```
 
+### ManualLayoutManager ✅
+
+수동 레이아웃 관리 및 Bend Point 조작을 위한 클래스:
+
+```cpp
+class ManualLayoutManager {
+public:
+    // 레이아웃 모드
+    void setMode(LayoutMode mode);  // Auto 또는 Manual
+    LayoutMode mode() const;
+    
+    // 노드 위치 관리
+    void setNodePosition(NodeId id, const Point& position);
+    Point getNodePosition(NodeId id) const;
+    
+    // 스냅 포인트 설정
+    void setSnapPointCount(NodeId id, NodeEdge edge, int count);
+    void setEdgeSourceEdge(EdgeId id, NodeEdge edge, int snapIndex = 0);
+    void setEdgeTargetEdge(EdgeId id, NodeEdge edge, int snapIndex = 0);
+    
+    // === Bend Point 관리 API ===
+    void addBendPoint(EdgeId edgeId, size_t index, const Point& position);
+    void appendBendPoint(EdgeId edgeId, const Point& position);
+    void removeBendPoint(EdgeId edgeId, size_t index);
+    void moveBendPoint(EdgeId edgeId, size_t index, const Point& position);
+    const std::vector<BendPoint>& getBendPoints(EdgeId edgeId) const;
+    bool hasManualBendPoints(EdgeId edgeId) const;
+    void clearBendPoints(EdgeId edgeId);
+    void setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points);
+    
+    // === 직교 드래그 제약 API ===
+    /// 드래그 시 직교성 유지를 위한 위치 계산
+    struct OrthogonalDragResult {
+        Point newCurrentPos{0, 0};      ///< 제약된 현재 bend point 위치
+        Point adjustedNextPos{0, 0};    ///< 조정된 다음 bend point 위치
+        bool nextAdjusted = false;      ///< 다음 bend point 조정 여부
+    };
+    
+    static OrthogonalDragResult calculateOrthogonalDrag(
+        const Point& prevPoint,     // 이전 점 (source 또는 이전 bend)
+        const Point& currentPos,    // 드래그 중인 bend point
+        const Point& nextPoint,     // 다음 점 (다음 bend 또는 target)
+        const Point& dragTarget,    // 드래그 목표 위치
+        bool hasNextBend,           // 다음 bend point 존재 여부
+        bool isLastBend);           // 마지막 bend point 여부
+    
+    // 레이아웃 적용
+    void applyManualState(LayoutResult& result, const Graph& graph) const;
+    void captureFromResult(const LayoutResult& result);
+    
+    // 직렬화
+    std::string toJson() const;
+    static ManualLayoutManager fromJson(const std::string& json);
+};
+```
+
+**Bend Point 동작 원리:**
+- `manualBendPoints`가 비어있으면 → 자동 직교 라우팅 사용
+- `manualBendPoints`가 있으면 → 수동 bend point 사용
+- `calculateOrthogonalDrag()`로 드래그 시 직교성 유지
+
 ---
 
 ## 🔀 레이어 3: 라우팅 모듈 📋 설계 완료
 
 > **상태:** 설계 완료, 구현 예정. 아래는 향후 구현될 API 명세입니다.
+> **참고:** 수동 Bend Point 기능은 `ManualLayoutManager`에서 이미 구현되어 있습니다.
 
 **엣지 라우팅, 스냅 포인트, 포트 제약 관리**
 
@@ -588,7 +700,7 @@ SCE(SCXML Core Engine)의 visualizer.html에서 제공하는 기능들을 C++ �
 
 1. **스냅 포인트 (Snap Points)** - 노드 경계의 연결점 자동 배치
 2. **포트 제약 (Port Constraints)** - 엣지 연결 위치 제어
-3. **꺾임 포인트 (Bend Points)** - 엣지 경로의 중간 지점
+3. **꺾임 포인트 (Bend Points)** - 엣지 경로의 중간 지점 ✅ (ManualLayoutManager에서 구현됨)
 4. **직교 라우팅 (Orthogonal Routing)** - 수직/수평 엣지 경로
 
 ### PortSide 열거형
@@ -1069,7 +1181,7 @@ TEST(SvgExportTest, SimpleGraph_ProducesValidSvg) {
 }
 ```
 
-**핵심 장점:** 렌더링 프레임워크 없이 모든 로직 테스트 가능 (95개 테스트)
+**핵심 장점:** 렌더링 프레임워크 없이 모든 로직 테스트 가능 (127개 테스트)
 
 ---
 
@@ -1153,7 +1265,7 @@ public:
 ✅ **제로 의존성** - C++ 표준 라이브러리만 사용  
 ✅ **MIT 라이센스** - 상업용 게임에서 자유롭게 사용  
 ✅ **플랫폼 독립적** - 어떤 UI 프레임워크와도 통합 가능  
-✅ **테스트 용이** - 렌더링 없이 모든 로직 테스트 (95개 테스트)
+✅ **테스트 용이** - 렌더링 없이 모든 로직 테스트 (127개 테스트)
 ✅ **확장 가능** - 인터페이스 기반으로 새 알고리즘 추가 용이  
 ✅ **모듈화** - 필요한 모듈만 선택적 사용 가능  
 

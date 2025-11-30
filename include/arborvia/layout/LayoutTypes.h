@@ -2,8 +2,15 @@
 #include "../core/Types.h"
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 namespace arborvia {
+
+// A bend point in an edge route
+struct BendPoint {
+    Point position;
+    bool isControlPoint = false;  // For spline curves
+};
 
 // Layout mode selection
 enum class LayoutMode {
@@ -52,6 +59,13 @@ struct EdgeRoutingConfig {
     NodeEdge targetEdge = NodeEdge::Top;     // Which edge of target node
     int sourceSnapIndex = 0;                  // Which snap point on source edge
     int targetSnapIndex = 0;                  // Which snap point on target edge
+    
+    // Manual bend points (empty = use auto routing)
+    std::vector<BendPoint> manualBendPoints;
+    
+    bool hasManualBendPoints() const {
+        return !manualBendPoints.empty();
+    }
 };
 
 // Complete manual layout state

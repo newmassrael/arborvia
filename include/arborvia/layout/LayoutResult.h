@@ -27,11 +27,7 @@ struct NodeLayout {
     }
 };
 
-/// A bend point in an edge route
-struct BendPoint {
-    Point position;
-    bool isControlPoint = false;  // For spline curves
-};
+// Note: BendPoint is defined in LayoutTypes.h
 
 /// Positioned edge in the layout result
 struct EdgeLayout {
