@@ -29,6 +29,29 @@ const ImU32 COLOR_SNAP_POINT_HOVER = IM_COL32(255, 200, 0, 255);
 const ImU32 COLOR_EDGE_SELECTED = IM_COL32(0, 200, 100, 255);
 const ImU32 COLOR_NODE_SELECTED = IM_COL32(100, 255, 100, 255);
 
+// Bend point colors
+const ImU32 COLOR_BEND_POINT = IM_COL32(100, 150, 255, 200);
+const ImU32 COLOR_BEND_POINT_HOVER = IM_COL32(150, 200, 255, 255);
+const ImU32 COLOR_BEND_POINT_SELECTED = IM_COL32(100, 255, 100, 255);
+const ImU32 COLOR_BEND_POINT_DRAGGING = IM_COL32(255, 180, 100, 255);
+const ImU32 COLOR_BEND_POINT_PREVIEW = IM_COL32(100, 200, 255, 128);
+
+// Bend point interaction state
+struct HoveredBendPoint {
+    EdgeId edgeId = INVALID_EDGE;
+    int bendPointIndex = -1;
+    bool isValid() const { return edgeId != INVALID_EDGE && bendPointIndex >= 0; }
+    void clear() { edgeId = INVALID_EDGE; bendPointIndex = -1; }
+};
+
+struct BendPointPreview {
+    EdgeId edgeId = INVALID_EDGE;
+    int insertIndex = -1;
+    Point position = {0, 0};
+    bool active = false;
+    void clear() { edgeId = INVALID_EDGE; insertIndex = -1; active = false; }
+};
+
 class InteractiveDemo {
 public:
     InteractiveDemo() {
@@ -146,21 +169,147 @@ public:
             }
         }
         
-        // Find hovered edge
+        // Find hovered bend point (only in Manual mode)
+        hoveredBendPoint_.clear();
+        bendPointPreview_.clear();
+        if (hoveredNode_ == INVALID_NODE && manualManager_.getMode() == LayoutMode::Manual) {
+            for (const auto& [edgeId, layout] : edgeLayouts_) {
+                const auto& bps = manualManager_.getBendPoints(edgeId);
+                for (size_t i = 0; i < bps.size(); ++i) {
+                    float dx = graphMouse.x - bps[i].position.x;
+                    float dy = graphMouse.y - bps[i].position.y;
+                    if (dx * dx + dy * dy < 64.0f) {  // 8 pixel radius
+                        hoveredBendPoint_.edgeId = edgeId;
+                        hoveredBendPoint_.bendPointIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+                if (hoveredBendPoint_.isValid()) break;
+            }
+        }
+        
+        // Find hovered edge and calculate bend point insertion preview
         hoveredEdge_ = INVALID_EDGE;
-        if (hoveredNode_ == INVALID_NODE) {
+        if (hoveredNode_ == INVALID_NODE && !hoveredBendPoint_.isValid()) {
             for (const auto& [id, layout] : edgeLayouts_) {
-                if (isPointNearEdge(graphMouse, layout, 8.0f)) {
+                int insertIdx = -1;
+                Point insertPos = {0, 0};
+                if (isPointNearEdgeWithInsertInfo(graphMouse, layout, 8.0f, insertIdx, insertPos)) {
                     hoveredEdge_ = id;
+                    // Show insert preview if edge is selected
+                    if (id == selectedEdge_ && manualManager_.getMode() == LayoutMode::Manual) {
+                        bendPointPreview_.edgeId = id;
+                        bendPointPreview_.insertIndex = insertIdx;
+                        bendPointPreview_.position = insertPos;
+                        bendPointPreview_.active = true;
+                    }
                     break;
                 }
             }
         }
         
-        // Handle click for selection
-        if (ImGui::IsMouseClicked(0) && hoveredNode_ != INVALID_NODE) {
+        // Handle bend point interaction
+        if (hoveredBendPoint_.isValid() && ImGui::IsMouseClicked(0)) {
+            // Start dragging bend point
+            selectedBendPoint_ = hoveredBendPoint_;
+            selectedEdge_ = hoveredBendPoint_.edgeId;
+            draggingBendPoint_ = hoveredBendPoint_;
+            const auto& bps = manualManager_.getBendPoints(draggingBendPoint_.edgeId);
+            bendPointDragOffset_ = {
+                graphMouse.x - bps[draggingBendPoint_.bendPointIndex].position.x,
+                graphMouse.y - bps[draggingBendPoint_.bendPointIndex].position.y
+            };
+        } else if (bendPointPreview_.active && ImGui::IsMouseClicked(0)) {
+            // Insert bend points to maintain orthogonal routing
+            EdgeId edgeId = bendPointPreview_.edgeId;
+            Point clickPos = bendPointPreview_.position;
+            
+            const auto& edgeLayout = edgeLayouts_[edgeId];
+            
+            // IMPORTANT: Capture current edge routing BEFORE adding bend points
+            // Otherwise addBendPoint() creates a config with default values (Bottom->Top)
+            // which would reset the edge routing to wrong values
+            if (!manualManager_.hasManualBendPoints(edgeId)) {
+                EdgeRoutingConfig routing;
+                routing.sourceEdge = edgeLayout.sourceEdge;
+                routing.targetEdge = edgeLayout.targetEdge;
+                routing.sourceSnapIndex = edgeLayout.sourceSnapIndex;
+                routing.targetSnapIndex = edgeLayout.targetSnapIndex;
+                manualManager_.setEdgeRouting(edgeId, routing);
+            }
+            
+            const auto& existingBps = manualManager_.getBendPoints(edgeId);
+            
+            Point bp1, bp2;
+            size_t insertIdx = 0;
+            
+            if (existingBps.empty()) {
+                // First insertion - calculate relative to source and target only
+                // (Auto bend points will be removed when manual bends are added)
+                Point source = edgeLayout.sourcePoint;
+                Point target = edgeLayout.targetPoint;
+                
+                float dx = std::abs(target.x - source.x);
+                float dy = std::abs(target.y - source.y);
+                
+                if (dx > dy) {
+                    // More horizontal - create vertical step
+                    bp1 = {clickPos.x, source.y};
+                    bp2 = {clickPos.x, target.y};
+                } else {
+                    // More vertical - create horizontal step
+                    bp1 = {source.x, clickPos.y};
+                    bp2 = {target.x, clickPos.y};
+                }
+                insertIdx = 0;
+            } else {
+                // Existing manual bends - use current path structure
+                int segmentIdx = bendPointPreview_.insertIndex;
+                
+                // Build path: source → [manual bends] → target
+                std::vector<Point> path;
+                path.push_back(edgeLayout.sourcePoint);
+                for (const auto& bp : existingBps) {
+                    path.push_back(bp.position);
+                }
+                path.push_back(edgeLayout.targetPoint);
+                
+                Point prevPoint = path[segmentIdx];
+                Point nextPoint = path[segmentIdx + 1];
+                
+                float dx = std::abs(nextPoint.x - prevPoint.x);
+                float dy = std::abs(nextPoint.y - prevPoint.y);
+                
+                if (dx > dy) {
+                    // More horizontal segment
+                    bp1 = {clickPos.x, prevPoint.y};
+                    bp2 = {clickPos.x, nextPoint.y};
+                    if (std::abs(prevPoint.y - nextPoint.y) < 1.0f) {
+                        bp2 = {clickPos.x, clickPos.y};
+                    }
+                } else {
+                    // More vertical segment
+                    bp1 = {prevPoint.x, clickPos.y};
+                    bp2 = {nextPoint.x, clickPos.y};
+                    if (std::abs(prevPoint.x - nextPoint.x) < 1.0f) {
+                        bp2 = {clickPos.x, clickPos.y};
+                    }
+                }
+                insertIdx = static_cast<size_t>(segmentIdx);
+            }
+            
+            // Insert both points
+            manualManager_.addBendPoint(edgeId, insertIdx, bp1);
+            manualManager_.addBendPoint(edgeId, insertIdx + 1, bp2);
+            
+            selectedBendPoint_.edgeId = edgeId;
+            selectedBendPoint_.bendPointIndex = static_cast<int>(insertIdx) + 1;
+            doLayout();
+        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ != INVALID_NODE) {
+            // Handle click for node selection
             selectedNode_ = hoveredNode_;
             selectedEdge_ = INVALID_EDGE;
+            selectedBendPoint_.clear();
             draggedNode_ = hoveredNode_;
             auto& layout = nodeLayouts_[draggedNode_];
             dragOffset_ = {graphMouse.x - layout.position.x, 
@@ -169,12 +318,20 @@ public:
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
             selectedEdge_ = hoveredEdge_;
             selectedNode_ = INVALID_NODE;
-        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE) {
+            selectedBendPoint_.clear();
+        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE && !hoveredBendPoint_.isValid()) {
             selectedNode_ = INVALID_NODE;
             selectedEdge_ = INVALID_EDGE;
+            selectedBendPoint_.clear();
         }
         
         if (ImGui::IsMouseReleased(0)) {
+            // Handle bend point drag release
+            if (draggingBendPoint_.isValid()) {
+                doLayout();
+            }
+            draggingBendPoint_.clear();
+            
             if (draggedNode_ != INVALID_NODE) {
                 // Save node positions before layout recalculation
                 std::unordered_map<NodeId, Point> savedPositions;
@@ -207,7 +364,64 @@ public:
             affectedEdges_.clear();
         }
         
-        if (draggedNode_ != INVALID_NODE && ImGui::IsMouseDragging(0)) {
+        // Handle bend point dragging with orthogonal constraint
+        if (draggingBendPoint_.isValid() && ImGui::IsMouseDragging(0)) {
+            EdgeId edgeId = draggingBendPoint_.edgeId;
+            int bpIdx = draggingBendPoint_.bendPointIndex;
+            
+            // Get current bend points from manager (source of truth)
+            const auto& bps = manualManager_.getBendPoints(edgeId);
+            if (bpIdx >= static_cast<int>(bps.size())) {
+                draggingBendPoint_.clear();
+            } else {
+                // Get the edge layout for source/target points
+                const auto& edgeLayout = edgeLayouts_[edgeId];
+                
+                // Determine prev point (source or previous bend)
+                Point prevPoint;
+                if (bpIdx == 0) {
+                    prevPoint = edgeLayout.sourcePoint;
+                } else {
+                    prevPoint = bps[bpIdx - 1].position;
+                }
+                
+                // Determine next point (next bend or target)
+                Point nextPoint;
+                if (bpIdx == static_cast<int>(bps.size()) - 1) {
+                    nextPoint = edgeLayout.targetPoint;
+                } else {
+                    nextPoint = bps[bpIdx + 1].position;
+                }
+                
+                Point currentPos = bps[bpIdx].position;
+                Point dragTarget = {graphMouse.x - bendPointDragOffset_.x,
+                                    graphMouse.y - bendPointDragOffset_.y};
+                
+                bool isLastBend = (bpIdx == static_cast<int>(bps.size()) - 1);
+                bool hasNextBend = (bpIdx < static_cast<int>(bps.size()) - 1);
+                
+                // Use library API for orthogonal drag constraint calculation
+                auto dragResult = ManualLayoutManager::calculateOrthogonalDrag(
+                    prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
+                
+                // Apply the calculated positions
+                if (dragResult.nextAdjusted) {
+                    manualManager_.moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), dragResult.adjustedNextPos);
+                }
+                manualManager_.moveBendPoint(edgeId, static_cast<size_t>(bpIdx), dragResult.newCurrentPos);
+                
+                // Update edge layout immediately for visual feedback
+                auto it = edgeLayouts_.find(edgeId);
+                if (it != edgeLayouts_.end()) {
+                    if (bpIdx < static_cast<int>(it->second.bendPoints.size())) {
+                        it->second.bendPoints[bpIdx].position = dragResult.newCurrentPos;
+                    }
+                    if (dragResult.nextAdjusted && bpIdx + 1 < static_cast<int>(it->second.bendPoints.size())) {
+                        it->second.bendPoints[bpIdx + 1].position = dragResult.adjustedNextPos;
+                    }
+                }
+            }
+        } else if (draggedNode_ != INVALID_NODE && ImGui::IsMouseDragging(0)) {
             // Update node position
             auto& layout = nodeLayouts_[draggedNode_];
             layout.position.x = graphMouse.x - dragOffset_.x;
@@ -218,6 +432,16 @@ public:
             
             // Re-route connected edges
             rerouteAffectedEdges();
+        }
+        
+        // Handle Delete key for bend point removal
+        if (selectedBendPoint_.isValid() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+            manualManager_.removeBendPoint(
+                selectedBendPoint_.edgeId,
+                static_cast<size_t>(selectedBendPoint_.bendPointIndex)
+            );
+            selectedBendPoint_.clear();
+            doLayout();
         }
     }
     
@@ -243,6 +467,39 @@ public:
                                    (p.y - closest.y) * (p.y - closest.y));
             
             if (dist < threshold) return true;
+        }
+        return false;
+    }
+    
+    // Extended version that returns insertion point info
+    bool isPointNearEdgeWithInsertInfo(const Point& p, const EdgeLayout& edge, float threshold,
+                                        int& outInsertIndex, Point& outInsertPos) {
+        auto points = edge.allPoints();
+        for (size_t i = 1; i < points.size(); ++i) {
+            Point a = points[i-1];
+            Point b = points[i];
+            
+            float dx = b.x - a.x;
+            float dy = b.y - a.y;
+            float len2 = dx * dx + dy * dy;
+            
+            float t = 0.0f;
+            if (len2 > 0.0001f) {
+                t = std::max(0.0f, std::min(1.0f, 
+                    ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+            }
+            
+            Point closest = {a.x + t * dx, a.y + t * dy};
+            float dist = std::sqrt((p.x - closest.x) * (p.x - closest.x) + 
+                                   (p.y - closest.y) * (p.y - closest.y));
+            
+            if (dist < threshold) {
+                // Segment i-1 to i means bend point index i-1 
+                // (insert after (i-1)th bend point, before ith)
+                outInsertIndex = static_cast<int>(i) - 1;
+                outInsertPos = closest;
+                return true;
+            }
         }
         return false;
     }
@@ -298,6 +555,68 @@ public:
                 ImVec2 textPos = {mid.x + offset_.x - 20, mid.y + offset_.y - 15};
                 drawList->AddText(textPos, COLOR_TEXT, edge.label.c_str());
             }
+            
+            // Draw bend points as diamonds (Manual mode only)
+            if (manualManager_.getMode() == LayoutMode::Manual) {
+                const auto& bps = layout.bendPoints;
+                for (size_t i = 0; i < bps.size(); ++i) {
+                    Point bpPos = bps[i].position;
+                    ImVec2 screenPos = {bpPos.x + offset_.x, bpPos.y + offset_.y};
+                    
+                    // Determine color based on state
+                    ImU32 bpColor = COLOR_BEND_POINT;
+                    float size = 6.0f;
+                    if (draggingBendPoint_.edgeId == id && 
+                        draggingBendPoint_.bendPointIndex == static_cast<int>(i)) {
+                        bpColor = COLOR_BEND_POINT_DRAGGING;
+                        size = 8.0f;
+                    } else if (selectedBendPoint_.edgeId == id && 
+                               selectedBendPoint_.bendPointIndex == static_cast<int>(i)) {
+                        bpColor = COLOR_BEND_POINT_SELECTED;
+                        size = 7.0f;
+                    } else if (hoveredBendPoint_.edgeId == id && 
+                               hoveredBendPoint_.bendPointIndex == static_cast<int>(i)) {
+                        bpColor = COLOR_BEND_POINT_HOVER;
+                        size = 7.0f;
+                    }
+                    
+                    // Draw diamond shape
+                    ImVec2 pts[4] = {
+                        {screenPos.x, screenPos.y - size},  // Top
+                        {screenPos.x + size, screenPos.y},  // Right
+                        {screenPos.x, screenPos.y + size},  // Bottom
+                        {screenPos.x - size, screenPos.y}   // Left
+                    };
+                    drawList->AddConvexPolyFilled(pts, 4, bpColor);
+                    drawList->AddPolyline(pts, 4, IM_COL32(50, 80, 150, 255), ImDrawFlags_Closed, 1.5f);
+                }
+            }
+        }
+        
+        // Draw bend point insertion preview
+        if (bendPointPreview_.active) {
+            ImVec2 screenPos = {bendPointPreview_.position.x + offset_.x, 
+                               bendPointPreview_.position.y + offset_.y};
+            float size = 5.0f;
+            ImVec2 pts[4] = {
+                {screenPos.x, screenPos.y - size},
+                {screenPos.x + size, screenPos.y},
+                {screenPos.x, screenPos.y + size},
+                {screenPos.x - size, screenPos.y}
+            };
+            drawList->AddConvexPolyFilled(pts, 4, COLOR_BEND_POINT_PREVIEW);
+            drawList->AddPolyline(pts, 4, IM_COL32(100, 200, 255, 200), ImDrawFlags_Closed, 1.0f);
+            
+            // Draw "+" indicator
+            float plusSize = 3.0f;
+            drawList->AddLine(
+                {screenPos.x - plusSize, screenPos.y},
+                {screenPos.x + plusSize, screenPos.y},
+                IM_COL32(255, 255, 255, 200), 2.0f);
+            drawList->AddLine(
+                {screenPos.x, screenPos.y - plusSize},
+                {screenPos.x, screenPos.y + plusSize},
+                IM_COL32(255, 255, 255, 200), 2.0f);
         }
         
         // Draw nodes
@@ -514,6 +833,40 @@ public:
                 manualManager_.setEdgeRouting(selectedEdge_, routing);
                 doLayout();
             }
+            
+            // Bend point management UI
+            ImGui::Separator();
+            ImGui::Text("Bend Points:");
+            
+            const auto& bps = manualManager_.getBendPoints(selectedEdge_);
+            if (bps.empty()) {
+                ImGui::TextDisabled("None (auto routing)");
+                ImGui::TextDisabled("Click on edge to add");
+            } else {
+                ImGui::Text("Count: %zu", bps.size());
+                for (size_t i = 0; i < bps.size(); ++i) {
+                    ImGui::PushID(static_cast<int>(i));
+                    bool isSelected = (selectedBendPoint_.edgeId == selectedEdge_ && 
+                                      selectedBendPoint_.bendPointIndex == static_cast<int>(i));
+                    if (isSelected) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), 
+                            "[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
+                    } else {
+                        ImGui::Text("[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
+                    }
+                    ImGui::PopID();
+                }
+                if (ImGui::Button("Clear All Bends")) {
+                    manualManager_.clearBendPoints(selectedEdge_);
+                    selectedBendPoint_.clear();
+                    doLayout();
+                }
+            }
+            
+            if (selectedBendPoint_.isValid() && selectedBendPoint_.edgeId == selectedEdge_) {
+                ImGui::Text("Selected: [%d]", selectedBendPoint_.bendPointIndex);
+                ImGui::TextDisabled("Press Delete to remove");
+            }
         }
         
         ImGui::Separator();
@@ -552,6 +905,13 @@ private:
     Point dragOffset_ = {0, 0};
     std::vector<EdgeId> affectedEdges_;
     bool showSnapPoints_ = true;
+    
+    // Bend point interaction state
+    HoveredBendPoint hoveredBendPoint_;
+    HoveredBendPoint selectedBendPoint_;
+    HoveredBendPoint draggingBendPoint_;
+    Point bendPointDragOffset_ = {0, 0};
+    BendPointPreview bendPointPreview_;
 };
 
 int main(int argc, char* argv[]) {
