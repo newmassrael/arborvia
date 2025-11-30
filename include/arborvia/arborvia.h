@@ -32,9 +32,13 @@
 #include "layout/LayoutResult.h"
 #include "layout/ILayout.h"
 #include "layout/SugiyamaLayout.h"
+#include "layout/LayoutEnums.h"
+#include "layout/ManualLayoutState.h"
 #include "layout/LayoutTypes.h"
 #include "layout/ManualLayoutManager.h"
 #include "layout/LayoutUtils.h"
+#include "layout/OrthogonalRouter.h"
+#include "layout/LayoutSerializer.h"
 
 // Export module - Output formats
 #include "export/IExporter.h"

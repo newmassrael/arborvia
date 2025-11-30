@@ -1,5 +1,6 @@
 #include "EdgeRouting.h"
 #include "arborvia/layout/LayoutTypes.h"
+#include "arborvia/layout/LayoutUtils.h"
 
 #include <cmath>
 #include <set>
@@ -12,17 +13,7 @@ namespace algorithms {
 // =============================================================================
 
 Point EdgeRouting::calculateSnapPosition(const NodeLayout& node, NodeEdge edge, float position) {
-    switch (edge) {
-        case NodeEdge::Top:
-            return {node.position.x + node.size.width * position, node.position.y};
-        case NodeEdge::Bottom:
-            return {node.position.x + node.size.width * position, node.position.y + node.size.height};
-        case NodeEdge::Left:
-            return {node.position.x, node.position.y + node.size.height * position};
-        case NodeEdge::Right:
-            return {node.position.x + node.size.width, node.position.y + node.size.height * position};
-    }
-    return node.center();
+    return LayoutUtils::calculateSnapPointFromPosition(node, edge, position);
 }
 
 float EdgeRouting::calculateRelativePosition(int snapIdx, int count, float rangeStart, float rangeEnd) {

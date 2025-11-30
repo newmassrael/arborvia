@@ -27,6 +27,9 @@ if(ARBORVIA_ENABLE_SVG_EXPORT)
     target_compile_definitions(arborvia PUBLIC ARBORVIA_ENABLE_SVG_EXPORT)
 endif()
 
+# nlohmann/json (header-only library)
+set(NLOHMANN_JSON_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/include)
+
 target_include_directories(arborvia
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -34,6 +37,7 @@ target_include_directories(arborvia
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/layout
+        ${NLOHMANN_JSON_INCLUDE_DIR}
 )
 
 # Compiler warnings
