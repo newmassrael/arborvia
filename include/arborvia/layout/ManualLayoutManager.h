@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ManualLayout.h"
+#include "LayoutTypes.h"
 #include "LayoutResult.h"
 #include "../core/Graph.h"
 #include <string>

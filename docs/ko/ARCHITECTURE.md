@@ -104,6 +104,9 @@ arborvia/
 │   │   ├── ILayout.h           # 레이아웃 인터페이스
 │   │   ├── LayoutOptions.h     # 레이아웃 설정
 │   │   ├── LayoutResult.h      # 레이아웃 결과
+│   │   ├── LayoutTypes.h       # LayoutMode, NodeEdge, SnapPointConfig 등
+│   │   ├── LayoutUtils.h       # 레이아웃 유틸리티 함수
+│   │   ├── ManualLayoutManager.h # 수동 레이아웃 관리자
 │   │   └── SugiyamaLayout.h    # Sugiyama 알고리즘 구현
 │   └── export/                 # ✅ 내보내기 모듈
 │       ├── IExporter.h         # 내보내기 인터페이스
@@ -114,6 +117,8 @@ arborvia/
 │   │   └── CompoundGraph.cpp
 │   ├── layout/
 │   │   ├── LayoutResult.cpp
+│   │   ├── LayoutUtils.cpp
+│   │   ├── ManualLayoutManager.cpp
 │   │   ├── SugiyamaLayout.cpp
 │   │   └── sugiyama/           # Sugiyama 내부 알고리즘
 │   │       ├── CycleRemoval.cpp
@@ -127,16 +132,29 @@ arborvia/
 │   ├── core/
 │   │   ├── GraphTest.cpp
 │   │   └── CompoundGraphTest.cpp
-│   └── layout/
-│       └── SugiyamaLayoutTest.cpp
+│   ├── layout/
+│   │   ├── SugiyamaLayoutTest.cpp
+│   │   ├── LayoutResultTest.cpp
+│   │   └── ManualLayoutTest.cpp
+│   ├── export/
+│   │   └── SvgExportTest.cpp
+│   └── interactive/
+│       └── DragBehaviorTest.cpp
+├── examples/                   # 예제 프로그램
+│   ├── interactive_demo/       # 인터랙티브 데모
+│   │   └── main.cpp
+│   ├── drag_demo/              # 드래그 기능 데모
+│   │   └── main.cpp
+│   └── visual_demo/            # 시각적 테스트 데모
+│       └── main.cpp
 ├── cmake/                      # 모듈별 CMake 설정
 │   ├── ArborviaCore.cmake
 │   ├── ArborviaLayout.cmake
 │   └── ArborviaExport.cmake
 ├── CMakeLists.txt              # 메인 빌드 설정
 └── docs/
-    └── KR/
-        └── ARCHITECTURE_KR.md
+    └── ko/
+        └── ARCHITECTURE.md
 ```
 
 ### 계획된 구조 📋 (routing 모듈)
@@ -978,18 +996,47 @@ public:
 
 ## 🧪 테스트 전략
 
-### 단위 테스트
+### 테스트 구조
+
+```
+tests/
+├── core/                       # 핵심 자료구조 테스트
+│   ├── GraphTest.cpp           # Graph 클래스 테스트
+│   └── CompoundGraphTest.cpp   # CompoundGraph 클래스 테스트
+├── layout/                     # 레이아웃 엔진 테스트
+│   ├── SugiyamaLayoutTest.cpp  # Sugiyama 알고리즘 테스트
+│   ├── LayoutResultTest.cpp    # LayoutResult 직렬화/역직렬화 테스트
+│   └── ManualLayoutTest.cpp    # 수동 레이아웃 테스트
+├── export/                     # 내보내기 모듈 테스트
+│   └── SvgExportTest.cpp       # SVG 내보내기 테스트
+└── interactive/                # 인터랙티브 기능 테스트
+    └── DragBehaviorTest.cpp    # 드래그 동작 및 스냅 포인트 테스트
+```
+
+### 테스트 명명 규칙
+
+`[Group_]Action_ExpectedResult` 패턴 사용:
+
+```cpp
+// 그룹 접두사를 통한 명확한 분류
+TEST_F(DragBehaviorTest, Layout_InitialRouting_IsValid)
+TEST_F(DragBehaviorTest, Drag_SingleNode_PreservesRouting)
+TEST_F(DragBehaviorTest, Snap_DuringDrag_PointsDontMerge)
+TEST_F(DragBehaviorTest, Mode_Unified_DistributesCorrectly)
+```
+
+### 단위 테스트 예시
 
 ```cpp
 // Graph 테스트
-TEST(GraphTest, AddNode) {
+TEST(GraphTest, AddNode_WithLabel_ReturnsValidId) {
     Graph graph;
     NodeId id = graph.addNode("test");
     EXPECT_TRUE(graph.hasNode(id));
 }
 
 // CompoundGraph 테스트
-TEST(CompoundGraphTest, SetParent) {
+TEST(CompoundGraphTest, SetParent_ValidNodes_EstablishesHierarchy) {
     CompoundGraph graph;
     NodeId parent = graph.addCompoundNode(CompoundType::Compound);
     NodeId child = graph.addNode("child");
@@ -998,7 +1045,7 @@ TEST(CompoundGraphTest, SetParent) {
 }
 
 // Layout 테스트
-TEST(SugiyamaLayoutTest, SimpleChain) {
+TEST(SugiyamaLayoutTest, ChainGraph_AssignsSequentialLayers) {
     Graph graph;
     NodeId n1 = graph.addNode("A");
     NodeId n2 = graph.addNode("B");
@@ -1010,9 +1057,19 @@ TEST(SugiyamaLayoutTest, SimpleChain) {
     EXPECT_EQ(result.getNodeLayout(n1)->layer, 0);
     EXPECT_EQ(result.getNodeLayout(n2)->layer, 1);
 }
+
+// LayoutResult 테스트
+TEST(LayoutResultTest, ToJson_ContainsRequiredFields) {
+    // JSON 직렬화 검증
+}
+
+// SVG Export 테스트
+TEST(SvgExportTest, SimpleGraph_ProducesValidSvg) {
+    // SVG 출력 검증
+}
 ```
 
-**핵심 장점:** 렌더링 프레임워크 없이 모든 로직 테스트 가능
+**핵심 장점:** 렌더링 프레임워크 없이 모든 로직 테스트 가능 (95개 테스트)
 
 ---
 
@@ -1096,7 +1153,7 @@ public:
 ✅ **제로 의존성** - C++ 표준 라이브러리만 사용  
 ✅ **MIT 라이센스** - 상업용 게임에서 자유롭게 사용  
 ✅ **플랫폼 독립적** - 어떤 UI 프레임워크와도 통합 가능  
-✅ **테스트 용이** - 렌더링 없이 모든 로직 테스트 (45개 테스트)
+✅ **테스트 용이** - 렌더링 없이 모든 로직 테스트 (95개 테스트)
 ✅ **확장 가능** - 인터페이스 기반으로 새 알고리즘 추가 용이  
 ✅ **모듈화** - 필요한 모듈만 선택적 사용 가능  
 

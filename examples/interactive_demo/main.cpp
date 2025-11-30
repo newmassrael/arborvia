@@ -11,6 +11,8 @@
 #include <string>
 #include <cmath>
 #include <fstream>
+#include <map>
+#include <iostream>
 
 using namespace arborvia;
 
@@ -42,6 +44,7 @@ public:
             manualManager_.captureFromResult(layoutResult_);
         }
         manualManager_.setMode(mode);
+        layoutOptions_.mode = mode;
         doLayout();
     }
     
@@ -74,6 +77,7 @@ public:
     
     void doLayout() {
         SugiyamaLayout layout;
+        layout.setOptions(layoutOptions_);
         layout.setManualLayoutManager(&manualManager_);
         layoutResult_ = layout.layout(graph_);
         
@@ -87,8 +91,35 @@ public:
             edgeLayouts_[id] = layout;
         }
         
+        // Sync snap configs from edge layouts (for Auto mode snap point visibility)
+        syncSnapConfigsFromEdges();
+        
         // Offset for centering
         offset_ = {100.0f, 50.0f};
+    }
+    
+    void syncSnapConfigsFromEdges() {
+        // Count snap points needed per node edge based on actual edge connections
+        std::map<std::pair<NodeId, NodeEdge>, int> snapCounts;
+        
+        for (const auto& [edgeId, layout] : edgeLayouts_) {
+            // Track max snap index for each node edge
+            auto& srcCount = snapCounts[{layout.from, layout.sourceEdge}];
+            srcCount = std::max(srcCount, layout.sourceSnapIndex + 1);
+            
+            auto& tgtCount = snapCounts[{layout.to, layout.targetEdge}];
+            tgtCount = std::max(tgtCount, layout.targetSnapIndex + 1);
+        }
+        
+        // Update snap configs (only if greater than current to preserve manual settings)
+        for (const auto& [key, count] : snapCounts) {
+            auto [nodeId, edge] = key;
+            SnapPointConfig config = manualManager_.getSnapConfig(nodeId);
+            if (count > config.getCount(edge)) {
+                config.setCount(edge, count);
+                manualManager_.setSnapConfig(nodeId, config);
+            }
+        }
     }
     
     void update() {
@@ -144,6 +175,34 @@ public:
         }
         
         if (ImGui::IsMouseReleased(0)) {
+            if (draggedNode_ != INVALID_NODE) {
+                // Save node positions before layout recalculation
+                std::unordered_map<NodeId, Point> savedPositions;
+                for (const auto& [id, layout] : nodeLayouts_) {
+                    savedPositions[id] = layout.position;
+                    manualManager_.setNodePosition(id, layout.position);
+                }
+                
+                // Get all edge IDs for update
+                std::vector<EdgeId> allEdges;
+                for (const auto& [edgeId, _] : edgeLayouts_) {
+                    allEdges.push_back(edgeId);
+                }
+                
+                // Recalculate layout (this gives fresh edge routing)
+                doLayout();
+                
+                // Restore node positions
+                for (auto& [id, layout] : nodeLayouts_) {
+                    layout.position = savedPositions[id];
+                }
+                
+                // Update all edge positions using library API
+                // Pass empty set to update ALL endpoints (not just moved nodes)
+                LayoutUtils::updateEdgePositions(
+                    edgeLayouts_, nodeLayouts_, allEdges,
+                    layoutOptions_.snapDistribution, {});
+            }
             draggedNode_ = INVALID_NODE;
             affectedEdges_.clear();
         }
@@ -154,10 +213,8 @@ public:
             layout.position.x = graphMouse.x - dragOffset_.x;
             layout.position.y = graphMouse.y - dragOffset_.y;
             
-            // Update manual state if in manual mode
-            if (manualManager_.getMode() == LayoutMode::Manual) {
-                manualManager_.setNodePosition(draggedNode_, layout.position);
-            }
+            // Save position (for both modes, so snap distribution works after drag)
+            manualManager_.setNodePosition(draggedNode_, layout.position);
             
             // Re-route connected edges
             rerouteAffectedEdges();
@@ -191,33 +248,12 @@ public:
     }
     
     void rerouteAffectedEdges() {
-        for (EdgeId edgeId : affectedEdges_) {
-            const EdgeData& edge = graph_.getEdge(edgeId);
-            const NodeLayout& fromNode = nodeLayouts_[edge.from];
-            const NodeLayout& toNode = nodeLayouts_[edge.to];
-            
-            EdgeLayout& layout = edgeLayouts_[edgeId];
-            layout.bendPoints.clear();
-            
-            Point fromCenter = fromNode.center();
-            Point toCenter = toNode.center();
-            
-            // Simple orthogonal routing
-            if (fromCenter.y < toCenter.y) {
-                layout.sourcePoint = {fromCenter.x, fromNode.position.y + fromNode.size.height};
-                layout.targetPoint = {toCenter.x, toNode.position.y};
-            } else {
-                layout.sourcePoint = {fromCenter.x, fromNode.position.y};
-                layout.targetPoint = {toCenter.x, toNode.position.y + toNode.size.height};
-            }
-            
-            // Add bend points for orthogonal path
-            if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f) {
-                float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
-                layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
-                layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
-            }
-        }
+        // Use library API for edge position updates
+        // Only update endpoints on the dragged node, not on connected nodes
+        std::unordered_set<NodeId> movedNodes = {draggedNode_};
+        LayoutUtils::updateEdgePositions(
+            edgeLayouts_, nodeLayouts_, affectedEdges_, 
+            layoutOptions_.snapDistribution, movedNodes);
     }
     
     void render(ImDrawList* drawList) {
@@ -298,21 +334,41 @@ public:
     }
     
     void drawSnapPoints(ImDrawList* drawList, const NodeLayout& nodeLayout) {
-        SnapPointConfig config = manualManager_.getSnapConfig(nodeLayout.id);
+        // In Manual mode, draw configured snap points
+        if (manualManager_.getMode() == LayoutMode::Manual) {
+            SnapPointConfig config = manualManager_.getSnapConfig(nodeLayout.id);
+            
+            auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
+                for (int i = 0; i < count; ++i) {
+                    Point p = ManualLayoutManager::calculateSnapPoint(nodeLayout, edge, i, count);
+                    ImVec2 screenPos = {p.x + offset_.x, p.y + offset_.y};
+                    drawList->AddCircleFilled(screenPos, 4.0f, COLOR_SNAP_POINT);
+                }
+            };
+            
+            drawEdgeSnaps(NodeEdge::Top, config.topCount);
+            drawEdgeSnaps(NodeEdge::Bottom, config.bottomCount);
+            drawEdgeSnaps(NodeEdge::Left, config.leftCount);
+            drawEdgeSnaps(NodeEdge::Right, config.rightCount);
+        }
         
-        // Draw snap points for each edge
-        auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
-            for (int i = 0; i < count; ++i) {
-                Point p = ManualLayoutManager::calculateSnapPoint(nodeLayout, edge, i, count);
-                ImVec2 screenPos = {p.x + offset_.x, p.y + offset_.y};
-                drawList->AddCircleFilled(screenPos, 4.0f, COLOR_SNAP_POINT);
+        // Draw actual edge connection points (for both modes)
+        for (const auto& [edgeId, edgeLayout] : edgeLayouts_) {
+            // Source point on this node
+            if (edgeLayout.from == nodeLayout.id) {
+                ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x, 
+                                    edgeLayout.sourcePoint.y + offset_.y};
+                drawList->AddCircleFilled(screenPos, 5.0f, IM_COL32(100, 200, 100, 255));
+                drawList->AddCircle(screenPos, 5.0f, IM_COL32(50, 150, 50, 255), 0, 1.5f);
             }
-        };
-        
-        drawEdgeSnaps(NodeEdge::Top, config.topCount);
-        drawEdgeSnaps(NodeEdge::Bottom, config.bottomCount);
-        drawEdgeSnaps(NodeEdge::Left, config.leftCount);
-        drawEdgeSnaps(NodeEdge::Right, config.rightCount);
+            // Target point on this node
+            if (edgeLayout.to == nodeLayout.id) {
+                ImVec2 screenPos = {edgeLayout.targetPoint.x + offset_.x, 
+                                    edgeLayout.targetPoint.y + offset_.y};
+                drawList->AddCircleFilled(screenPos, 5.0f, IM_COL32(200, 100, 100, 255));
+                drawList->AddCircle(screenPos, 5.0f, IM_COL32(150, 50, 50, 255), 0, 1.5f);
+            }
+        }
     }
     
     void drawArrowhead(ImDrawList* drawList, const Point& from, const Point& to, ImU32 color) {
@@ -349,6 +405,24 @@ public:
         ImGui::SameLine();
         if (ImGui::RadioButton("Manual", &mode, 1)) {
             setLayoutMode(LayoutMode::Manual);
+        }
+        
+        // Snap Distribution (only in Auto mode)
+        if (manualManager_.getMode() == LayoutMode::Auto) {
+            ImGui::Text("Snap Distribution:");
+            int snapDist = (layoutOptions_.snapDistribution == SnapDistribution::Unified) ? 0 : 1;
+            if (ImGui::RadioButton("Unified", &snapDist, 0)) {
+                layoutOptions_.snapDistribution = SnapDistribution::Unified;
+                doLayout();
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Separated", &snapDist, 1)) {
+                layoutOptions_.snapDistribution = SnapDistribution::Separated;
+                doLayout();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Unified: all edges evenly distributed\nSeparated: incoming left, outgoing right");
+            }
         }
         
         ImGui::Separator();
@@ -467,6 +541,7 @@ private:
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
     LayoutResult layoutResult_;
     ManualLayoutManager manualManager_;
+    LayoutOptions layoutOptions_;
     
     Point offset_ = {0, 0};
     NodeId hoveredNode_ = INVALID_NODE;
