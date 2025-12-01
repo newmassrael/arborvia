@@ -49,7 +49,7 @@ LayerAssignment::Result LayerAssignment::assignLayersWithRoots(
         int currentLayer = result.nodeLayer[current];
         
         for (EdgeId edgeId : graph.outEdges(current)) {
-            const EdgeData& edge = graph.getEdge(edgeId);
+            const EdgeData edge = graph.getEdge(edgeId);
             NodeId successor = edge.to;
             
             // Handle reversed edges
@@ -158,7 +158,7 @@ int LayerAssignment::computeLayerDFS(
             continue;  // Skip reversed edges
         }
         
-        const EdgeData& edge = graph.getEdge(edgeId);
+        const EdgeData edge = graph.getEdge(edgeId);
         int successorLayer = computeLayerDFS(edge.to, graph, reversedEdges, memo);
         maxSuccessorLayer = std::max(maxSuccessorLayer, successorLayer);
     }

@@ -129,7 +129,7 @@ TEST_F(DragBehaviorTest, Drag_SingleNode_PreservesRouting) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result1 = layout.layout(graph_);
@@ -203,7 +203,7 @@ TEST_F(DragBehaviorTest, Drag_ErrorNode_PreservesSnapCount) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result1 = layout.layout(graph_);
@@ -268,7 +268,7 @@ TEST_F(DragBehaviorTest, Drag_Multiple_MaintainsRouting) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -365,7 +365,7 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -537,7 +537,7 @@ TEST_F(DragBehaviorTest, Snap_DuringDrag_PointsDontMerge) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -672,7 +672,7 @@ TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     std::cout << "\n=== Multi-Drag Index Validation Test ===" << std::endl;
     
@@ -762,7 +762,7 @@ TEST_F(DragBehaviorTest, Drag_ErrorAboveIdle_UpdatesEdgeDirection) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Separated;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -816,7 +816,7 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Unified;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -953,7 +953,7 @@ TEST_F(DragBehaviorTest, Mode_Unified_CoordsUpdateOnDrag) {
     LayoutOptions options;
     options.snapDistribution = SnapDistribution::Unified;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);
@@ -1075,7 +1075,7 @@ TEST_F(DragBehaviorTest, Mode_UnifiedVsSeparated_Comparison) {
         LayoutOptions options;
         options.snapDistribution = mode;
         layout.setOptions(options);
-        layout.setManualLayoutManager(&manager);
+        layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
         
         LayoutResult result = layout.layout(graph_);
         
@@ -1205,7 +1205,7 @@ TEST_P(ConnectedNodesSnapPointsTest, SnapPointsPreserved) {
     LayoutOptions options;
     options.snapDistribution = distribution;
     layout.setOptions(options);
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     // Initial layout
     LayoutResult result = layout.layout(graph_);

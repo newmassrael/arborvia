@@ -67,7 +67,7 @@ int CrossingMinimization::countCrossings(
     
     for (NodeId upper : upperLayer) {
         for (EdgeId edgeId : graph.outEdges(upper)) {
-            const EdgeData& edge = graph.getEdge(edgeId);
+            const EdgeData edge = graph.getEdge(edgeId);
             NodeId target = edge.to;
             
             // Handle reversed edges
@@ -185,7 +185,7 @@ float CrossingMinimization::computeBarycenter(
     if (useSuccessors) {
         for (EdgeId edgeId : graph.outEdges(node)) {
             if (reversedEdges.count(edgeId) > 0) continue;
-            const EdgeData& edge = graph.getEdge(edgeId);
+            const EdgeData edge = graph.getEdge(edgeId);
             auto it = pos.find(edge.to);
             if (it != pos.end()) {
                 neighborPositions.push_back(it->second);
@@ -194,7 +194,7 @@ float CrossingMinimization::computeBarycenter(
     } else {
         for (EdgeId edgeId : graph.inEdges(node)) {
             if (reversedEdges.count(edgeId) > 0) continue;
-            const EdgeData& edge = graph.getEdge(edgeId);
+            const EdgeData edge = graph.getEdge(edgeId);
             auto it = pos.find(edge.from);
             if (it != pos.end()) {
                 neighborPositions.push_back(it->second);

@@ -5,10 +5,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <set>
+#include <unordered_map>
 
 namespace arborvia {
 namespace algorithms {
+
+// =============================================================================
+// Hash Function for std::pair (for unordered_map)
+// =============================================================================
+
+namespace {
+    struct PairHash {
+        template <typename T1, typename T2>
+        std::size_t operator()(const std::pair<T1, T2>& p) const {
+            auto h1 = std::hash<T1>{}(p.first);
+            auto h2 = std::hash<T2>{}(p.second);
+            return h1 ^ (h2 << 1);
+        }
+    };
+}
 
 // =============================================================================
 // Static Helper Function Implementations
@@ -31,13 +48,44 @@ int EdgeRouting::unifiedToLocalIndex(int unifiedIdx, int offset, int count) {
 
 void EdgeRouting::recalculateBendPoints(EdgeLayout& layout) {
     layout.bendPoints.clear();
-    
-    // Simple orthogonal bend using Y midpoint
-    if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
-        std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
-        float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
-        layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
-        layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+
+    // Determine layout direction from source/target edges
+    bool isHorizontal = (layout.sourceEdge == NodeEdge::Right ||
+                         layout.sourceEdge == NodeEdge::Left);
+
+    // Check if this edge has channel-based routing (-1 means not set)
+    if (layout.channelY >= 0.0f) {
+        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
+            std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
+
+            if (isHorizontal) {
+                // Horizontal layout: channelY stores X coordinate
+                float channelX = layout.channelY;
+                layout.bendPoints.push_back({{channelX, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{channelX, layout.targetPoint.y}});
+            } else {
+                // Vertical layout: channelY stores Y coordinate
+                layout.bendPoints.push_back({{layout.sourcePoint.x, layout.channelY}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, layout.channelY}});
+            }
+        }
+    } else {
+        // Simple orthogonal bend (fallback for non-channel edges)
+        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
+            std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
+
+            if (isHorizontal) {
+                // Horizontal: use X midpoint
+                float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
+                layout.bendPoints.push_back({{midX, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{midX, layout.targetPoint.y}});
+            } else {
+                // Vertical: use Y midpoint
+                float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
+                layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+            }
+        }
     }
 }
 
@@ -63,55 +111,15 @@ EdgeRouting::Result EdgeRouting::route(
 
     Result result;
 
-    // Channel-based routing mode
-    if (options.edgeRouting == arborvia::EdgeRouting::ChannelOrthogonal) {
-        // Allocate channels for all edges
-        auto channelAssignments = allocateChannels(graph, nodeLayouts, reversedEdges, options);
-        result.channelAssignments = channelAssignments;
+    // Allocate channels for all edges
+    auto channelAssignments = allocateChannels(graph, nodeLayouts, reversedEdges, options);
+    result.channelAssignments = channelAssignments;
 
-        // Track self-loop counts per node
-        std::map<NodeId, int> selfLoopIndices;
+    // Track self-loop counts per node
+    std::map<NodeId, int> selfLoopIndices;
 
-        for (EdgeId edgeId : graph.edges()) {
-            const EdgeData& edge = graph.getEdge(edgeId);
-
-            auto fromIt = nodeLayouts.find(edge.from);
-            auto toIt = nodeLayouts.find(edge.to);
-
-            if (fromIt == nodeLayouts.end() || toIt == nodeLayouts.end()) {
-                continue;
-            }
-
-            bool isReversed = reversedEdges.count(edgeId) > 0;
-
-            EdgeLayout layout;
-
-            // Self-loop handling
-            if (edge.from == edge.to) {
-                int loopIndex = selfLoopIndices[edge.from]++;
-                layout = routeSelfLoop(edge, fromIt->second, loopIndex, options);
-            } else {
-                // Regular edge with channel assignment
-                auto channelIt = channelAssignments.find(edgeId);
-                if (channelIt != channelAssignments.end()) {
-                    layout = routeChannelOrthogonal(edge, fromIt->second, toIt->second,
-                                                   isReversed, channelIt->second, options);
-                } else {
-                    // Fallback to simple orthogonal if no channel assigned
-                    layout = routeOrthogonal(edge, fromIt->second, toIt->second,
-                                            isReversed, options);
-                }
-            }
-
-            result.edgeLayouts[edgeId] = layout;
-        }
-
-        return result;
-    }
-
-    // Standard routing modes
     for (EdgeId edgeId : graph.edges()) {
-        const EdgeData& edge = graph.getEdge(edgeId);
+        const EdgeData edge = graph.getEdge(edgeId);
 
         auto fromIt = nodeLayouts.find(edge.from);
         auto toIt = nodeLayouts.find(edge.to);
@@ -123,139 +131,28 @@ EdgeRouting::Result EdgeRouting::route(
         bool isReversed = reversedEdges.count(edgeId) > 0;
 
         EdgeLayout layout;
-        if (options.edgeRouting == arborvia::EdgeRouting::Orthogonal) {
-            layout = routeOrthogonal(edge, fromIt->second, toIt->second,
-                                    isReversed, options);
+
+        // Self-loop handling
+        if (edge.from == edge.to) {
+            int loopIndex = selfLoopIndices[edge.from]++;
+            layout = routeSelfLoop(edge, fromIt->second, loopIndex, options);
         } else {
-            layout = routePolyline(edge, fromIt->second, toIt->second,
-                                  isReversed, options);
+            // Regular edge with channel assignment
+            auto channelIt = channelAssignments.find(edgeId);
+            if (channelIt != channelAssignments.end()) {
+                layout = routeChannelOrthogonal(edge, fromIt->second, toIt->second,
+                                               isReversed, channelIt->second, options);
+            } else {
+                // Fallback: create simple orthogonal routing without channel
+                layout = routeChannelOrthogonal(edge, fromIt->second, toIt->second,
+                                               isReversed, ChannelAssignment{}, options);
+            }
         }
 
         result.edgeLayouts[edgeId] = layout;
     }
 
     return result;
-}
-
-EdgeLayout EdgeRouting::routeOrthogonal(
-    const EdgeData& edge,
-    const NodeLayout& fromLayout,
-    const NodeLayout& toLayout,
-    [[maybe_unused]] bool isReversed,
-    const LayoutOptions& options) {
-    
-    EdgeLayout layout;
-    layout.id = edge.id;
-    layout.from = edge.from;
-    layout.to = edge.to;
-    
-    // Compute source and target points
-    Point fromCenter = fromLayout.center();
-    Point toCenter = toLayout.center();
-    
-    // Determine connection points based on direction
-    if (options.direction == Direction::TopToBottom || 
-        options.direction == Direction::BottomToTop) {
-        
-        // Vertical layout: connect top/bottom of nodes
-        if (fromCenter.y < toCenter.y) {
-            // From is above To
-            layout.sourcePoint = {fromCenter.x, fromLayout.position.y + fromLayout.size.height};
-            layout.targetPoint = {toCenter.x, toLayout.position.y};
-            layout.sourceEdge = NodeEdge::Bottom;
-            layout.targetEdge = NodeEdge::Top;
-        } else {
-            // From is below To
-            layout.sourcePoint = {fromCenter.x, fromLayout.position.y};
-            layout.targetPoint = {toCenter.x, toLayout.position.y + toLayout.size.height};
-            layout.sourceEdge = NodeEdge::Top;
-            layout.targetEdge = NodeEdge::Bottom;
-        }
-        
-        // Add bend points for orthogonal routing
-        if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f) {
-            float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
-            layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
-            layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
-        }
-        
-    } else {
-        // Horizontal layout: connect left/right of nodes
-        if (fromCenter.x < toCenter.x) {
-            // From is left of To
-            layout.sourcePoint = {fromLayout.position.x + fromLayout.size.width, fromCenter.y};
-            layout.targetPoint = {toLayout.position.x, toCenter.y};
-            layout.sourceEdge = NodeEdge::Right;
-            layout.targetEdge = NodeEdge::Left;
-        } else {
-            // From is right of To
-            layout.sourcePoint = {fromLayout.position.x, fromCenter.y};
-            layout.targetPoint = {toLayout.position.x + toLayout.size.width, toCenter.y};
-            layout.sourceEdge = NodeEdge::Left;
-            layout.targetEdge = NodeEdge::Right;
-        }
-        
-        // Add bend points for orthogonal routing
-        if (std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
-            float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
-            layout.bendPoints.push_back({{midX, layout.sourcePoint.y}});
-            layout.bendPoints.push_back({{midX, layout.targetPoint.y}});
-        }
-    }
-    
-    return layout;
-}
-
-EdgeLayout EdgeRouting::routePolyline(
-    const EdgeData& edge,
-    const NodeLayout& fromLayout,
-    const NodeLayout& toLayout,
-    [[maybe_unused]] bool isReversed,
-    [[maybe_unused]] const LayoutOptions& options) {
-    
-    EdgeLayout layout;
-    layout.id = edge.id;
-    layout.from = edge.from;
-    layout.to = edge.to;
-    
-    Point fromCenter = fromLayout.center();
-    Point toCenter = toLayout.center();
-    
-    // Compute connection points on node boundaries
-    layout.sourcePoint = computeConnectionPoint(fromLayout, toCenter, true);
-    layout.targetPoint = computeConnectionPoint(toLayout, fromCenter, false);
-    
-    // No bend points for straight polyline
-    
-    return layout;
-}
-
-Point EdgeRouting::computeConnectionPoint(
-    const NodeLayout& node,
-    const Point& targetCenter,
-    [[maybe_unused]] bool isSource) {
-    
-    Point center = node.center();
-    
-    // Direction from center to target
-    float dx = targetCenter.x - center.x;
-    float dy = targetCenter.y - center.y;
-    
-    if (std::abs(dx) < 0.001f && std::abs(dy) < 0.001f) {
-        // Target is at center, use bottom center
-        return {center.x, node.position.y + node.size.height};
-    }
-    
-    // Compute intersection with node boundary
-    float halfWidth = node.size.width / 2.0f;
-    float halfHeight = node.size.height / 2.0f;
-    
-    // Scale factor to reach boundary
-    float scaleX = std::abs(dx) > 0.001f ? halfWidth / std::abs(dx) : 1000.0f;
-    float scaleY = std::abs(dy) > 0.001f ? halfHeight / std::abs(dy) : 1000.0f;
-    float scale = std::min(scaleX, scaleY);
-    
-    return {center.x + dx * scale, center.y + dy * scale};
 }
 
 Point EdgeRouting::computeSnapPoint(
@@ -390,9 +287,10 @@ void EdgeRouting::distributeAutoSnapPoints(
         }
     }
     
-    // Recalculate bend points after snap point redistribution
+    // Recalculate bend points and label positions after snap point redistribution
     for (auto& [edgeId, layout] : result.edgeLayouts) {
         recalculateBendPoints(layout);
+        layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
     }
 }
 
@@ -520,11 +418,46 @@ void EdgeRouting::updateEdgePositions(
         }
     }
     
-    // Recalculate bend points for affected edges
+    // Check which edges are bidirectional (have a reverse edge)
+    // O(N) algorithm using unordered_map for O(1) lookup
+    std::unordered_set<EdgeId> bidirectionalEdges;
+    
+    // Build edge lookup map using helper function
+    auto edgeMap = buildEdgeMapFromLayouts<PairHash>(edgeLayouts);
+    
+    // Check affected edges for bidirectionality (O(1) lookup per edge)
     for (EdgeId edgeId : affectedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
+        
+        NodeId from = it->second.from;
+        NodeId to = it->second.to;
+        
+        // Look for reverse edge in map - O(1) average case
+        auto reverseIt = edgeMap.find({to, from});
+        if (reverseIt != edgeMap.end()) {
+            bidirectionalEdges.insert(edgeId);
+        }
+    }
+    
+    // Recalculate bend points and label positions for affected edges
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it == edgeLayouts.end()) continue;
+        
+        // For bidirectional edges with channel routing, preserve the channel position
+        // channelY stores absolute coordinates (Y for vertical, X for horizontal layout)
+        // and is already set correctly by allocateChannels(), so we keep it unchanged.
+        // recalculateBendPoints() will use this absolute position to maintain separation.
+        //
+        // For non-bidirectional edges, clear channel routing to use dynamic midpoint.
+        if (bidirectionalEdges.count(edgeId) == 0 || it->second.channelY < 0.0f) {
+            it->second.channelY = -1.0f;
+        }
+        // else: keep channelY unchanged (already in absolute coordinates)
+        
         recalculateBendPoints(it->second);
+        it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
     }
 }
 
@@ -535,22 +468,32 @@ void EdgeRouting::updateEdgePositions(
 std::vector<ChannelRegion> EdgeRouting::computeChannelRegions(
     const Graph& graph,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::unordered_set<EdgeId>& reversedEdges) {
+    const std::unordered_set<EdgeId>& reversedEdges,
+    Direction direction) {
 
-    // Find min/max Y for each layer
-    std::map<int, std::pair<float, float>> layerBounds;  // layer -> (minY, maxY)
+    bool isHorizontal = (direction == Direction::LeftToRight || direction == Direction::RightToLeft);
+
+    // Find min/max position for each layer (Y for vertical, X for horizontal)
+    std::map<int, std::pair<float, float>> layerBounds;  // layer -> (min, max)
 
     for (const auto& [nodeId, layout] : nodeLayouts) {
         int layer = layout.layer;
-        float nodeTop = layout.position.y;
-        float nodeBottom = layout.position.y + layout.size.height;
+        float nodeStart, nodeEnd;
+        
+        if (isHorizontal) {
+            nodeStart = layout.position.x;
+            nodeEnd = layout.position.x + layout.size.width;
+        } else {
+            nodeStart = layout.position.y;
+            nodeEnd = layout.position.y + layout.size.height;
+        }
 
         auto it = layerBounds.find(layer);
         if (it == layerBounds.end()) {
-            layerBounds[layer] = {nodeTop, nodeBottom};
+            layerBounds[layer] = {nodeStart, nodeEnd};
         } else {
-            it->second.first = std::min(it->second.first, nodeTop);
-            it->second.second = std::max(it->second.second, nodeBottom);
+            it->second.first = std::min(it->second.first, nodeStart);
+            it->second.second = std::max(it->second.second, nodeEnd);
         }
     }
 
@@ -581,7 +524,7 @@ std::vector<ChannelRegion> EdgeRouting::computeChannelRegions(
 
     // Assign edges to regions based on their layer span
     for (EdgeId edgeId : graph.edges()) {
-        const EdgeData& edge = graph.getEdge(edgeId);
+        const EdgeData edge = graph.getEdge(edgeId);
 
         auto fromIt = nodeLayouts.find(edge.from);
         auto toIt = nodeLayouts.find(edge.to);
@@ -627,7 +570,7 @@ std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
     // Handle self-loops first
     std::map<NodeId, int> selfLoopCounts;
     for (EdgeId edgeId : graph.edges()) {
-        const EdgeData& edge = graph.getEdge(edgeId);
+        const EdgeData edge = graph.getEdge(edgeId);
         if (edge.from == edge.to) {
             auto nodeIt = nodeLayouts.find(edge.from);
             if (nodeIt != nodeLayouts.end()) {
@@ -642,14 +585,40 @@ std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
     }
 
     // Compute channel regions
-    auto regions = computeChannelRegions(graph, nodeLayouts, reversedEdges);
+    auto regions = computeChannelRegions(graph, nodeLayouts, reversedEdges, options.direction);
+
+    // Identify bidirectional edge pairs (edges going in opposite directions between same nodes)
+    // Track which edges should get offset channels
+    // O(N) algorithm using unordered_map for O(1) lookup
+    std::unordered_set<EdgeId> offsetEdges;
+    std::unordered_set<EdgeId> processedBidirectional;
+    
+    // Build edge lookup map using helper function
+    auto edgeMap = buildEdgeMapFromGraph<PairHash>(graph);
+    
+    // Find bidirectional pairs by checking for reverse edges (O(1) lookup)
+    for (EdgeId edgeId : graph.edges()) {
+        const EdgeData edge = graph.getEdge(edgeId);
+        if (edge.from == edge.to) continue; // Skip self-loops
+        if (processedBidirectional.count(edgeId) > 0) continue; // Already processed
+        
+        // Look for reverse edge in map - O(1) average case
+        auto reverseIt = edgeMap.find({edge.to, edge.from});
+        if (reverseIt != edgeMap.end()) {
+            EdgeId otherId = reverseIt->second;
+            // Found bidirectional pair - mark the second one for offset
+            offsetEdges.insert(otherId);
+            processedBidirectional.insert(edgeId);
+            processedBidirectional.insert(otherId);
+        }
+    }
 
     // Sort edges within each region by source X coordinate to minimize crossings
     for (auto& region : regions) {
         std::sort(region.edges.begin(), region.edges.end(),
             [&](EdgeId a, EdgeId b) {
-                const EdgeData& edgeA = graph.getEdge(a);
-                const EdgeData& edgeB = graph.getEdge(b);
+                const EdgeData edgeA = graph.getEdge(a);
+                const EdgeData edgeB = graph.getEdge(b);
 
                 auto fromAIt = nodeLayouts.find(edgeA.from);
                 auto fromBIt = nodeLayouts.find(edgeB.from);
@@ -671,12 +640,21 @@ std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
                 continue;
             }
 
-            const EdgeData& edge = graph.getEdge(edgeId);
+            const EdgeData edge = graph.getEdge(edgeId);
             auto fromIt = nodeLayouts.find(edge.from);
             auto toIt = nodeLayouts.find(edge.to);
 
             ChannelAssignment assignment;
             assignment.channel = static_cast<int>(i) % maxChannels;
+            
+            // If this edge is marked for offset (part of bidirectional pair), add offset
+            if (offsetEdges.count(edgeId) > 0) {
+                assignment.channel += 1;
+                if (assignment.channel >= maxChannels) {
+                    assignment.channel = maxChannels - 1;
+                }
+            }
+            
             assignment.sourceLayer = fromIt->second.layer;
             assignment.targetLayer = toIt->second.layer;
             assignment.isSelfLoop = false;
@@ -764,6 +742,7 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
 
         // Use channel Y for horizontal segment
         float channelY = channel.yPosition;
+        layout.channelY = channelY;  // Store for later recalculation
 
         // Create orthogonal bend points using channel
         if (std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f) {
@@ -789,6 +768,7 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
 
         // For horizontal layout, channel Y becomes channel X
         float channelX = channel.yPosition;  // Reused as X coordinate
+        layout.channelY = channelX;  // Store for later recalculation (represents X in horizontal)
 
         if (std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f) {
             layout.bendPoints.push_back({{channelX, layout.sourcePoint.y}});
@@ -798,6 +778,9 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
 
     // Mark as reversed if needed (for arrow rendering)
     (void)isReversed;  // Could be used for visual indication
+
+    // Calculate label position
+    layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
 
     return layout;
 }
@@ -876,6 +859,9 @@ EdgeLayout EdgeRouting::routeSelfLoop(
             // Already handled above, but keep for completeness
             break;
     }
+
+    // Calculate label position
+    layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
 
     return layout;
 }

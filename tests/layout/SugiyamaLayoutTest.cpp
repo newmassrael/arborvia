@@ -277,7 +277,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_ProducesValidRouting) {
     EdgeId e = graph.addEdge(n1, n2);
 
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -306,7 +306,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleEdges_DifferentChannels) {
     EdgeId e2 = graph.addEdge(n1, n3);
 
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -328,7 +328,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_SelfLoop_RoutesCorrectly) {
     EdgeId selfLoop = graph.addEdge(n1, n1);  // Self-loop
 
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -358,7 +358,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleSelfLoops_Stacked) {
     EdgeId loop2 = graph.addEdge(n1, n1);
 
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -401,7 +401,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_ChainGraph_BendPointsAligned) {
     EdgeId e2 = graph.addEdge(n2, n3);
 
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -450,7 +450,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_LoopOffsetChange_SnapPointsRemainOnNode) {
     
     for (float loopOffset : loopOffsets) {
         LayoutOptions options;
-        options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+        
         options.channelRouting.selfLoop.loopOffset = loopOffset;
 
         SugiyamaLayout layout(options);
@@ -494,13 +494,13 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
 
     // Initial layout
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
     options.channelRouting.selfLoop.loopOffset = 20.0f;
 
     ManualLayoutManager manualManager;
     
     SugiyamaLayout layout1(options);
-    layout1.setManualLayoutManager(&manualManager);
+    layout1.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result1 = layout1.layout(graph);
 
     const NodeLayout* nodeLayout1 = result1.getNodeLayout(n1);
@@ -516,7 +516,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
     options.channelRouting.selfLoop.loopOffset = 50.0f;
     
     SugiyamaLayout layout2(options);
-    layout2.setManualLayoutManager(&manualManager);
+    layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result2 = layout2.layout(graph);
 
     const NodeLayout* nodeLayout2 = result2.getNodeLayout(n1);
@@ -572,14 +572,14 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
 
     // Initial layout
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
     options.channelRouting.selfLoop.loopOffset = 30.0f;
     options.snapDistribution = SnapDistribution::Unified;
 
     ManualLayoutManager manualManager;
     
     SugiyamaLayout layout1(options);
-    layout1.setManualLayoutManager(&manualManager);
+    layout1.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result1 = layout1.layout(graph);
 
     const NodeLayout* nodeLayout1 = result1.getNodeLayout(n2);
@@ -622,7 +622,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     options.channelRouting.selfLoop.loopOffset = 50.0f;
     
     SugiyamaLayout layout2(options);
-    layout2.setManualLayoutManager(&manualManager);
+    layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result2 = layout2.layout(graph);
 
     const NodeLayout* nodeLayout2 = result2.getNodeLayout(n2);
@@ -694,7 +694,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
 
     // Initial layout
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
     options.channelRouting.selfLoop.loopOffset = 30.0f;
     options.snapDistribution = SnapDistribution::Unified;
 
@@ -832,7 +832,7 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
 
     // Initial layout - use Separated (default) like the demo
     LayoutOptions options;
-    options.edgeRouting = EdgeRouting::ChannelOrthogonal;
+    
     options.channelRouting.selfLoop.loopOffset = 50.0f;
     options.snapDistribution = SnapDistribution::Separated;  // Default mode
 

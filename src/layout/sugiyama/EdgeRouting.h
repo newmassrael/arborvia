@@ -18,7 +18,7 @@ class SnapIndexManager;
 /// Channel assignment info for an edge
 struct ChannelAssignment {
     int channel = 0;         // Channel index (0-based)
-    float yPosition = 0.0f;  // Computed Y coordinate for horizontal segment
+    float yPosition = 0.0f;  // Computed position for channel segment (Y for vertical, X for horizontal layout)
     int sourceLayer = 0;     // Source node's layer
     int targetLayer = 0;     // Target node's layer
     bool isSelfLoop = false; // True if source == target
@@ -28,8 +28,8 @@ struct ChannelAssignment {
 struct ChannelRegion {
     int fromLayer = 0;       // Source layer index
     int toLayer = 0;         // Target layer index
-    float regionStart = 0;   // Y coordinate where region starts
-    float regionEnd = 0;     // Y coordinate where region ends
+    float regionStart = 0;   // Coordinate where region starts (Y for vertical, X for horizontal layout)
+    float regionEnd = 0;     // Coordinate where region ends (Y for vertical, X for horizontal layout)
     std::vector<EdgeId> edges;  // Edges routed through this region
 };
 
@@ -144,27 +144,6 @@ private:
         NodeId nodeId,
         NodeEdge nodeEdge);
     
-    // === Existing private methods ===
-    
-    // Orthogonal edge routing (right-angle bends)
-    EdgeLayout routeOrthogonal(const EdgeData& edge,
-                               const NodeLayout& fromLayout,
-                               const NodeLayout& toLayout,
-                               bool isReversed,
-                               const LayoutOptions& options);
-    
-    // Polyline edge routing (direct with bend points)
-    EdgeLayout routePolyline(const EdgeData& edge,
-                            const NodeLayout& fromLayout,
-                            const NodeLayout& toLayout,
-                            bool isReversed,
-                            const LayoutOptions& options);
-    
-    // Compute connection point on node boundary
-    Point computeConnectionPoint(const NodeLayout& node,
-                                const Point& targetCenter,
-                                bool isSource);
-    
     // Compute snap point (centered on edge of node)
     Point computeSnapPoint(const NodeLayout& node,
                           Direction direction,
@@ -176,7 +155,8 @@ private:
     std::vector<ChannelRegion> computeChannelRegions(
         const Graph& graph,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_set<EdgeId>& reversedEdges);
+        const std::unordered_set<EdgeId>& reversedEdges,
+        Direction direction);
 
     /// Allocate edges to channels
     std::unordered_map<EdgeId, ChannelAssignment> allocateChannels(
@@ -185,10 +165,39 @@ private:
         const std::unordered_set<EdgeId>& reversedEdges,
         const LayoutOptions& options);
 
-    /// Compute channel Y position
+    /// Compute channel position (Y for vertical, X for horizontal layout)
     float computeChannelY(const ChannelRegion& region,
                          int channelIndex,
                          const ChannelRoutingOptions& opts);
+
+    /// Build edge lookup map for bidirectional detection from Graph
+    /// Returns map: (from, to) -> edgeId (skips self-loops)
+    template<typename Hash>
+    static std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, Hash>
+    buildEdgeMapFromGraph(const Graph& graph) {
+        std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, Hash> edgeMap;
+        for (EdgeId edgeId : graph.edges()) {
+            const EdgeData edge = graph.tryGetEdge(edgeId).value();
+            if (edge.from != edge.to) {  // Skip self-loops
+                edgeMap[{edge.from, edge.to}] = edgeId;
+            }
+        }
+        return edgeMap;
+    }
+    
+    /// Build edge lookup map for bidirectional detection from EdgeLayouts
+    /// Returns map: (from, to) -> edgeId (skips self-loops)
+    template<typename Hash>
+    static std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, Hash>
+    buildEdgeMapFromLayouts(const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
+        std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, Hash> edgeMap;
+        for (const auto& [edgeId, layout] : edgeLayouts) {
+            if (layout.from != layout.to) {  // Skip self-loops
+                edgeMap[{layout.from, layout.to}] = edgeId;
+            }
+        }
+        return edgeMap;
+    }
 
     /// Route edge using channel assignment
     EdgeLayout routeChannelOrthogonal(

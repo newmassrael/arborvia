@@ -76,6 +76,13 @@ public:
         const NodeLayout& node,
         NodeEdge edge,
         float position);
+
+    /// Calculate optimal label position for an edge
+    /// For edges with bend points: uses the middle of the "main" segment (between bends)
+    /// For straight edges: uses the midpoint of the path
+    /// @param edge The edge layout
+    /// @return Optimal label position
+    static Point calculateEdgeLabelPosition(const EdgeLayout& edge);
 };
 
 }  // namespace arborvia

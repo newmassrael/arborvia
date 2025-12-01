@@ -53,19 +53,19 @@ struct BendPointPreview {
 
 class InteractiveDemo {
 public:
-    InteractiveDemo() {
+    InteractiveDemo() : manualManager_(std::make_shared<ManualLayoutManager>()) {
         setupGraph();
         doLayout();
     }
     
-    LayoutMode getLayoutMode() const { return manualManager_.getMode(); }
+    LayoutMode getLayoutMode() const { return manualManager_->getMode(); }
     
     void setLayoutMode(LayoutMode mode) {
-        if (mode == LayoutMode::Manual && manualManager_.getMode() == LayoutMode::Auto) {
+        if (mode == LayoutMode::Manual && manualManager_->getMode() == LayoutMode::Auto) {
             // Switching to Manual: capture current layout
-            manualManager_.captureFromResult(layoutResult_);
+            manualManager_->captureFromResult(layoutResult_);
         }
-        manualManager_.setMode(mode);
+        manualManager_->setMode(mode);
         layoutOptions_.mode = mode;
         doLayout();
     }
@@ -102,7 +102,7 @@ public:
     }
     
     void loadLayout(const std::string& path) {
-        if (manualManager_.loadFromFile(path)) {
+        if (manualManager_->loadFromFile(path)) {
             doLayout();
         }
     }
@@ -128,7 +128,7 @@ public:
     void doLayout() {
         SugiyamaLayout layout;
         layout.setOptions(layoutOptions_);
-        layout.setManualLayoutManager(&manualManager_);
+        layout.setManualLayoutManager(manualManager_);
         layoutResult_ = layout.layout(graph_);
         
         nodeLayouts_.clear();
@@ -152,17 +152,17 @@ public:
     void reRouteEdgesOnly() {
         // Save current node positions to manual manager
         for (const auto& [id, layout] : nodeLayouts_) {
-            manualManager_.setNodePosition(id, layout.position);
+            manualManager_->setNodePosition(id, layout.position);
         }
         
         // Clear edge routings so fresh routing from algorithm is used
         // This prevents applyManualState from overwriting new snap points
-        manualManager_.clearAllEdgeRoutings();
+        manualManager_->clearAllEdgeRoutings();
         
         // Switch to manual mode temporarily to preserve positions
-        LayoutMode prevMode = manualManager_.getMode();
+        LayoutMode prevMode = manualManager_->getMode();
         if (prevMode == LayoutMode::Auto) {
-            manualManager_.setMode(LayoutMode::Manual);
+            manualManager_->setMode(LayoutMode::Manual);
         }
         
         // Do layout (will use manual positions, but fresh edge routing)
@@ -179,13 +179,13 @@ public:
         
         // Restore previous mode
         if (prevMode == LayoutMode::Auto) {
-            manualManager_.setMode(prevMode);
+            manualManager_->setMode(prevMode);
         }
     }
     
     void syncSnapConfigsFromEdges() {
         // Use library API for snap config synchronization
-        manualManager_.syncSnapConfigsFromEdgeLayouts(edgeLayouts_);
+        manualManager_->syncSnapConfigsFromEdgeLayouts(edgeLayouts_);
     }
     
     void update() {
@@ -215,9 +215,9 @@ public:
         // Find hovered bend point (only in Manual mode)
         hoveredBendPoint_.clear();
         bendPointPreview_.clear();
-        if (hoveredNode_ == INVALID_NODE && manualManager_.getMode() == LayoutMode::Manual) {
+        if (hoveredNode_ == INVALID_NODE && manualManager_->getMode() == LayoutMode::Manual) {
             for (const auto& [edgeId, layout] : edgeLayouts_) {
-                const auto& bps = manualManager_.getBendPoints(edgeId);
+                const auto& bps = manualManager_->getBendPoints(edgeId);
                 for (size_t i = 0; i < bps.size(); ++i) {
                     float dx = graphMouse.x - bps[i].position.x;
                     float dy = graphMouse.y - bps[i].position.y;
@@ -239,7 +239,7 @@ public:
                 if (hitResult.hit) {
                     hoveredEdge_ = id;
                     // Show insert preview if edge is selected
-                    if (id == selectedEdge_ && manualManager_.getMode() == LayoutMode::Manual) {
+                    if (id == selectedEdge_ && manualManager_->getMode() == LayoutMode::Manual) {
                         bendPointPreview_.edgeId = id;
                         bendPointPreview_.insertIndex = hitResult.segmentIndex;
                         bendPointPreview_.position = hitResult.closestPoint;
@@ -256,7 +256,7 @@ public:
             selectedBendPoint_ = hoveredBendPoint_;
             selectedEdge_ = hoveredBendPoint_.edgeId;
             draggingBendPoint_ = hoveredBendPoint_;
-            const auto& bps = manualManager_.getBendPoints(draggingBendPoint_.edgeId);
+            const auto& bps = manualManager_->getBendPoints(draggingBendPoint_.edgeId);
             bendPointDragOffset_ = {
                 graphMouse.x - bps[draggingBendPoint_.bendPointIndex].position.x,
                 graphMouse.y - bps[draggingBendPoint_.bendPointIndex].position.y
@@ -271,24 +271,24 @@ public:
             // IMPORTANT: Capture current edge routing BEFORE adding bend points
             // Otherwise addBendPoint() creates a config with default values (Bottom->Top)
             // which would reset the edge routing to wrong values
-            if (!manualManager_.hasManualBendPoints(edgeId)) {
+            if (!manualManager_->hasManualBendPoints(edgeId)) {
                 EdgeRoutingConfig routing;
                 routing.sourceEdge = edgeLayout.sourceEdge;
                 routing.targetEdge = edgeLayout.targetEdge;
                 routing.sourceSnapIndex = edgeLayout.sourceSnapIndex;
                 routing.targetSnapIndex = edgeLayout.targetSnapIndex;
-                manualManager_.setEdgeRouting(edgeId, routing);
+                manualManager_->setEdgeRouting(edgeId, routing);
             }
             
-            const auto& existingBps = manualManager_.getBendPoints(edgeId);
+            const auto& existingBps = manualManager_->getBendPoints(edgeId);
             
             // Use library API to calculate bend point pair
             auto bpResult = OrthogonalRouter::calculateBendPointPair(
                 edgeLayout, existingBps, clickPos, bendPointPreview_.insertIndex);
             
             // Insert both points
-            manualManager_.addBendPoint(edgeId, bpResult.insertIndex, bpResult.first);
-            manualManager_.addBendPoint(edgeId, bpResult.insertIndex + 1, bpResult.second);
+            manualManager_->addBendPoint(edgeId, bpResult.insertIndex, bpResult.first);
+            manualManager_->addBendPoint(edgeId, bpResult.insertIndex + 1, bpResult.second);
             
             selectedBendPoint_.edgeId = edgeId;
             selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
@@ -325,7 +325,7 @@ public:
                 std::unordered_map<NodeId, Point> savedPositions;
                 for (const auto& [id, layout] : nodeLayouts_) {
                     savedPositions[id] = layout.position;
-                    manualManager_.setNodePosition(id, layout.position);
+                    manualManager_->setNodePosition(id, layout.position);
                 }
                 
                 // Get all edge IDs for update
@@ -358,7 +358,7 @@ public:
             int bpIdx = draggingBendPoint_.bendPointIndex;
             
             // Get current bend points from manager (source of truth)
-            const auto& bps = manualManager_.getBendPoints(edgeId);
+            const auto& bps = manualManager_->getBendPoints(edgeId);
             if (bpIdx >= static_cast<int>(bps.size())) {
                 draggingBendPoint_.clear();
             } else {
@@ -394,9 +394,9 @@ public:
                 
                 // Apply the calculated positions
                 if (dragResult.nextAdjusted) {
-                    manualManager_.moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), dragResult.adjustedNextPos);
+                    manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), dragResult.adjustedNextPos);
                 }
-                manualManager_.moveBendPoint(edgeId, static_cast<size_t>(bpIdx), dragResult.newCurrentPos);
+                manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx), dragResult.newCurrentPos);
                 
                 // Update edge layout immediately for visual feedback
                 auto it = edgeLayouts_.find(edgeId);
@@ -416,7 +416,7 @@ public:
             layout.position.y = graphMouse.y - dragOffset_.y;
             
             // Save position (for both modes, so snap distribution works after drag)
-            manualManager_.setNodePosition(draggedNode_, layout.position);
+            manualManager_->setNodePosition(draggedNode_, layout.position);
             
             // Re-route connected edges
             rerouteAffectedEdges();
@@ -424,7 +424,7 @@ public:
         
         // Handle Delete key for bend point removal
         if (selectedBendPoint_.isValid() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-            manualManager_.removeBendPoint(
+            manualManager_->removeBendPoint(
                 selectedBendPoint_.edgeId,
                 static_cast<size_t>(selectedBendPoint_.bendPointIndex)
             );
@@ -476,17 +476,16 @@ public:
                 drawArrowhead(drawList, prev, last, color);
             }
             
-            // Draw edge label
+            // Draw edge label (using pre-computed labelPosition)
             const EdgeData& edge = graph_.getEdge(id);
             if (!edge.label.empty()) {
-                Point mid = {(layout.sourcePoint.x + layout.targetPoint.x) / 2,
-                            (layout.sourcePoint.y + layout.targetPoint.y) / 2};
-                ImVec2 textPos = {mid.x + offset_.x - 20, mid.y + offset_.y - 15};
+                ImVec2 textPos = {layout.labelPosition.x + offset_.x - 20, 
+                                  layout.labelPosition.y + offset_.y - 15};
                 drawList->AddText(textPos, COLOR_TEXT, edge.label.c_str());
             }
             
             // Draw bend points as diamonds (Manual mode only)
-            if (manualManager_.getMode() == LayoutMode::Manual) {
+            if (manualManager_->getMode() == LayoutMode::Manual) {
                 const auto& bps = layout.bendPoints;
                 for (size_t i = 0; i < bps.size(); ++i) {
                     Point bpPos = bps[i].position;
@@ -583,8 +582,8 @@ public:
     
     void drawSnapPoints(ImDrawList* drawList, const NodeLayout& nodeLayout) {
         // In Manual mode, draw configured snap points with indices
-        if (manualManager_.getMode() == LayoutMode::Manual) {
-            SnapPointConfig config = manualManager_.getSnapConfig(nodeLayout.id);
+        if (manualManager_->getMode() == LayoutMode::Manual) {
+            SnapPointConfig config = manualManager_->getSnapConfig(nodeLayout.id);
 
             auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
                 for (int i = 0; i < count; ++i) {
@@ -632,17 +631,31 @@ public:
                     }
                     snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.sourceSnapIndex);
 
-                    // Position label based on edge direction
+                    // Position label: centered on snap point, inside node (away from arrow)
+                    ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
+                    
+                    // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.sourceEdge) {
-                        case NodeEdge::Top: textPos.y -= 22; textPos.x -= 10; break;
-                        case NodeEdge::Bottom: textPos.y += 10; textPos.x -= 10; break;
-                        case NodeEdge::Left: textPos.x -= 32; textPos.y -= 7; break;
-                        case NodeEdge::Right: textPos.x += 12; textPos.y -= 7; break;
+                        case NodeEdge::Top:
+                            textPos.x -= textSize.x / 2.0f;
+                            textPos.y += 8;  // Move down into node
+                            break;
+                        case NodeEdge::Bottom:
+                            textPos.x -= textSize.x / 2.0f;
+                            textPos.y -= textSize.y + 8;  // Move up into node
+                            break;
+                        case NodeEdge::Left:
+                            textPos.x += 8;  // Move right into node
+                            textPos.y -= textSize.y / 2.0f;
+                            break;
+                        case NodeEdge::Right:
+                            textPos.x -= textSize.x + 8;  // Move left into node
+                            textPos.y -= textSize.y / 2.0f;
+                            break;
                     }
 
                     // Draw bold text with white background
-                    ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
                     ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
                     fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
@@ -671,17 +684,31 @@ public:
                     }
                     snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.targetSnapIndex);
 
-                    // Position label based on edge direction
+                    // Position label: centered on snap point, inside node (away from arrow)
+                    ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
+                    
+                    // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.targetEdge) {
-                        case NodeEdge::Top: textPos.y -= 22; textPos.x -= 10; break;
-                        case NodeEdge::Bottom: textPos.y += 10; textPos.x -= 10; break;
-                        case NodeEdge::Left: textPos.x -= 32; textPos.y -= 7; break;
-                        case NodeEdge::Right: textPos.x += 12; textPos.y -= 7; break;
+                        case NodeEdge::Top:
+                            textPos.x -= textSize.x / 2.0f;
+                            textPos.y += 8;  // Move down into node
+                            break;
+                        case NodeEdge::Bottom:
+                            textPos.x -= textSize.x / 2.0f;
+                            textPos.y -= textSize.y + 8;  // Move up into node
+                            break;
+                        case NodeEdge::Left:
+                            textPos.x += 8;  // Move right into node
+                            textPos.y -= textSize.y / 2.0f;
+                            break;
+                        case NodeEdge::Right:
+                            textPos.x -= textSize.x + 8;  // Move left into node
+                            textPos.y -= textSize.y / 2.0f;
+                            break;
                     }
 
                     // Draw bold text with white background
-                    ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
                     ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
                     fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
@@ -721,7 +748,7 @@ public:
         
         // Mode selection
         ImGui::Text("Layout Mode:");
-        int mode = (manualManager_.getMode() == LayoutMode::Auto) ? 0 : 1;
+        int mode = (manualManager_->getMode() == LayoutMode::Auto) ? 0 : 1;
         if (ImGui::RadioButton("Auto", &mode, 0)) {
             setLayoutMode(LayoutMode::Auto);
         }
@@ -730,66 +757,46 @@ public:
             setLayoutMode(LayoutMode::Manual);
         }
         
-        // Edge Routing Mode (Auto mode only)
-        if (manualManager_.getMode() == LayoutMode::Auto) {
-            ImGui::Text("Edge Routing:");
-            const char* routingModes[] = {"Orthogonal", "Channel", "Polyline"};
-            int currentRouting = 0;
-            if (layoutOptions_.edgeRouting == EdgeRouting::ChannelOrthogonal) currentRouting = 1;
-            else if (layoutOptions_.edgeRouting == EdgeRouting::Polyline) currentRouting = 2;
+        // Edge Routing Options (Auto mode only)
+        if (manualManager_->getMode() == LayoutMode::Auto) {
+            // Channel routing options
+            if (ImGui::TreeNode("Edge Routing Options")) {
+                bool changed = false;
 
-            if (ImGui::Combo("##EdgeRouting", &currentRouting, routingModes, 3)) {
-                switch (currentRouting) {
-                    case 0: layoutOptions_.edgeRouting = EdgeRouting::Orthogonal; break;
-                    case 1: layoutOptions_.edgeRouting = EdgeRouting::ChannelOrthogonal; break;
-                    case 2: layoutOptions_.edgeRouting = EdgeRouting::Polyline; break;
+                if (ImGui::SliderFloat("Spacing", &layoutOptions_.channelRouting.channelSpacing, 5.0f, 30.0f)) {
+                    changed = true;
                 }
-                doLayout();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Orthogonal: Simple right-angle bends\nChannel: Circuit-style routing\nPolyline: Straight lines");
-            }
-
-            // Channel routing options (only when Channel mode is selected)
-            if (layoutOptions_.edgeRouting == EdgeRouting::ChannelOrthogonal) {
-                if (ImGui::TreeNode("Channel Options")) {
-                    bool changed = false;
-
-                    if (ImGui::SliderFloat("Spacing", &layoutOptions_.channelRouting.channelSpacing, 5.0f, 30.0f)) {
-                        changed = true;
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Spacing between parallel edge channels");
-                    }
-
-                    if (ImGui::SliderFloat("Offset", &layoutOptions_.channelRouting.channelOffset, 10.0f, 50.0f)) {
-                        changed = true;
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Minimum offset from layer boundary");
-                    }
-
-                    ImGui::Checkbox("Center Single Edge", &layoutOptions_.channelRouting.centerSingleEdge);
-
-                    // Self-loop direction
-                    ImGui::Text("Self-Loop Direction:");
-                    const char* loopDirs[] = {"Right", "Left", "Top", "Bottom", "Auto"};
-                    int currentDir = static_cast<int>(layoutOptions_.channelRouting.selfLoop.preferredDirection);
-                    if (ImGui::Combo("##LoopDir", &currentDir, loopDirs, 5)) {
-                        layoutOptions_.channelRouting.selfLoop.preferredDirection =
-                            static_cast<SelfLoopDirection>(currentDir);
-                        changed = true;
-                    }
-
-                    if (ImGui::SliderFloat("Loop Offset", &layoutOptions_.channelRouting.selfLoop.loopOffset, 10.0f, 50.0f)) {
-                        changed = true;
-                    }
-
-                    if (changed) {
-                        reRouteEdgesOnly();
-                    }
-                    ImGui::TreePop();
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Spacing between parallel edge channels");
                 }
+
+                if (ImGui::SliderFloat("Offset", &layoutOptions_.channelRouting.channelOffset, 10.0f, 50.0f)) {
+                    changed = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Minimum offset from layer boundary");
+                }
+
+                ImGui::Checkbox("Center Single Edge", &layoutOptions_.channelRouting.centerSingleEdge);
+
+                // Self-loop direction
+                ImGui::Text("Self-Loop Direction:");
+                const char* loopDirs[] = {"Right", "Left", "Top", "Bottom", "Auto"};
+                int currentDir = static_cast<int>(layoutOptions_.channelRouting.selfLoop.preferredDirection);
+                if (ImGui::Combo("##LoopDir", &currentDir, loopDirs, 5)) {
+                    layoutOptions_.channelRouting.selfLoop.preferredDirection =
+                        static_cast<SelfLoopDirection>(currentDir);
+                    changed = true;
+                }
+
+                if (ImGui::SliderFloat("Loop Offset", &layoutOptions_.channelRouting.selfLoop.loopOffset, 10.0f, 50.0f)) {
+                    changed = true;
+                }
+
+                if (changed) {
+                    reRouteEdgesOnly();
+                }
+                ImGui::TreePop();
             }
 
             ImGui::Separator();
@@ -816,8 +823,10 @@ public:
         ImGui::Text("Edges: %zu", graph_.edgeCount());
         
         if (draggedNode_ != INVALID_NODE) {
-            ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), 
-                "Dragging: %s", graph_.getNode(draggedNode_).label.c_str());
+            if (auto node = graph_.tryGetNode(draggedNode_)) {
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1),
+                    "Dragging: %s", node->label.c_str());
+            }
             ImGui::Text("Affected edges: %zu", affectedEdges_.size());
         }
         
@@ -832,11 +841,18 @@ public:
         }
         
         // Snap point configuration for selected node
-        if (selectedNode_ != INVALID_NODE && manualManager_.getMode() == LayoutMode::Manual) {
+        if (selectedNode_ != INVALID_NODE && manualManager_->getMode() == LayoutMode::Manual) {
+            auto selectedNode = graph_.tryGetNode(selectedNode_);
+            if (!selectedNode) {
+                selectedNode_ = INVALID_NODE;
+                ImGui::End();
+                return;
+            }
+
             ImGui::Separator();
-            ImGui::Text("Snap Points: %s", graph_.getNode(selectedNode_).label.c_str());
+            ImGui::Text("Snap Points: %s", selectedNode->label.c_str());
             
-            SnapPointConfig config = manualManager_.getSnapConfig(selectedNode_);
+            SnapPointConfig config = manualManager_->getSnapConfig(selectedNode_);
             bool changed = false;
             
             if (ImGui::SliderInt("Top", &config.topCount, 1, 5)) changed = true;
@@ -845,23 +861,38 @@ public:
             if (ImGui::SliderInt("Right", &config.rightCount, 1, 5)) changed = true;
             
             if (changed) {
-                manualManager_.setSnapConfig(selectedNode_, config);
+                manualManager_->setSnapConfig(selectedNode_, config);
                 doLayout();
             }
         }
         
         // Edge routing configuration for selected edge
-        if (selectedEdge_ != INVALID_EDGE && manualManager_.getMode() == LayoutMode::Manual) {
+        if (selectedEdge_ != INVALID_EDGE && manualManager_->getMode() == LayoutMode::Manual) {
+            auto edgeOpt = graph_.tryGetEdge(selectedEdge_);
+            if (!edgeOpt) {
+                selectedEdge_ = INVALID_EDGE;
+                ImGui::End();
+                return;
+            }
+            const EdgeData& edgeData = *edgeOpt;
+
+            auto fromNode = graph_.tryGetNode(edgeData.from);
+            auto toNode = graph_.tryGetNode(edgeData.to);
+            if (!fromNode || !toNode) {
+                selectedEdge_ = INVALID_EDGE;
+                ImGui::End();
+                return;
+            }
+
             ImGui::Separator();
-            const EdgeData& edgeData = graph_.getEdge(selectedEdge_);
-            ImGui::Text("Edge: %s -> %s", 
-                graph_.getNode(edgeData.from).label.c_str(),
-                graph_.getNode(edgeData.to).label.c_str());
+            ImGui::Text("Edge: %s -> %s",
+                fromNode->label.c_str(),
+                toNode->label.c_str());
             if (!edgeData.label.empty()) {
                 ImGui::Text("Label: %s", edgeData.label.c_str());
             }
             
-            EdgeRoutingConfig routing = manualManager_.getEdgeRouting(selectedEdge_);
+            EdgeRoutingConfig routing = manualManager_->getEdgeRouting(selectedEdge_);
             bool routingChanged = false;
             
             // Source edge selection
@@ -875,7 +906,7 @@ public:
             }
             
             // Source snap point index
-            SnapPointConfig srcConfig = manualManager_.getSnapConfig(edgeData.from);
+            SnapPointConfig srcConfig = manualManager_->getSnapConfig(edgeData.from);
             int srcMaxSnap = srcConfig.getCount(routing.sourceEdge) - 1;
             if (srcMaxSnap > 0) {
                 if (ImGui::SliderInt("Src Snap", &routing.sourceSnapIndex, 0, srcMaxSnap)) {
@@ -893,7 +924,7 @@ public:
             }
             
             // Target snap point index
-            SnapPointConfig tgtConfig = manualManager_.getSnapConfig(edgeData.to);
+            SnapPointConfig tgtConfig = manualManager_->getSnapConfig(edgeData.to);
             int tgtMaxSnap = tgtConfig.getCount(routing.targetEdge) - 1;
             if (tgtMaxSnap > 0) {
                 if (ImGui::SliderInt("Tgt Snap", &routing.targetSnapIndex, 0, tgtMaxSnap)) {
@@ -902,7 +933,7 @@ public:
             }
             
             if (routingChanged) {
-                manualManager_.setEdgeRouting(selectedEdge_, routing);
+                manualManager_->setEdgeRouting(selectedEdge_, routing);
                 doLayout();
             }
             
@@ -910,7 +941,7 @@ public:
             ImGui::Separator();
             ImGui::Text("Bend Points:");
             
-            const auto& bps = manualManager_.getBendPoints(selectedEdge_);
+            const auto& bps = manualManager_->getBendPoints(selectedEdge_);
             if (bps.empty()) {
                 ImGui::TextDisabled("None (auto routing)");
                 ImGui::TextDisabled("Click on edge to add");
@@ -929,7 +960,7 @@ public:
                     ImGui::PopID();
                 }
                 if (ImGui::Button("Clear All Bends")) {
-                    manualManager_.clearBendPoints(selectedEdge_);
+                    manualManager_->clearBendPoints(selectedEdge_);
                     selectedBendPoint_.clear();
                     doLayout();
                 }
@@ -943,7 +974,7 @@ public:
         
         ImGui::Separator();
         if (ImGui::Button("Reset Layout")) {
-            manualManager_.clearManualState();
+            manualManager_->clearManualState();
             doLayout();
         }
         
@@ -965,7 +996,7 @@ private:
     std::unordered_map<NodeId, NodeLayout> nodeLayouts_;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
     LayoutResult layoutResult_;
-    ManualLayoutManager manualManager_;
+    std::shared_ptr<ManualLayoutManager> manualManager_;
     LayoutOptions layoutOptions_;
     
     Point offset_ = {0, 0};

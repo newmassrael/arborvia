@@ -60,6 +60,9 @@ compile_commands.json
 # MCP servers
 .serena/
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -45,6 +45,12 @@ struct EdgeLayout {
     int sourceSnapIndex = 0;                  // Which snap point on source edge
     int targetSnapIndex = 0;                  // Which snap point on target edge
     
+    // Channel routing information
+    float channelY = -1.0f;                   // Channel Y position for orthogonal routing (-1 = not set)
+    
+    // Label positioning
+    Point labelPosition;                      // Pre-computed label position (path midpoint)
+    
     /// Get all points in order (source -> bends -> target)
     std::vector<Point> allPoints() const {
         std::vector<Point> result;

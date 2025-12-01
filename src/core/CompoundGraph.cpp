@@ -230,7 +230,7 @@ std::vector<NodeId> CompoundGraph::visibleNodes() const {
 bool CompoundGraph::isInternalEdge(EdgeId id) const {
     if (!hasEdge(id)) return false;
 
-    const EdgeData& edge = getEdge(id);
+    const EdgeData edge = tryGetEdge(id).value();
     auto fromParent = getParent(edge.from);
     auto toParent = getParent(edge.to);
 

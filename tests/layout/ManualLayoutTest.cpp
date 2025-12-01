@@ -333,7 +333,7 @@ TEST_F(ManualLayoutTest, SugiyamaLayoutWithManualManager) {
     manager.setNodePosition(n3_, {100.0f, 100.0f});
     
     SugiyamaLayout layout;
-    layout.setManualLayoutManager(&manager);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
     
     LayoutResult result = layout.layout(graph_);
     

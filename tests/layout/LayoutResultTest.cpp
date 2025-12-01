@@ -83,7 +83,6 @@ TEST(LayoutResultTest, JsonRoundTrip_PreservesAllAttributes) {
 
     LayoutOptions options;
     options.direction = Direction::LeftToRight;
-    options.edgeRouting = EdgeRouting::Orthogonal;
 
     SugiyamaLayout layout(options);
     LayoutResult original = layout.layout(graph);

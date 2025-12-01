@@ -77,17 +77,26 @@ bool Graph::hasNode(NodeId id) const {
 
 const NodeData& Graph::getNode(NodeId id) const {
     if (!hasNode(id)) {
-        throw std::out_of_range("Invalid node ID");
+        throw std::out_of_range("Invalid node ID: " + std::to_string(id));
     }
     return nodes_[id];
 }
 
 NodeData& Graph::getNode(NodeId id) {
     if (!hasNode(id)) {
-        throw std::out_of_range("Invalid node ID");
+        throw std::out_of_range("Invalid node ID: " + std::to_string(id));
     }
     return nodes_[id];
 }
+
+std::optional<NodeData> Graph::tryGetNode(NodeId id) const {
+    if (!hasNode(id)) {
+        return std::nullopt;
+    }
+    return nodes_[id];
+}
+
+
 
 void Graph::setNodeSize(NodeId id, Size size) {
     getNode(id).size = size;
@@ -164,17 +173,26 @@ bool Graph::hasEdge(EdgeId id) const {
 
 const EdgeData& Graph::getEdge(EdgeId id) const {
     if (!hasEdge(id)) {
-        throw std::out_of_range("Invalid edge ID");
+        throw std::out_of_range("Invalid edge ID: " + std::to_string(id));
     }
     return edges_[id];
 }
 
 EdgeData& Graph::getEdge(EdgeId id) {
     if (!hasEdge(id)) {
-        throw std::out_of_range("Invalid edge ID");
+        throw std::out_of_range("Invalid edge ID: " + std::to_string(id));
     }
     return edges_[id];
 }
+
+std::optional<EdgeData> Graph::tryGetEdge(EdgeId id) const {
+    if (!hasEdge(id)) {
+        return std::nullopt;
+    }
+    return edges_[id];
+}
+
+
 
 size_t Graph::nodeCount() const {
     return validNodeCount_;
@@ -333,6 +351,78 @@ void Graph::clear() {
     validNodeCount_ = 0;
     validEdgeCount_ = 0;
 
+    onGraphModified();
+}
+
+void Graph::compact() {
+    // Build node ID mapping: old ID -> new ID
+    std::unordered_map<NodeId, NodeId> nodeMapping;
+    std::vector<NodeData> newNodes;
+    std::vector<bool> newNodeValid;
+    NodeId newNodeId = 0;
+    
+    for (size_t i = 0; i < nodeValid_.size(); ++i) {
+        if (nodeValid_[i]) {
+            nodeMapping[static_cast<NodeId>(i)] = newNodeId;
+            NodeData newNode = nodes_[i];
+            newNode.id = newNodeId;
+            newNodes.push_back(std::move(newNode));
+            newNodeValid.push_back(true);
+            ++newNodeId;
+        }
+    }
+    
+    // Build edge ID mapping: old ID -> new ID
+    std::unordered_map<EdgeId, EdgeId> edgeMapping;
+    std::vector<EdgeData> newEdges;
+    std::vector<bool> newEdgeValid;
+    EdgeId newEdgeId = 0;
+    
+    for (size_t i = 0; i < edgeValid_.size(); ++i) {
+        if (edgeValid_[i]) {
+            edgeMapping[static_cast<EdgeId>(i)] = newEdgeId;
+            EdgeData newEdge = edges_[i];
+            newEdge.id = newEdgeId;
+            
+            // Remap node IDs
+            auto fromIt = nodeMapping.find(newEdge.from);
+            auto toIt = nodeMapping.find(newEdge.to);
+            if (fromIt != nodeMapping.end() && toIt != nodeMapping.end()) {
+                newEdge.from = fromIt->second;
+                newEdge.to = toIt->second;
+                newEdges.push_back(std::move(newEdge));
+                newEdgeValid.push_back(true);
+                ++newEdgeId;
+            }
+        }
+    }
+    
+    // Rebuild adjacency lists
+    std::unordered_map<NodeId, std::vector<EdgeId>> newOutEdges;
+    std::unordered_map<NodeId, std::vector<EdgeId>> newInEdges;
+    
+    for (const auto& edge : newEdges) {
+        newOutEdges[edge.from].push_back(edge.id);
+        newInEdges[edge.to].push_back(edge.id);
+    }
+    
+    // Save counts before move
+    size_t newNodeCount = newNodes.size();
+    size_t newEdgeCount = newEdges.size();
+    
+    // Replace old data with compacted data
+    nodes_ = std::move(newNodes);
+    nodeValid_ = std::move(newNodeValid);
+    edges_ = std::move(newEdges);
+    edgeValid_ = std::move(newEdgeValid);
+    outEdges_ = std::move(newOutEdges);
+    inEdges_ = std::move(newInEdges);
+    
+    nextNodeId_ = newNodeId;
+    nextEdgeId_ = newEdgeId;
+    validNodeCount_ = newNodeCount;
+    validEdgeCount_ = newEdgeCount;
+    
     onGraphModified();
 }
 

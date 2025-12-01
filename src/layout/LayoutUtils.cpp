@@ -111,4 +111,45 @@ Point LayoutUtils::calculateSnapPoint(
     return calculateSnapPointFromPosition(node, edge, position);
 }
 
+Point LayoutUtils::calculateEdgeLabelPosition(const EdgeLayout& edge)
+{
+    const auto& bends = edge.bendPoints;
+
+    // Case 1: 2+ bend points -> midpoint of first two bends (main segment)
+    // In channel routing, bendPoint1 and bendPoint2 form the horizontal/vertical segment
+    if (bends.size() >= 2) {
+        return {
+            (bends[0].position.x + bends[1].position.x) / 2.0f,
+            (bends[0].position.y + bends[1].position.y) / 2.0f
+        };
+    }
+
+    // Case 2: 1 bend point -> midpoint along the path
+    if (bends.size() == 1) {
+        float len1 = edge.sourcePoint.distanceTo(bends[0].position);
+        float len2 = bends[0].position.distanceTo(edge.targetPoint);
+        float total = len1 + len2;
+        
+        if (total < 0.001f) {
+            return bends[0].position;
+        }
+        
+        float half = total / 2.0f;
+
+        if (half <= len1) {
+            float t = half / len1;
+            return edge.sourcePoint + (bends[0].position - edge.sourcePoint) * t;
+        } else {
+            float t = (half - len1) / len2;
+            return bends[0].position + (edge.targetPoint - bends[0].position) * t;
+        }
+    }
+
+    // Case 3: No bend points -> midpoint between source and target
+    return {
+        (edge.sourcePoint.x + edge.targetPoint.x) / 2.0f,
+        (edge.sourcePoint.y + edge.targetPoint.y) / 2.0f
+    };
+}
+
 }  // namespace arborvia

@@ -45,8 +45,8 @@ public:
     const LayoutOptions& options() const override { return options_; }
 
     /// Set manual layout manager for Auto/Manual mode support
-    void setManualLayoutManager(ManualLayoutManager* manager) { manualManager_ = manager; }
-    ManualLayoutManager* manualLayoutManager() const { return manualManager_; }
+    void setManualLayoutManager(std::shared_ptr<ManualLayoutManager> manager) { manualManager_ = manager; }
+    std::shared_ptr<ManualLayoutManager> manualLayoutManager() const { return manualManager_; }
 
     /// Perform layout on a simple graph
     LayoutResult layout(const Graph& graph) override;
@@ -75,7 +75,7 @@ public:
 private:
     LayoutOptions options_;
     LayoutStats stats_;
-    ManualLayoutManager* manualManager_ = nullptr;
+    std::shared_ptr<ManualLayoutManager> manualManager_;
 
     // Incremental layout caching
     uint64_t cachedVersion_ = 0;

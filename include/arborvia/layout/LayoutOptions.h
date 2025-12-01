@@ -13,14 +13,6 @@ enum class Direction {
     RightToLeft    // Root at right, leaves at left
 };
 
-/// Edge routing style
-enum class EdgeRouting {
-    Orthogonal,        // Right-angle bends only (simple midpoint)
-    ChannelOrthogonal, // Channel-based orthogonal routing (circuit diagram style)
-    Polyline,          // Straight line segments
-    Splines            // Smooth curves (future)
-};
-
 /// Self-loop routing direction
 enum class SelfLoopDirection {
     Right,   // Loop exits to the right
@@ -85,10 +77,9 @@ struct LayoutOptions {
     float compoundPadding = 20.0f;        // Padding inside compound nodes
     float parallelSpacing = 30.0f;        // Space between parallel regions
     
-    // Edge routing
-    EdgeRouting edgeRouting = EdgeRouting::Orthogonal;
+    // Edge routing (channel-based orthogonal routing)
     float edgeBendRadius = 5.0f;          // Radius for rounded bends
-    ChannelRoutingOptions channelRouting; // Options for ChannelOrthogonal mode
+    ChannelRoutingOptions channelRouting; // Channel routing options
     
     // Algorithm settings
     NodeAlignment nodeAlignment = NodeAlignment::Center;
@@ -121,7 +112,6 @@ struct LayoutOptions {
         return *this; 
     }
     LayoutOptions& setCompoundPadding(float p) { compoundPadding = p; return *this; }
-    LayoutOptions& setEdgeRouting(EdgeRouting r) { edgeRouting = r; return *this; }
     LayoutOptions& setChannelSpacing(float spacing) {
         channelRouting.channelSpacing = spacing;
         return *this;

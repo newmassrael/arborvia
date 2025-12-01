@@ -49,8 +49,15 @@ public:
     void removeNode(NodeId id);
     bool hasNode(NodeId id) const;
 
+    // Node access API:
+    // - getNode(): Fast reference return. Use for guaranteed-valid IDs (e.g., from nodes() iteration).
+    //   Throws std::out_of_range if ID is invalid.
+    //   WARNING: Returned reference is invalidated by removeNode() or any graph modification!
+    // - tryGetNode(): Safe optional return. Use for uncertain IDs (e.g., user input, after compact()).
+    //   Returns std::nullopt if ID is invalid. Returns a copy, safe from graph modifications.
     const NodeData& getNode(NodeId id) const;
     NodeData& getNode(NodeId id);
+    std::optional<NodeData> tryGetNode(NodeId id) const;
 
     void setNodeSize(NodeId id, Size size);
     void setNodeLabel(NodeId id, const std::string& label);
@@ -63,8 +70,15 @@ public:
     void removeEdge(EdgeId id);
     bool hasEdge(EdgeId id) const;
 
+    // Edge access API:
+    // - getEdge(): Fast reference return. Use for guaranteed-valid IDs (e.g., from edges() iteration).
+    //   Throws std::out_of_range if ID is invalid.
+    //   WARNING: Returned reference is invalidated by removeEdge() or any graph modification!
+    // - tryGetEdge(): Safe optional return. Use for uncertain IDs (e.g., user input, after compact()).
+    //   Returns std::nullopt if ID is invalid. Returns a copy, safe from graph modifications.
     const EdgeData& getEdge(EdgeId id) const;
     EdgeData& getEdge(EdgeId id);
+    std::optional<EdgeData> tryGetEdge(EdgeId id) const;
 
     // Queries
     size_t nodeCount() const;
@@ -91,6 +105,26 @@ public:
 
     // Clear all
     virtual void clear();
+
+    // Compact: Remove invalid nodes and edges from memory, remap all IDs to sequential 0,1,2...
+    //
+    // WARNING: This invalidates ALL existing NodeId and EdgeId references!
+    // After calling compact(), any stored IDs become invalid and must not be used.
+    //
+    // Safe usage patterns:
+    // 1. Use tryGetNode/tryGetEdge after compaction (returns nullopt for invalid IDs)
+    // 2. Store stable identifiers in NodeData.userData before compaction
+    // 3. Use NodeData.label to relocate nodes after compaction
+    //
+    // Example:
+    //   NodeId saved = 5;
+    //   graph.compact();
+    //   graph.getNode(saved);  // CRASH: ID 5 may not exist!
+    //
+    //   // Safe approach:
+    //   auto node = graph.tryGetNode(saved);
+    //   if (!node) { saved = INVALID_NODE; }  // ID was invalidated
+    void compact();
 
     // Dirty tracking for incremental updates
     bool isDirty() const { return dirty_; }

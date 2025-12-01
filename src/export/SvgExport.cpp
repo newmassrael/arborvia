@@ -153,7 +153,7 @@ void SvgExport::writeNode(std::ostream& out, const Graph& graph, const NodeLayou
     
     // Node label
     if (options_.showNodeLabels && graph.hasNode(layout.id)) {
-        const NodeData& node = graph.getNode(layout.id);
+        const NodeData node = graph.getNode(layout.id);
         if (!node.label.empty()) {
             Point center = layout.center();
             out << "  <text class=\"label\" "
@@ -182,7 +182,7 @@ void SvgExport::writeCompoundNode(std::ostream& out, const CompoundGraph& graph,
     
     // Node label
     if (options_.showNodeLabels && graph.hasNode(layout.id)) {
-        const NodeData& node = graph.getNode(layout.id);
+        const NodeData node = graph.getNode(layout.id);
         if (!node.label.empty()) {
             // For compound nodes, put label at top
             float labelY = layout.position.y + options_.fontSize + 5;
@@ -214,17 +214,12 @@ void SvgExport::writeEdge(std::ostream& out, const Graph& graph, const EdgeLayou
     
     // Edge label
     if (options_.showEdgeLabels && graph.hasEdge(layout.id)) {
-        const EdgeData& edge = graph.getEdge(layout.id);
+        const EdgeData edge = graph.getEdge(layout.id);
         if (!edge.label.empty()) {
-            // Place label at midpoint
-            Point mid = {
-                (layout.sourcePoint.x + layout.targetPoint.x) / 2,
-                (layout.sourcePoint.y + layout.targetPoint.y) / 2
-            };
-            
+            // Use pre-computed label position
             out << "  <text class=\"label\" "
-                << "x=\"" << mid.x << "\" "
-                << "y=\"" << mid.y - 5 << "\">"
+                << "x=\"" << layout.labelPosition.x << "\" "
+                << "y=\"" << layout.labelPosition.y - 5 << "\">"
                 << escapeXml(edge.label) << "</text>\n";
         }
     }

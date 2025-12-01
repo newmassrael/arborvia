@@ -200,6 +200,12 @@ std::string LayoutSerializer::toJson(const LayoutResult& result) {
         edgeJson["targetEdge"] = nodeEdgeToString(layout.targetEdge);
         edgeJson["targetSnapIndex"] = layout.targetSnapIndex;
 
+        // Label position
+        edgeJson["labelPosition"] = {{"x", layout.labelPosition.x}, {"y", layout.labelPosition.y}};
+        
+        // Channel routing information
+        edgeJson["channelY"] = layout.channelY;
+
         json bendPoints = json::array();
         for (const auto& bp : layout.bendPoints) {
             bendPoints.push_back({
@@ -252,6 +258,17 @@ LayoutResult LayoutSerializer::layoutResultFromJson(const std::string& jsonStr) 
                 layout.sourcePoint.y = edgeJson["sourcePoint"]["y"].get<float>();
                 layout.targetPoint.x = edgeJson["targetPoint"]["x"].get<float>();
                 layout.targetPoint.y = edgeJson["targetPoint"]["y"].get<float>();
+
+                // Label position (optional for backward compatibility)
+                if (edgeJson.contains("labelPosition")) {
+                    layout.labelPosition.x = edgeJson["labelPosition"]["x"].get<float>();
+                    layout.labelPosition.y = edgeJson["labelPosition"]["y"].get<float>();
+                }
+                
+                // Channel routing information (optional for backward compatibility)
+                if (edgeJson.contains("channelY")) {
+                    layout.channelY = edgeJson["channelY"].get<float>();
+                }
 
                 if (edgeJson.contains("bendPoints")) {
                     for (const auto& bpJson : edgeJson["bendPoints"]) {
