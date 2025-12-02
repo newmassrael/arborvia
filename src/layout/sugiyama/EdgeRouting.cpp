@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <optional>
 #include <iostream>
@@ -40,8 +41,9 @@ namespace {
     /// Self-loop spacing between source and target points
     constexpr float SELF_LOOP_SPACING = 10.0f;
     
-    /// Large value used as initial bound in min/max searches
-    constexpr float LARGE_BOUND = 1000000.0f;
+    /// Default offset for self-loop routing when grid is disabled
+    /// Self-loops route outside the node by this amount
+    constexpr float DEFAULT_SELF_LOOP_OFFSET = 20.0f;
     
     /// Tolerance for safe avoidance checks
     constexpr float SAFE_TOLERANCE = 5.0f;
@@ -82,6 +84,24 @@ namespace {
     inline float getPerpendicularOffset(float gridSize) {
         return gridSize > 0.0f ? gridSize : MIN_PERPENDICULAR_OFFSET;
     }
+
+    /// Get effective grid size for calculations
+    /// Returns 1.0f when grid is disabled (gridSize <= 0) to prevent division by zero
+    /// This means grid unit = pixel coordinate when grid is disabled
+    inline float getEffectiveGridSize(float gridSize) {
+        return gridSize > 0.0f ? gridSize : 1.0f;
+    }
+
+    // =========================================================================
+    // Grid-Unit Constants for Quantized-First Calculations
+    // =========================================================================
+    // These constants define offsets in GRID UNITS (integers).
+    // All routing calculations use these directly without conversion.
+
+    constexpr int GRID_PERPENDICULAR_OFFSET = 1;  // 1 grid cell for directional constraints
+    constexpr int GRID_AVOIDANCE_MARGIN = 1;      // 1 grid cell for node avoidance
+    constexpr int GRID_REROUTE_MARGIN = 2;        // 2 grid cells for routing around
+    constexpr int GRID_SELF_LOOP_SPACING = 1;     // 1 grid cell for self-loops
 
     // =========================================================================
     // Grid Coordinate Types for Quantized-First Calculations
@@ -220,70 +240,6 @@ namespace {
     }
 
     // =========================================================================
-    // Grid Utility Functions (Legacy - to be removed after full quantization)
-    // =========================================================================
-
-    /// Snap a value to the nearest grid point (returns value unchanged if gridSize <= 0)
-    inline float snapToGrid(float value, float gridSize) {
-        if (gridSize <= 0.0f) return value;
-        return std::round(value / gridSize) * gridSize;
-    }
-
-    /// Snap a Point to the nearest grid point (returns point unchanged if gridSize <= 0)
-    inline Point snapPointToGrid(const Point& p, float gridSize) {
-        if (gridSize <= 0.0f) return p;
-        return {snapToGrid(p.x, gridSize), snapToGrid(p.y, gridSize)};
-    }
-
-    /// Fix non-orthogonal segments in bend points by inserting intermediate points
-    /// This should be called after grid snapping to maintain orthogonality
-    /// @param layout The edge layout to fix
-    /// @param gridSize Grid cell size for snapping new points
-    void fixNonOrthogonalBendPoints(EdgeLayout& layout, float gridSize) {
-        if (layout.bendPoints.size() < 1) return;
-        
-        // Build full path: source + bends + target
-        std::vector<Point> allPoints;
-        allPoints.push_back(layout.sourcePoint);
-        for (const auto& bp : layout.bendPoints) {
-            allPoints.push_back(bp.position);
-        }
-        allPoints.push_back(layout.targetPoint);
-        
-        // Check and fix each segment
-        bool modified = true;
-        int maxIterations = 50;  // Prevent infinite loops
-        while (modified && maxIterations-- > 0) {
-            modified = false;
-            for (size_t i = 1; i < allPoints.size(); ++i) {
-                const Point& prev = allPoints[i - 1];
-                const Point& curr = allPoints[i];
-                
-                bool isHorizontal = std::abs(prev.y - curr.y) < EPSILON;
-                bool isVertical = std::abs(prev.x - curr.x) < EPSILON;
-                
-                if (!isHorizontal && !isVertical) {
-                    // Non-orthogonal segment - insert intermediate point
-                    // Choose to go horizontal first (preserve Y of prev, then change to X of curr)
-                    Point intermediate = {curr.x, prev.y};
-                    if (gridSize > 0.0f) {
-                        intermediate = snapPointToGrid(intermediate, gridSize);
-                    }
-                    allPoints.insert(allPoints.begin() + i, intermediate);
-                    modified = true;
-                    break;  // Restart loop
-                }
-            }
-        }
-        
-        // Reconstruct bendPoints (excluding source and target)
-        layout.bendPoints.clear();
-        for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
-            layout.bendPoints.push_back({allPoints[i]});
-        }
-    }
-
-    // =========================================================================
     // Segment-Node Intersection (Namespace Version)
     // =========================================================================
     
@@ -384,270 +340,297 @@ namespace {
         float targetSecondary(const EdgeLayout& layout) const {
             return secondary(layout.targetPoint);
         }
+
+        // =========================================================================
+        // Grid-Unit Operations for Quantized-First Calculations
+        // =========================================================================
+
+        /// Convert pixel coordinate to grid unit (round to nearest)
+        int toGrid(float pixel, float gridSize) const {
+            return static_cast<int>(std::round(pixel / gridSize));
+        }
+
+        /// Convert grid unit to pixel coordinate
+        float toPixel(int grid, float gridSize) const {
+            return grid * gridSize;
+        }
+
+        /// Get primary coordinate in grid units
+        int primaryGrid(const Point& p, float gridSize) const {
+            return toGrid(primary(p), gridSize);
+        }
+
+        /// Get secondary coordinate in grid units
+        int secondaryGrid(const Point& p, float gridSize) const {
+            return toGrid(secondary(p), gridSize);
+        }
+
+        /// Create point from grid coordinates
+        Point makePointFromGrid(int gridPrimary, int gridSecondary, float gridSize) const {
+            return makePoint(toPixel(gridPrimary, gridSize), toPixel(gridSecondary, gridSize));
+        }
+
+        /// Get node bounds in grid units (uses floor for min, ceil for max)
+        void getNodeGridBounds(const NodeLayout& node, float gridSize,
+                              int& gridMin, int& gridMax,
+                              int& gridSecondaryMin, int& gridSecondaryMax) const {
+            if (isHorizontal) {
+                gridMin = static_cast<int>(std::floor(node.position.x / gridSize));
+                gridMax = static_cast<int>(std::ceil((node.position.x + node.size.width) / gridSize));
+                gridSecondaryMin = static_cast<int>(std::floor(node.position.y / gridSize));
+                gridSecondaryMax = static_cast<int>(std::ceil((node.position.y + node.size.height) / gridSize));
+            } else {
+                gridMin = static_cast<int>(std::floor(node.position.y / gridSize));
+                gridMax = static_cast<int>(std::ceil((node.position.y + node.size.height) / gridSize));
+                gridSecondaryMin = static_cast<int>(std::floor(node.position.x / gridSize));
+                gridSecondaryMax = static_cast<int>(std::ceil((node.position.x + node.size.width) / gridSize));
+            }
+        }
     };
-    
-    /// Create three-segment orthogonal path points for intersection checking
-    /// @param source Source point
-    /// @param target Target point
-    /// @param orthogonalCoord The coordinate for the middle segment
-    /// @param axis Axis configuration
-    /// @return Array of 6 points: [seg1Start, seg1End, seg2Start, seg2End, seg3Start, seg3End]
-    std::array<Point, 6> makeThreeSegmentPath(
-        const Point& source,
-        const Point& target,
-        float orthogonalCoord,
-        const AxisConfig& axis) {
-        
-        // For horizontal: source.y stays same, orthogonalCoord is X
-        // Segment 1: (source.x, source.y) → (orthogonalCoord, source.y) [horizontal]
-        // Segment 2: (orthogonalCoord, source.y) → (orthogonalCoord, target.y) [vertical]
-        // Segment 3: (orthogonalCoord, target.y) → (target.x, target.y) [horizontal]
-        
-        // For vertical: source.x stays same, orthogonalCoord is Y
-        // Segment 1: (source.x, source.y) → (source.x, orthogonalCoord) [vertical]
-        // Segment 2: (source.x, orthogonalCoord) → (target.x, orthogonalCoord) [horizontal]
-        // Segment 3: (target.x, orthogonalCoord) → (target.x, target.y) [vertical]
-        
-        float srcSecondary = axis.secondary(source);
-        float tgtSecondary = axis.secondary(target);
-        
-        return {{
-            source,                                                    // seg1Start
-            axis.makePoint(orthogonalCoord, srcSecondary),            // seg1End
-            axis.makePoint(orthogonalCoord, srcSecondary),            // seg2Start
-            axis.makePoint(orthogonalCoord, tgtSecondary),            // seg2End
-            axis.makePoint(orthogonalCoord, tgtSecondary),            // seg3Start
-            target                                                     // seg3End
-        }};
+
+    // =========================================================================
+    // Grid-Based Routing Functions (Quantized-First)
+    // =========================================================================
+    // These functions perform all calculations in grid units (integers).
+    // Conversion to pixel coordinates happens only at the final BendPoint creation.
+
+    /// Apply directional constraint in grid units
+    /// Returns the constrained coordinate in grid units
+    /// @param gridChannelPos Channel position in grid units
+    /// @param gridSnapPoint Snap point position in grid units
+    /// @param edge Which edge of the node
+    /// @param offset Perpendicular offset in grid units (typically GRID_PERPENDICULAR_OFFSET)
+    /// @return Constrained position in grid units
+    int applyDirectionalConstraintGrid(int gridChannelPos, int gridSnapPoint, NodeEdge edge, int offset = GRID_PERPENDICULAR_OFFSET) {
+        switch (edge) {
+            case NodeEdge::Top:
+            case NodeEdge::Left:
+                // Bend points must be toward smaller coordinate
+                return std::min(gridChannelPos, gridSnapPoint - offset);
+            case NodeEdge::Bottom:
+            case NodeEdge::Right:
+                // Bend points must be toward larger coordinate
+                return std::max(gridChannelPos, gridSnapPoint + offset);
+            default:
+                return gridChannelPos;
+        }
     }
-    
-    /// Check if a three-segment path intersects any node (excluding source/target nodes)
-    bool pathIntersectsNodes(
-        const std::array<Point, 6>& path,
+
+    /// Check if a three-segment grid path intersects any node
+    /// @param gridOrthogonal The orthogonal coordinate in grid units
+    /// @param gridSrcSecondary Source secondary coordinate in grid units
+    /// @param gridTgtSecondary Target secondary coordinate in grid units
+    /// @param axis Axis configuration
+    /// @param nodeLayouts All node layouts
+    /// @param excludeFrom Source node ID to exclude
+    /// @param excludeTo Target node ID to exclude
+    /// @param gridSize Grid cell size
+    bool gridPathIntersectsNodes(
+        int gridOrthogonal,
+        int gridSrcSecondary,
+        int gridTgtSecondary,
+        const AxisConfig& axis,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         NodeId excludeFrom,
-        NodeId excludeTo) {
-        
+        NodeId excludeTo,
+        float gridSize) {
+
+        // Convert to pixel coordinates for intersection checking
+        float orthogonal = axis.toPixel(gridOrthogonal, gridSize);
+        float srcSecondary = axis.toPixel(gridSrcSecondary, gridSize);
+        float tgtSecondary = axis.toPixel(gridTgtSecondary, gridSize);
+
+        Point seg1Start = axis.makePoint(orthogonal, srcSecondary);
+        Point seg1End = axis.makePoint(orthogonal, tgtSecondary);
+
         for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
             if (nodeId == excludeFrom || nodeId == excludeTo) continue;
-            if (EdgeRouting::segmentIntersectsNode(path[0], path[1], nodeLayout) ||
-                EdgeRouting::segmentIntersectsNode(path[2], path[3], nodeLayout) ||
-                EdgeRouting::segmentIntersectsNode(path[4], path[5], nodeLayout)) {
+            if (EdgeRouting::segmentIntersectsNode(seg1Start, seg1End, nodeLayout)) {
                 return true;
             }
         }
         return false;
     }
-    
-    /// Add two bend points for simple orthogonal routing
-    void addSimpleBendPoints(
+
+    /// Add bend points from grid coordinates (conversion to pixel at the end)
+    void addBendPointsFromGrid(
         EdgeLayout& layout,
-        float orthogonalCoord,
-        const AxisConfig& axis) {
-        
-        float srcSecondary = axis.secondary(layout.sourcePoint);
-        float tgtSecondary = axis.secondary(layout.targetPoint);
-        
-        layout.bendPoints.push_back({axis.makePoint(orthogonalCoord, srcSecondary)});
-        layout.bendPoints.push_back({axis.makePoint(orthogonalCoord, tgtSecondary)});
+        int gridOrthogonal,
+        int gridSrcSecondary,
+        int gridTgtSecondary,
+        const AxisConfig& axis,
+        float gridSize) {
+
+        layout.bendPoints.push_back({axis.makePointFromGrid(gridOrthogonal, gridSrcSecondary, gridSize)});
+        layout.bendPoints.push_back({axis.makePointFromGrid(gridOrthogonal, gridTgtSecondary, gridSize)});
     }
-    
-    /// Route edge with same bound type constraints (Case 1)
-    /// Both source and target have same type of constraint (both lower or both upper)
-    /// @param layout Edge layout to modify
-    /// @param sourceConstraint Constraint value from source edge
-    /// @param targetConstraint Constraint value from target edge  
-    /// @param axis Axis configuration
-    /// @param nodeLayouts All node layouts for intersection checking
-    void routeSameBoundCase(
+
+    /// Route edge with same bound constraints using grid-first calculation (Case 1)
+    void routeSameBoundCaseGrid(
         EdgeLayout& layout,
-        float sourceConstraint,
-        float targetConstraint,
+        int gridSourceConstraint,
+        int gridTargetConstraint,
+        int gridSrcSecondary,
+        int gridTgtSecondary,
         const AxisConfig& axis,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize = 0.0f) {
-        
+        float gridSize) {
+
         // Try min constraint first
-        float orthogonalCoord = std::min(sourceConstraint, targetConstraint);
-        auto path = makeThreeSegmentPath(layout.sourcePoint, layout.targetPoint, orthogonalCoord, axis);
-        
-        if (pathIntersectsNodes(path, nodeLayouts, layout.from, layout.to)) {
+        int gridOrthogonal = std::min(gridSourceConstraint, gridTargetConstraint);
+
+        if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
+                                    axis, nodeLayouts, layout.from, layout.to, gridSize)) {
             // Try max constraint
-            orthogonalCoord = std::max(sourceConstraint, targetConstraint);
-            path = makeThreeSegmentPath(layout.sourcePoint, layout.targetPoint, orthogonalCoord, axis);
-            
-            if (pathIntersectsNodes(path, nodeLayouts, layout.from, layout.to)) {
+            gridOrthogonal = std::max(gridSourceConstraint, gridTargetConstraint);
+
+            if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
+                                        axis, nodeLayouts, layout.from, layout.to, gridSize)) {
                 // Find bounds outside all blocking nodes
-                float minBound = -LARGE_BOUND;
-                float maxBound = LARGE_BOUND;
-                float avoidMargin = getAvoidanceMargin(gridSize);
-                
+                int gridMinBound = INT_MIN / 2;  // Avoid overflow
+                int gridMaxBound = INT_MAX / 2;
+
                 for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
                     if (nodeId == layout.from || nodeId == layout.to) continue;
-                    minBound = std::max(minBound, axis.nodeMax(nodeLayout) + avoidMargin);
-                    maxBound = std::min(maxBound, axis.nodeMin(nodeLayout) - avoidMargin);
+                    int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
+                    axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
+                    gridMinBound = std::max(gridMinBound, nodeMax + GRID_AVOIDANCE_MARGIN);
+                    gridMaxBound = std::min(gridMaxBound, nodeMin - GRID_AVOIDANCE_MARGIN);
                 }
-                
+
                 // Choose direction requiring less deviation
-                float distMin = std::abs(orthogonalCoord - minBound);
-                float distMax = std::abs(orthogonalCoord - maxBound);
-                orthogonalCoord = (distMin < distMax) ? minBound : maxBound;
+                int distMin = std::abs(gridOrthogonal - gridMinBound);
+                int distMax = std::abs(gridOrthogonal - gridMaxBound);
+                gridOrthogonal = (distMin < distMax) ? gridMinBound : gridMaxBound;
             }
         }
-        
-        addSimpleBendPoints(layout, orthogonalCoord, axis);
+
+        addBendPointsFromGrid(layout, gridOrthogonal, gridSrcSecondary, gridTgtSecondary, axis, gridSize);
     }
-    
-    /// Route edge with compatible bound constraints (Case 2)
-    /// One source/target has lower bound, other has upper bound, and they're compatible
-    /// @param layout Edge layout to modify
-    /// @param lowerBound Lower bound constraint
-    /// @param upperBound Upper bound constraint
-    /// @param axis Axis configuration
-    /// @param nodeLayouts All node layouts for intersection checking
-    void routeCompatibleBoundsCase(
+
+    /// Route edge with compatible bound constraints using grid-first calculation (Case 2)
+    void routeCompatibleBoundsCaseGrid(
         EdgeLayout& layout,
-        float lowerBound,
-        float upperBound,
+        int gridLowerBound,
+        int gridUpperBound,
+        int gridSrcSecondary,
+        int gridTgtSecondary,
         const AxisConfig& axis,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize = 0.0f) {
-        
-        // Try midpoint first
-        float orthogonalCoord = (lowerBound + upperBound) / 2.0f;
-        auto path = makeThreeSegmentPath(layout.sourcePoint, layout.targetPoint, orthogonalCoord, axis);
-        
-        if (pathIntersectsNodes(path, nodeLayouts, layout.from, layout.to)) {
+        float gridSize) {
+
+        // Try midpoint first (integer division preserves grid alignment)
+        int gridOrthogonal = (gridLowerBound + gridUpperBound) / 2;
+
+        if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
+                                    axis, nodeLayouts, layout.from, layout.to, gridSize)) {
             // Try lower bound
-            orthogonalCoord = lowerBound;
-            path = makeThreeSegmentPath(layout.sourcePoint, layout.targetPoint, orthogonalCoord, axis);
-            
-            if (pathIntersectsNodes(path, nodeLayouts, layout.from, layout.to)) {
+            gridOrthogonal = gridLowerBound;
+
+            if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
+                                        axis, nodeLayouts, layout.from, layout.to, gridSize)) {
                 // Try upper bound
-                orthogonalCoord = upperBound;
-                path = makeThreeSegmentPath(layout.sourcePoint, layout.targetPoint, orthogonalCoord, axis);
-                
-                if (pathIntersectsNodes(path, nodeLayouts, layout.from, layout.to)) {
+                gridOrthogonal = gridUpperBound;
+
+                if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
+                                            axis, nodeLayouts, layout.from, layout.to, gridSize)) {
                     // Find safe coordinate outside all nodes
-                    float minBound = -LARGE_BOUND;
-                    float maxBound = LARGE_BOUND;
-                    float avoidMargin = getAvoidanceMargin(gridSize);
-                    
+                    int gridMinBound = INT_MIN / 2;
+                    int gridMaxBound = INT_MAX / 2;
+
                     for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
                         if (nodeId == layout.from || nodeId == layout.to) continue;
-                        minBound = std::max(minBound, axis.nodeMax(nodeLayout) + avoidMargin);
-                        maxBound = std::min(maxBound, axis.nodeMin(nodeLayout) - avoidMargin);
+                        int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
+                        axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
+                        gridMinBound = std::max(gridMinBound, nodeMax + GRID_AVOIDANCE_MARGIN);
+                        gridMaxBound = std::min(gridMaxBound, nodeMin - GRID_AVOIDANCE_MARGIN);
                     }
-                    
-                    float distMin = std::abs(orthogonalCoord - minBound);
-                    float distMax = std::abs(orthogonalCoord - maxBound);
-                    orthogonalCoord = (distMin < distMax) ? minBound : maxBound;
+
+                    int distMin = std::abs(gridOrthogonal - gridMinBound);
+                    int distMax = std::abs(gridOrthogonal - gridMaxBound);
+                    gridOrthogonal = (distMin < distMax) ? gridMinBound : gridMaxBound;
                 }
             }
         }
-        
-        addSimpleBendPoints(layout, orthogonalCoord, axis);
+
+        addBendPointsFromGrid(layout, gridOrthogonal, gridSrcSecondary, gridTgtSecondary, axis, gridSize);
     }
-    
-    /// Route edge with conflicting bound constraints (Case 3)
-    /// Source and target have incompatible bounds (lowerBound > upperBound)
-    /// Requires detour routing to satisfy both constraints
-    /// @param layout Edge layout to modify
-    /// @param lowerBound Lower bound constraint (exitCoord on primary axis)
-    /// @param upperBound Upper bound constraint (approachCoord on primary axis)
-    /// @param axis Axis configuration
-    /// @param nodeLayouts All node layouts for intersection checking
-    /// @param gridSize Grid cell size for coordinate snapping
-    void routeConflictingBoundsCase(
+
+    /// Route edge with conflicting bound constraints using grid-first calculation (Case 3)
+    void routeConflictingBoundsCaseGrid(
         EdgeLayout& layout,
-        float lowerBound,
-        float upperBound,
+        int gridExitCoord,      // lowerBound in original
+        int gridApproachCoord,  // upperBound in original
+        int gridSrcSecondary,
+        int gridTgtSecondary,
+        int gridTgtPrimary,
         const AxisConfig& axis,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize = 0.0f) {
-        
-        float exitCoord = lowerBound;
-        float approachCoord = upperBound;
-        
-        float tgtPrimary = axis.primary(layout.targetPoint);
-        float srcSecondary = axis.secondary(layout.sourcePoint);
-        float tgtSecondary = axis.secondary(layout.targetPoint);
-        
-        // Check for spike-inducing geometry:
-        // For positive→negative direction edges (Bottom→Top or Right→Left):
-        //   exitCoord >= targetPrimary means we'd overshoot, then backtrack (spike)
-        // For negative→positive direction edges (Top→Bottom or Left→Right):
-        //   exitCoord <= targetPrimary means we'd overshoot, then backtrack (spike)
+        float gridSize) {
+
+        // Check for spike-inducing geometry
         bool wouldCreateSpike = false;
         bool sourceIsPositive = axis.isPositiveEdge(layout.sourceEdge);
         bool targetIsPositive = axis.isPositiveEdge(layout.targetEdge);
-        
+
         if (sourceIsPositive && !targetIsPositive) {
-            // e.g., Bottom→Top or Right→Left
-            wouldCreateSpike = (exitCoord >= tgtPrimary - EPSILON);
+            wouldCreateSpike = (gridExitCoord >= gridTgtPrimary);
         } else if (!sourceIsPositive && targetIsPositive) {
-            // e.g., Top→Bottom or Left→Right
-            wouldCreateSpike = (exitCoord <= tgtPrimary + EPSILON);
+            wouldCreateSpike = (gridExitCoord <= gridTgtPrimary);
         }
-        
+
         if (wouldCreateSpike) {
-            // Alternative routing: Go perpendicular first, then along primary axis
-            // This avoids the spike by routing around before the approach
-            float detourSecondary;
-            
-            // Determine detour direction: go away from the target on secondary axis
-            // getRerouteMargin returns grid multiple, srcSecondary is grid-aligned
-            // Result is automatically grid-aligned, no snap needed
-            if (srcSecondary < tgtSecondary) {
-                detourSecondary = srcSecondary - getRerouteMargin(gridSize);
+            // Alternative routing: Go perpendicular first
+            int gridDetourSecondary;
+            if (gridSrcSecondary < gridTgtSecondary) {
+                gridDetourSecondary = gridSrcSecondary - GRID_REROUTE_MARGIN;
             } else {
-                detourSecondary = srcSecondary + getRerouteMargin(gridSize);
+                gridDetourSecondary = gridSrcSecondary + GRID_REROUTE_MARGIN;
             }
-            
-            // Create 4-point detour path
-            layout.bendPoints.push_back({axis.makePoint(exitCoord, srcSecondary)});
-            layout.bendPoints.push_back({axis.makePoint(exitCoord, detourSecondary)});
-            layout.bendPoints.push_back({axis.makePoint(approachCoord, detourSecondary)});
-            layout.bendPoints.push_back({axis.makePoint(approachCoord, tgtSecondary)});
+
+            // Create 4-point detour path (convert to pixels)
+            layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
+            layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridDetourSecondary, gridSize)});
+            layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridDetourSecondary, gridSize)});
+            layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
         } else {
-            // Standard detour: exitCoord and approachCoord don't create a spike
-            Point segStart = axis.makePoint(exitCoord, srcSecondary);
-            Point segEnd = axis.makePoint(exitCoord, tgtSecondary);
-            
+            // Check for node intersection on the exit segment
             bool hasIntersection = false;
-            NodeLayout blockingNode = nodeLayouts.begin()->second;
-            
+            int blockingNodeSecMax = 0;
+
             for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
                 if (nodeId == layout.from || nodeId == layout.to) continue;
-                
+
+                Point segStart = axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize);
+                Point segEnd = axis.makePointFromGrid(gridExitCoord, gridTgtSecondary, gridSize);
+
                 if (EdgeRouting::segmentIntersectsNode(segStart, segEnd, nodeLayout)) {
                     hasIntersection = true;
-                    blockingNode = nodeLayout;
+                    int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
+                    axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
+                    (void)nodeSecMin;  // Only nodeSecMax used for avoidance
+                    blockingNodeSecMax = nodeSecMax;
                     break;
                 }
             }
-            
+
             if (hasIntersection) {
-                // Need to route around blocking node on secondary axis
-                float avoidSecondary = EdgeRouting::calculateAvoidanceCoordinate(
-                    axis.nodeSecondaryMin(blockingNode),
-                    axis.nodeSecondaryMax(blockingNode),
-                    true, gridSize
-                );
-                
-                layout.bendPoints.push_back({axis.makePoint(exitCoord, srcSecondary)});
-                layout.bendPoints.push_back({axis.makePoint(exitCoord, avoidSecondary)});
-                layout.bendPoints.push_back({axis.makePoint(approachCoord, avoidSecondary)});
-                layout.bendPoints.push_back({axis.makePoint(approachCoord, tgtSecondary)});
+                // Route around blocking node
+                int gridAvoidSecondary = blockingNodeSecMax + GRID_AVOIDANCE_MARGIN;
+
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridAvoidSecondary, gridSize)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridAvoidSecondary, gridSize)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
             } else {
                 // Simple 3-point path
-                layout.bendPoints.push_back({axis.makePoint(exitCoord, srcSecondary)});
-                layout.bendPoints.push_back({axis.makePoint(exitCoord, tgtSecondary)});
-                layout.bendPoints.push_back({axis.makePoint(approachCoord, tgtSecondary)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridTgtSecondary, gridSize)});
+                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
             }
         }
     }
-    
+
     struct PairHash {
         template <typename T1, typename T2>
         std::size_t operator()(const std::pair<T1, T2>& p) const {
@@ -1319,55 +1302,42 @@ void EdgeRouting::performChannelBasedRouting(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize) {
 
-    if (isHorizontal) {
-        // Horizontal layout: channelY stores X coordinate
-        float channelX = layout.channelY;
+    float effectiveGridSize = getEffectiveGridSize(gridSize);
 
-        float sourceConstraint = applyDirectionalConstraint(channelX, layout.sourcePoint.x,
-                                                            layout.sourceEdge, true, gridSize);
-        float targetConstraint = applyDirectionalConstraint(channelX, layout.targetPoint.x,
-                                                            layout.targetEdge, false, gridSize);
+    AxisConfig axis{isHorizontal};
 
-        bool sourceIsLowerBound = (layout.sourceEdge == NodeEdge::Right);
-        bool targetIsLowerBound = (layout.targetEdge == NodeEdge::Right);
+    // Convert all coordinates to grid units at the start
+    int gridChannel = axis.toGrid(layout.channelY, effectiveGridSize);
+    int gridSrcPrimary = axis.primaryGrid(layout.sourcePoint, effectiveGridSize);
+    int gridTgtPrimary = axis.primaryGrid(layout.targetPoint, effectiveGridSize);
+    int gridSrcSecondary = axis.secondaryGrid(layout.sourcePoint, effectiveGridSize);
+    int gridTgtSecondary = axis.secondaryGrid(layout.targetPoint, effectiveGridSize);
 
-        AxisConfig axis{true};  // horizontal
-        if (sourceIsLowerBound == targetIsLowerBound) {
-            routeSameBoundCase(layout, sourceConstraint, targetConstraint, axis, nodeLayouts, gridSize);
-        } else {
-            float lowerBound = sourceIsLowerBound ? sourceConstraint : targetConstraint;
-            float upperBound = sourceIsLowerBound ? targetConstraint : sourceConstraint;
+    // Calculate perpendicular offset in grid units
+    // When grid is disabled (effectiveGridSize = 1.0f), this ensures minimum pixel clearance
+    int gridOffset = static_cast<int>(std::ceil(MIN_PERPENDICULAR_OFFSET / effectiveGridSize));
 
-            if (lowerBound <= upperBound) {
-                routeCompatibleBoundsCase(layout, lowerBound, upperBound, axis, nodeLayouts, gridSize);
-            } else {
-                routeConflictingBoundsCase(layout, lowerBound, upperBound, axis, nodeLayouts, gridSize);
-            }
-        }
+    // Apply directional constraints in grid units
+    int gridSourceConstraint = applyDirectionalConstraintGrid(gridChannel, gridSrcPrimary, layout.sourceEdge, gridOffset);
+    int gridTargetConstraint = applyDirectionalConstraintGrid(gridChannel, gridTgtPrimary, layout.targetEdge, gridOffset);
+
+    bool sourceIsLowerBound = axis.isLowerBound(layout.sourceEdge);
+    bool targetIsLowerBound = axis.isLowerBound(layout.targetEdge);
+
+    if (sourceIsLowerBound == targetIsLowerBound) {
+        routeSameBoundCaseGrid(layout, gridSourceConstraint, gridTargetConstraint,
+                               gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
     } else {
-        // Vertical layout: channelY stores Y coordinate
-        float channelY = layout.channelY;
+        int gridLowerBound = sourceIsLowerBound ? gridSourceConstraint : gridTargetConstraint;
+        int gridUpperBound = sourceIsLowerBound ? gridTargetConstraint : gridSourceConstraint;
 
-        float sourceConstraint = applyDirectionalConstraint(channelY, layout.sourcePoint.y,
-                                                            layout.sourceEdge, true, gridSize);
-        float targetConstraint = applyDirectionalConstraint(channelY, layout.targetPoint.y,
-                                                            layout.targetEdge, false, gridSize);
-
-        bool sourceIsLowerBound = (layout.sourceEdge == NodeEdge::Bottom);
-        bool targetIsLowerBound = (layout.targetEdge == NodeEdge::Bottom);
-
-        AxisConfig axis{false};  // vertical
-        if (sourceIsLowerBound == targetIsLowerBound) {
-            routeSameBoundCase(layout, sourceConstraint, targetConstraint, axis, nodeLayouts, gridSize);
+        if (gridLowerBound <= gridUpperBound) {
+            routeCompatibleBoundsCaseGrid(layout, gridLowerBound, gridUpperBound,
+                                          gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
         } else {
-            float lowerBound = sourceIsLowerBound ? sourceConstraint : targetConstraint;
-            float upperBound = sourceIsLowerBound ? targetConstraint : sourceConstraint;
-
-            if (lowerBound <= upperBound) {
-                routeCompatibleBoundsCase(layout, lowerBound, upperBound, axis, nodeLayouts, gridSize);
-            } else {
-                routeConflictingBoundsCase(layout, lowerBound, upperBound, axis, nodeLayouts, gridSize);
-            }
+            routeConflictingBoundsCaseGrid(layout, gridLowerBound, gridUpperBound,
+                                           gridSrcSecondary, gridTgtSecondary, gridTgtPrimary,
+                                           axis, nodeLayouts, effectiveGridSize);
         }
     }
 }
@@ -1378,31 +1348,29 @@ void EdgeRouting::performFallbackRouting(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize) {
 
-    if (isHorizontal) {
-        float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
-        if (gridSize > 0.0f) {
-            midX = std::round(midX / gridSize) * gridSize;
-        }
-        float sourceConstraint = applyDirectionalConstraint(midX, layout.sourcePoint.x,
-                                                            layout.sourceEdge, true, gridSize);
-        float targetConstraint = applyDirectionalConstraint(midX, layout.targetPoint.x,
-                                                            layout.targetEdge, false, gridSize);
+    float effectiveGridSize = getEffectiveGridSize(gridSize);
 
-        AxisConfig axis{true};  // horizontal
-        routeSameBoundCase(layout, sourceConstraint, targetConstraint, axis, nodeLayouts, gridSize);
-    } else {
-        float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
-        if (gridSize > 0.0f) {
-            midY = std::round(midY / gridSize) * gridSize;
-        }
-        float sourceConstraint = applyDirectionalConstraint(midY, layout.sourcePoint.y,
-                                                            layout.sourceEdge, true, gridSize);
-        float targetConstraint = applyDirectionalConstraint(midY, layout.targetPoint.y,
-                                                            layout.targetEdge, false, gridSize);
+    AxisConfig axis{isHorizontal};
 
-        AxisConfig axis{false};  // vertical
-        routeSameBoundCase(layout, sourceConstraint, targetConstraint, axis, nodeLayouts, gridSize);
-    }
+    // Convert all coordinates to grid units at the start
+    int gridSrcPrimary = axis.primaryGrid(layout.sourcePoint, effectiveGridSize);
+    int gridTgtPrimary = axis.primaryGrid(layout.targetPoint, effectiveGridSize);
+    int gridSrcSecondary = axis.secondaryGrid(layout.sourcePoint, effectiveGridSize);
+    int gridTgtSecondary = axis.secondaryGrid(layout.targetPoint, effectiveGridSize);
+
+    // Calculate midpoint in grid units (integer division preserves alignment)
+    int gridMid = (gridSrcPrimary + gridTgtPrimary) / 2;
+
+    // Calculate perpendicular offset in grid units
+    // When grid is disabled (effectiveGridSize = 1.0f), this ensures minimum pixel clearance
+    int gridOffset = static_cast<int>(std::ceil(MIN_PERPENDICULAR_OFFSET / effectiveGridSize));
+
+    // Apply directional constraints in grid units
+    int gridSourceConstraint = applyDirectionalConstraintGrid(gridMid, gridSrcPrimary, layout.sourceEdge, gridOffset);
+    int gridTargetConstraint = applyDirectionalConstraintGrid(gridMid, gridTgtPrimary, layout.targetEdge, gridOffset);
+
+    routeSameBoundCaseGrid(layout, gridSourceConstraint, gridTargetConstraint,
+                           gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
 }
 
 void EdgeRouting::moveIntermediatePointsOutsideNodes(
@@ -1774,6 +1742,53 @@ void EdgeRouting::recalculateBendPoints(
     float gridSize) {
     layout.bendPoints.clear();
 
+    // Handle self-loops specially - they need to route around the same node
+    if (layout.from == layout.to) {
+        auto nodeIt = nodeLayouts.find(layout.from);
+        if (nodeIt != nodeLayouts.end()) {
+            const NodeLayout& node = nodeIt->second;
+            // Self-loop offset: use the larger of gridSize or DEFAULT_SELF_LOOP_OFFSET
+            // This ensures sufficient clearance regardless of grid settings
+            float offset = std::max(gridSize, DEFAULT_SELF_LOOP_OFFSET);
+            
+            // Determine direction from sourceEdge
+            switch (layout.sourceEdge) {
+                case NodeEdge::Right:
+                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
+                                                  layout.sourcePoint.y}});
+                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
+                                                  layout.targetPoint.y}});
+                    break;
+                case NodeEdge::Left:
+                    layout.bendPoints.push_back({{node.position.x - offset,
+                                                  layout.sourcePoint.y}});
+                    layout.bendPoints.push_back({{node.position.x - offset,
+                                                  layout.targetPoint.y}});
+                    break;
+                case NodeEdge::Top:
+                    layout.bendPoints.push_back({{layout.sourcePoint.x,
+                                                  node.position.y - offset}});
+                    layout.bendPoints.push_back({{layout.targetPoint.x,
+                                                  node.position.y - offset}});
+                    break;
+                case NodeEdge::Bottom:
+                    layout.bendPoints.push_back({{layout.sourcePoint.x,
+                                                  node.position.y + node.size.height + offset}});
+                    layout.bendPoints.push_back({{layout.targetPoint.x,
+                                                  node.position.y + node.size.height + offset}});
+                    break;
+                default:
+                    // For unknown edge, default to right
+                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
+                                                  layout.sourcePoint.y}});
+                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
+                                                  layout.targetPoint.y}});
+                    break;
+            }
+        }
+        return;  // Self-loops don't need further processing
+    }
+
     // Determine layout direction from source/target edges
     bool isHorizontal = (layout.sourceEdge == NodeEdge::Right ||
                          layout.sourceEdge == NodeEdge::Left);
@@ -1823,49 +1838,6 @@ void EdgeRouting::recalculateBendPoints(
         for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
             layout.bendPoints.push_back({allPoints[i]});
         }
-    }
-}
-
-float EdgeRouting::applyDirectionalConstraint(float channelPos, float snapPoint,
-                                              NodeEdge edge, bool isSource,
-                                              float gridSize) {
-
-    // Directional constraints ensure bend points stay OUTSIDE nodes:
-    // - Top edge (at yMin): bend points must be ABOVE node → y < yMin → use MIN
-    // - Bottom edge (at yMax): bend points must be BELOW node → y > yMax → use MAX
-    // - Left edge (at xMin): bend points must be LEFT of node → x < xMin → use MIN
-    // - Right edge (at xMax): bend points must be RIGHT of node → x > xMax → use MAX
-    //
-    // IMPORTANT: The constraint is the SAME for both source and target!
-    // Both must keep bend points outside their respective nodes.
-    //
-    // The isSource parameter is kept for potential future use (e.g., asymmetric constraints),
-    // but currently both source and target use identical logic.
-
-    (void)isSource;  // Suppress unused parameter warning
-
-    // Use grid-relative offset when gridSize > 0, producing grid-aligned results
-    float offset = getPerpendicularOffset(gridSize);
-
-    switch (edge) {
-        case NodeEdge::Top:
-            // Bend points must be ABOVE the node (away from node, toward smaller Y)
-            return std::min(channelPos, snapPoint - offset);
-
-        case NodeEdge::Bottom:
-            // Bend points must be BELOW the node (away from node, toward larger Y)
-            return std::max(channelPos, snapPoint + offset);
-
-        case NodeEdge::Left:
-            // Bend points must be LEFT of the node (away from node, toward smaller X)
-            return std::min(channelPos, snapPoint - offset);
-
-        case NodeEdge::Right:
-            // Bend points must be RIGHT of the node (away from node, toward larger X)
-            return std::max(channelPos, snapPoint + offset);
-
-        default:
-            return channelPos;
     }
 }
 
@@ -2022,6 +1994,8 @@ void EdgeRouting::distributeAutoSnapPoints(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     SnapDistribution distribution,
     float gridSize) {
+
+    float effectiveGridSize = getEffectiveGridSize(gridSize);
     
     if (distribution == SnapDistribution::Unified) {
         // Unified mode: all connections on same edge distributed together
@@ -2046,15 +2020,8 @@ void EdgeRouting::distributeAutoSnapPoints(
                 auto [edgeId, isSource] = connections[i];
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
 
-                Point snapPoint;
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry by using integer arithmetic
-                    snapPoint = calculateSnapPositionQuantized(node, nodeEdge, i, count, 0.0f, 1.0f, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(i, count, 0.0f, 1.0f);
-                    snapPoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry by using integer arithmetic
+                Point snapPoint = calculateSnapPositionQuantized(node, nodeEdge, i, count, 0.0f, 1.0f, effectiveGridSize);
 
                 if (isSource) {
                     layout.sourcePoint = snapPoint;
@@ -2106,15 +2073,8 @@ void EdgeRouting::distributeAutoSnapPoints(
             for (int i = 0; i < inCount; ++i) {
                 EdgeId edgeId = incoming[i];
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry
-                    layout.targetPoint = calculateSnapPositionQuantized(node, nodeEdge, i, inCount, inStart, inEnd, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(i, inCount, inStart, inEnd);
-                    layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry
+                layout.targetPoint = calculateSnapPositionQuantized(node, nodeEdge, i, inCount, inStart, inEnd, effectiveGridSize);
                 layout.targetSnapIndex = unifiedIndex++;
             }
 
@@ -2122,15 +2082,8 @@ void EdgeRouting::distributeAutoSnapPoints(
             for (int i = 0; i < outCount; ++i) {
                 EdgeId edgeId = outgoing[i];
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry
-                    layout.sourcePoint = calculateSnapPositionQuantized(node, nodeEdge, i, outCount, outStart, outEnd, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(i, outCount, outStart, outEnd);
-                    layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry
+                layout.sourcePoint = calculateSnapPositionQuantized(node, nodeEdge, i, outCount, outStart, outEnd, effectiveGridSize);
                 layout.sourceSnapIndex = unifiedIndex++;
             }
         }
@@ -2138,28 +2091,22 @@ void EdgeRouting::distributeAutoSnapPoints(
 
     // Recalculate bend points (snap points are already on grid from quantized calculation)
     for (auto& [edgeId, layout] : result.edgeLayouts) {
-        recalculateBendPoints(layout, nodeLayouts, gridSize);
+        recalculateBendPoints(layout, nodeLayouts, effectiveGridSize);
 
-        // Node positions are grid-aligned (from SugiyamaLayout), snap points are quantized,
-        // and offset functions return grid multiples. Bend points should already be on grid.
-        // Safety net: fix non-orthogonal segments and remove spikes/duplicates.
-        if (gridSize > 0.0f) {
-            fixNonOrthogonalBendPoints(layout, gridSize);
-            
-            // Remove any spikes or duplicates
-            std::vector<Point> fullPath;
-            fullPath.push_back(layout.sourcePoint);
-            for (const auto& bp : layout.bendPoints) {
-                fullPath.push_back(bp.position);
-            }
-            fullPath.push_back(layout.targetPoint);
-            
-            removeSpikesAndDuplicates(fullPath);
-            
-            layout.bendPoints.clear();
-            for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
-                layout.bendPoints.push_back({fullPath[i]});
-            }
+        // Grid mode: bend points are already orthogonal from quantized routing.
+        // Remove spikes/duplicates for path cleanup.
+        std::vector<Point> fullPath;
+        fullPath.push_back(layout.sourcePoint);
+        for (const auto& bp : layout.bendPoints) {
+            fullPath.push_back(bp.position);
+        }
+        fullPath.push_back(layout.targetPoint);
+
+        removeSpikesAndDuplicates(fullPath);
+
+        layout.bendPoints.clear();
+        for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
+            layout.bendPoints.push_back({fullPath[i]});
         }
 
         layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
@@ -2173,6 +2120,8 @@ void EdgeRouting::updateEdgePositions(
     SnapDistribution distribution,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
+
+    float effectiveGridSize = getEffectiveGridSize(gridSize);
     
     // Helper to check if a node should be updated
     auto shouldUpdateNode = [&movedNodes](NodeId nodeId) -> bool {
@@ -2222,15 +2171,8 @@ void EdgeRouting::updateEdgePositions(
                     }
                 }
                 
-                Point snapPoint;
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry
-                    snapPoint = calculateSnapPositionQuantized(node, nodeEdge, snapIdx, totalCount, 0.0f, 1.0f, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(snapIdx, totalCount, 0.0f, 1.0f);
-                    snapPoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry
+                Point snapPoint = calculateSnapPositionQuantized(node, nodeEdge, snapIdx, totalCount, 0.0f, 1.0f, effectiveGridSize);
 
                 if (isSource) {
                     layout.sourcePoint = snapPoint;
@@ -2284,28 +2226,16 @@ void EdgeRouting::updateEdgePositions(
             for (EdgeId edgeId : incoming) {
                 EdgeLayout& layout = edgeLayouts[edgeId];
                 int localIdx = unifiedToLocalIndex(layout.targetSnapIndex, 0, totalIn);
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry
-                    layout.targetPoint = calculateSnapPositionQuantized(node, nodeEdge, localIdx, totalIn, inStart, inEnd, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(localIdx, totalIn, inStart, inEnd);
-                    layout.targetPoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry
+                layout.targetPoint = calculateSnapPositionQuantized(node, nodeEdge, localIdx, totalIn, inStart, inEnd, effectiveGridSize);
             }
 
             // Update outgoing edges (source point on this node)
             for (EdgeId edgeId : outgoing) {
                 EdgeLayout& layout = edgeLayouts[edgeId];
                 int localIdx = unifiedToLocalIndex(layout.sourceSnapIndex, totalIn, totalOut);
-                if (gridSize > 0.0f) {
-                    // Quantized calculation: preserves symmetry
-                    layout.sourcePoint = calculateSnapPositionQuantized(node, nodeEdge, localIdx, totalOut, outStart, outEnd, gridSize);
-                } else {
-                    // Legacy float-based calculation
-                    float position = calculateRelativePosition(localIdx, totalOut, outStart, outEnd);
-                    layout.sourcePoint = calculateSnapPosition(node, nodeEdge, position);
-                }
+                // Quantized calculation: preserves symmetry
+                layout.sourcePoint = calculateSnapPositionQuantized(node, nodeEdge, localIdx, totalOut, outStart, outEnd, effectiveGridSize);
             }
         }
     }
@@ -2346,31 +2276,24 @@ void EdgeRouting::updateEdgePositions(
         // ARCHITECTURAL PRINCIPLE: All edges maintain their channel assignment across
         // initial layout, drag, and post-drag scenarios for complete consistency.
 
-        recalculateBendPoints(it->second, nodeLayouts, gridSize);
+        recalculateBendPoints(it->second, nodeLayouts, effectiveGridSize);
 
-        // Phase 4: Snap points are already grid-aligned from calculateSnapPositionQuantized,
-        // and recalculateBendPoints uses grid-snapped constraints internally.
-        // Post-hoc snap loop removed - bend points should already be on grid.
-        if (gridSize > 0.0f) {
-            // Fix any non-orthogonal segments (safety net for edge cases)
-            fixNonOrthogonalBendPoints(it->second, gridSize);
-            
-            // Remove any spikes or duplicate points (safety net)
-            std::vector<Point> fullPath;
-            fullPath.push_back(it->second.sourcePoint);
-            for (const auto& bp : it->second.bendPoints) {
-                fullPath.push_back(bp.position);
-            }
-            fullPath.push_back(it->second.targetPoint);
-            
-            removeSpikesAndDuplicates(fullPath);
-            
-            it->second.bendPoints.clear();
-            for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
-                it->second.bendPoints.push_back({fullPath[i]});
-            }
+        // Grid mode: bend points are already orthogonal from quantized routing.
+        // Remove spikes/duplicates for path cleanup.
+        std::vector<Point> fullPath;
+        fullPath.push_back(it->second.sourcePoint);
+        for (const auto& bp : it->second.bendPoints) {
+            fullPath.push_back(bp.position);
         }
-        
+        fullPath.push_back(it->second.targetPoint);
+
+        removeSpikesAndDuplicates(fullPath);
+
+        it->second.bendPoints.clear();
+        for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
+            it->second.bendPoints.push_back({fullPath[i]});
+        }
+
         it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
     }
 }
@@ -2573,9 +2496,10 @@ std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
             assignment.targetLayer = toIt->second.layer;
             assignment.isSelfLoop = false;
 
-            // Compute Y position using region info
+            // Compute Y position using region info (quantized when gridSize > 0)
             assignment.yPosition = computeChannelY(region, assignment.channel,
-                                                   options.channelRouting);
+                                                   options.channelRouting,
+                                                   options.gridConfig.cellSize);
 
             assignments[edgeId] = assignment;
         }
@@ -2587,12 +2511,51 @@ std::unordered_map<EdgeId, ChannelAssignment> EdgeRouting::allocateChannels(
 float EdgeRouting::computeChannelY(
     const ChannelRegion& region,
     int channelIndex,
-    const ChannelRoutingOptions& opts) {
-
-    float regionHeight = region.regionEnd - region.regionStart;
+    const ChannelRoutingOptions& opts,
+    float gridSize) {
 
     // Edge count in this region
     int count = static_cast<int>(region.edges.size());
+
+    // === Quantized-First Calculation (when gridSize > 0) ===
+    if (gridSize > 0.0f) {
+        // Convert region bounds to grid units
+        int gridStart = static_cast<int>(std::round(region.regionStart / gridSize));
+        int gridEnd = static_cast<int>(std::round(region.regionEnd / gridSize));
+        int gridLength = gridEnd - gridStart;
+
+        // Single edge centered
+        if (count == 1 && opts.centerSingleEdge) {
+            int gridCenter = gridStart + gridLength / 2;
+            return gridCenter * gridSize;
+        }
+
+        // Offset in grid units (convert from pixel offset)
+        int gridOffset = static_cast<int>(std::round(opts.channelOffset / gridSize));
+        int usableLength = gridLength - 2 * gridOffset;
+        if (usableLength < 0) {
+            usableLength = gridLength;
+            gridOffset = 0;
+        }
+
+        // Distribute evenly within usable region using integer arithmetic
+        // Same formula as distributeSnapPointsQuantized for symmetry preservation
+        int divisor = (count > 1) ? (count - 1) : 1;
+        int gridPos;
+        if (count <= 1) {
+            gridPos = gridStart + gridLength / 2;  // Center single channel
+        } else {
+            // Evenly spaced: gridStart + offset + (usableLength * channelIndex) / (count-1)
+            // Use rounding: (usableLength * channelIndex * 2 + divisor) / (2 * divisor)
+            gridPos = gridStart + gridOffset +
+                      (usableLength * channelIndex * 2 + divisor) / (2 * divisor);
+        }
+
+        return gridPos * gridSize;
+    }
+
+    // === Legacy Float Calculation (when gridSize == 0) ===
+    float regionHeight = region.regionEnd - region.regionStart;
 
     // Single edge centered
     if (count == 1 && opts.centerSingleEdge) {
@@ -2655,8 +2618,8 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
             layout.targetEdge = NodeEdge::Bottom;
         }
 
-        // Store channel Y for recalculation (snapped to grid if enabled)
-        layout.channelY = snapToGrid(channel.yPosition, options.gridConfig.cellSize);
+        // Store channel Y for recalculation (already grid-aligned from computeChannelY)
+        layout.channelY = channel.yPosition;
     } else {
         // Horizontal layout: source right, target left
         if (fromCenter.x < toCenter.x) {
@@ -2671,8 +2634,8 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
             layout.targetEdge = NodeEdge::Right;
         }
 
-        // Store channel X (stored in channelY field for horizontal layout, snapped to grid)
-        layout.channelY = snapToGrid(channel.yPosition, options.gridConfig.cellSize);
+        // Store channel X (stored in channelY field, already grid-aligned from computeChannelY)
+        layout.channelY = channel.yPosition;
     }
 
     // Calculate bend points using the SINGLE algorithm

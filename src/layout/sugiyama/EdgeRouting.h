@@ -235,17 +235,6 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize);
 
-    /// Apply directional constraints to channel positions
-    /// Ensures edges exit/enter perpendicular to node edges
-    /// @param channelPos Base channel position (Y for vertical, X for horizontal)
-    /// @param snapPoint The snap point position (Y for vertical, X for horizontal)
-    /// @param edge Which edge of the node (Top, Bottom, Left, Right)
-    /// @param isSource True if this is the source snap point, false for target
-    /// @return Adjusted position respecting directional constraints
-    static float applyDirectionalConstraint(float channelPos, float snapPoint,
-                                           NodeEdge edge, bool isSource,
-                                           float gridSize = 0.0f);
-
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from
     /// @param nodeId The node to count connections for
@@ -278,9 +267,11 @@ private:
         const LayoutOptions& options);
 
     /// Compute channel position (Y for vertical, X for horizontal layout)
+    /// When gridSize > 0, returns grid-aligned value using quantized arithmetic
     float computeChannelY(const ChannelRegion& region,
                          int channelIndex,
-                         const ChannelRoutingOptions& opts);
+                         const ChannelRoutingOptions& opts,
+                         float gridSize = 0.0f);
 
     /// Build edge lookup map for bidirectional detection from Graph
     /// Returns map: (from, to) -> edgeId (skips self-loops)
