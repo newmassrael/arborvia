@@ -38,6 +38,44 @@ struct ChannelRoutingOptions {
     SelfLoopConfig selfLoop;          // Self-loop configuration
 };
 
+/// Configuration for grid-based coordinate snapping
+struct GridConfig {
+    float cellSize = 0.0f;  // Grid cell size (0 = disabled, >0 = snap to multiples)
+
+    /// Check if grid snapping is enabled
+    bool isEnabled() const { return cellSize > 0.0f; }
+
+    /// Convert pixel coordinate to grid unit (round to nearest)
+    int toGrid(float pixel) const {
+        return static_cast<int>(std::round(pixel / cellSize));
+    }
+
+    /// Convert pixel coordinate to grid unit (floor)
+    int toGridFloor(float pixel) const {
+        return static_cast<int>(std::floor(pixel / cellSize));
+    }
+
+    /// Convert pixel coordinate to grid unit (ceil)
+    int toGridCeil(float pixel) const {
+        return static_cast<int>(std::ceil(pixel / cellSize));
+    }
+
+    /// Convert grid unit to pixel coordinate
+    float toPixel(int grid) const {
+        return grid * cellSize;
+    }
+
+    /// Convert Point to GridPoint
+    GridPoint toGridPoint(const Point& p) const {
+        return GridPoint::fromPixel(p, cellSize);
+    }
+
+    /// Convert GridPoint to Point
+    Point toPixelPoint(const GridPoint& g) const {
+        return g.toPixel(cellSize);
+    }
+};
+
 /// Node alignment within a layer
 enum class NodeAlignment {
     TopLeft,
@@ -103,7 +141,10 @@ struct LayoutOptions {
     
     // Snap distribution mode (how incoming/outgoing edges share node edges)
     SnapDistribution snapDistribution = SnapDistribution::Separated;
-    
+
+    // Grid configuration (all coordinates snap to grid)
+    GridConfig gridConfig;
+
     // Builder pattern for convenient configuration
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
     LayoutOptions& setNodeSpacing(float h, float v) { 
@@ -132,6 +173,7 @@ struct LayoutOptions {
     LayoutOptions& setAutoSnapPoints(bool enabled) { autoSnapPoints = enabled; return *this; }
     LayoutOptions& setDefaultSnapPointCount(int count) { defaultSnapPointCount = count; return *this; }
     LayoutOptions& setSnapDistribution(SnapDistribution sd) { snapDistribution = sd; return *this; }
+    LayoutOptions& setGridCellSize(float size) { gridConfig.cellSize = size; return *this; }
 };
 
 }  // namespace arborvia

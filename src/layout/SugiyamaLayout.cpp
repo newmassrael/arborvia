@@ -9,6 +9,14 @@
 
 namespace arborvia {
 
+namespace {
+    /// Snap a value to the nearest grid point (returns value unchanged if gridSize <= 0)
+    inline float snapToGrid(float value, float gridSize) {
+        if (gridSize <= 0.0f) return value;
+        return std::round(value / gridSize) * gridSize;
+    }
+}
+
 struct SugiyamaLayout::LayoutState {
     const Graph* graph = nullptr;
     const CompoundGraph* compoundGraph = nullptr;
@@ -228,11 +236,14 @@ void SugiyamaLayout::assignCoordinates() {
             
             NodeLayout layout;
             layout.id = id;
-            layout.position = state_->nodePositions[id];
+            // Apply grid snap to node position
+            const float gridSize = options_.gridConfig.cellSize;
+            Point pos = state_->nodePositions[id];
+            layout.position = {snapToGrid(pos.x, gridSize), snapToGrid(pos.y, gridSize)};
             layout.size = state_->nodeSizes[id];
             layout.layer = static_cast<int>(layerIdx);
             layout.order = static_cast<int>(order);
-            
+
             state_->result.setNodeLayout(id, layout);
         }
     }
@@ -248,7 +259,8 @@ void SugiyamaLayout::routeEdges() {
     // Apply auto snap point distribution if enabled
     if (options_.autoSnapPoints && options_.mode == LayoutMode::Auto) {
         algorithms::EdgeRouting::distributeAutoSnapPoints(
-            result, state_->result.nodeLayouts(), options_.snapDistribution);
+            result, state_->result.nodeLayouts(), options_.snapDistribution,
+            options_.gridConfig.cellSize);
     }
     
     for (auto& [id, layout] : result.edgeLayouts) {
@@ -277,7 +289,8 @@ void SugiyamaLayout::updateEdgePositionsAfterManualState() {
         state_->result.nodeLayouts(),
         allEdges,
         options_.snapDistribution,
-        {}  // Empty set = update all nodes
+        {},  // Empty set = update all nodes
+        options_.gridConfig.cellSize
     );
     
     // Apply updated edge layouts back to result
@@ -312,16 +325,18 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
         float maxWidth = 0.0f;
         
         for (NodeId child : children) {
-            Point pos = {options_.compoundPadding, currentY};
+            const float gridSize = options_.gridConfig.cellSize;
+            Point pos = {snapToGrid(options_.compoundPadding, gridSize),
+                         snapToGrid(currentY, gridSize)};
             Size size = state_->nodeSizes[child];
-            
+
             NodeLayout layout;
             layout.id = child;
             layout.position = pos;
             layout.size = size;
-            
+
             state_->result.setNodeLayout(child, layout);
-            
+
             currentY += size.height + options_.nodeSpacingVertical;
             maxWidth = std::max(maxWidth, size.width);
         }
@@ -349,15 +364,17 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
         }
         
         Size size = state_->nodeSizes[child];
-        Point pos = {currentX, options_.compoundPadding};
-        
+        const float gridSize = options_.gridConfig.cellSize;
+        Point pos = {snapToGrid(currentX, gridSize),
+                     snapToGrid(options_.compoundPadding, gridSize)};
+
         NodeLayout layout;
         layout.id = child;
         layout.position = pos;
         layout.size = size;
-        
+
         state_->result.setNodeLayout(child, layout);
-        
+
         currentX += size.width + options_.parallelSpacing;
         maxHeight = std::max(maxHeight, size.height);
     }

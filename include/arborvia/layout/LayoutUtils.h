@@ -26,7 +26,8 @@ public:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
         SnapDistribution distribution = SnapDistribution::Separated,
-        const std::unordered_set<NodeId>& movedNodes = {});
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
 
     /// Result of edge hit test with insertion info
     struct EdgeHitResult {

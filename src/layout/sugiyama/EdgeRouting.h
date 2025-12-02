@@ -87,7 +87,8 @@ public:
     static void distributeAutoSnapPoints(
         Result& result,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        SnapDistribution distribution = SnapDistribution::Separated);
+        SnapDistribution distribution = SnapDistribution::Separated,
+        float gridSize = 0.0f);
     
     /// Update edge positions when nodes move (for interactive drag)
     /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
@@ -102,7 +103,32 @@ public:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
         SnapDistribution distribution = SnapDistribution::Separated,
-        const std::unordered_set<NodeId>& movedNodes = {});
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
+
+    // === Utility functions for edge routing (public for internal helper use) ===
+    
+    /// Check if an orthogonal segment intersects a node's interior
+    /// @param p1 Start point of segment
+    /// @param p2 End point of segment
+    /// @param node The node to check intersection with
+    /// @return True if segment passes through node interior (excluding boundary)
+    static bool segmentIntersectsNode(
+        const Point& p1,
+        const Point& p2,
+        const NodeLayout& node);
+
+    /// Calculate coordinate to avoid blocking node
+    /// @param nodeMin Minimum coordinate of blocking node
+    /// @param nodeMax Maximum coordinate of blocking node
+    /// @param goPositive True to go right/down, false to go left/up
+    /// @param gridSize Grid cell size for margin calculation
+    /// @return Safe coordinate outside blocking node with margin
+    static float calculateAvoidanceCoordinate(
+        float nodeMin,
+        float nodeMax,
+        bool goPositive,
+        float gridSize = 0.0f);
 
 private:
     // === Helper functions for snap point calculation ===
@@ -134,29 +160,80 @@ private:
     /// Recalculate bend points for an edge based on source and target points
     /// @param layout The edge layout to recalculate bend points for
     /// @param nodeLayouts All node layouts for intersection checking
+    /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
     static void recalculateBendPoints(
         EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize = 0.0f);
+
+    // === recalculateBendPoints helper methods (SRP decomposition) ===
+
+    /// Perform channel-based routing for edges with assigned channels
+    /// @param layout The edge layout to route
+    /// @param isHorizontal True for horizontal layout direction
+    /// @param nodeLayouts All node layouts for intersection checking
+    /// @param gridSize Grid cell size for coordinate snapping
+    static void performChannelBasedRouting(
+        EdgeLayout& layout,
+        bool isHorizontal,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
+
+    /// Perform fallback routing for edges without channels
+    /// @param layout The edge layout to route
+    /// @param isHorizontal True for horizontal layout direction
+    /// @param nodeLayouts All node layouts for intersection checking
+    /// @param gridSize Grid cell size for coordinate snapping
+    static void performFallbackRouting(
+        EdgeLayout& layout,
+        bool isHorizontal,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
+
+    /// Move intermediate bend points that are inside nodes to outside
+    /// @param allPoints All path points (source, bends, target)
+    /// @param nodeLayouts All node layouts
+    /// @param gridSize Grid cell size for coordinate snapping
+    static void moveIntermediatePointsOutsideNodes(
+        std::vector<Point>& allPoints,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
+
+    /// Fix non-orthogonal segments by inserting intermediate points
+    /// @param allPoints All path points (modified in place)
+    /// @param nodeLayouts All node layouts for validation
+    static void fixNonOrthogonalSegments(
+        std::vector<Point>& allPoints,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
-    /// Check if an orthogonal segment intersects a node's interior
-    /// @param p1 Start point of segment
-    /// @param p2 End point of segment
-    /// @param node The node to check intersection with
-    /// @return True if segment passes through node interior (excluding boundary)
-    static bool segmentIntersectsNode(
-        const Point& p1,
-        const Point& p2,
-        const NodeLayout& node);
+    /// Fix segments that intersect nodes by routing around them
+    /// @param allPoints All path points (modified in place)
+    /// @param nodeLayouts All node layouts
+    /// @param gridSize Grid cell size for coordinate snapping
+    static void fixSegmentNodeIntersections(
+        std::vector<Point>& allPoints,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
 
-    /// Calculate coordinate to avoid blocking node
-    /// @param nodeMin Minimum coordinate of blocking node
-    /// @param nodeMax Maximum coordinate of blocking node
-    /// @param goPositive True to go right/down, false to go left/up
-    /// @return Safe coordinate outside blocking node with margin
-    static float calculateAvoidanceCoordinate(
-        float nodeMin,
-        float nodeMax,
-        bool goPositive);
+    /// Final pass: fix segments intersecting intermediate nodes
+    /// @param allPoints All path points (modified in place)
+    /// @param layout The edge layout (for source/target node IDs)
+    /// @param nodeLayouts All node layouts
+    static void fixIntermediateNodeIntersections(
+        std::vector<Point>& allPoints,
+        const EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Finalize edge path with direction corrections and cleanup
+    /// @param allPoints All path points (modified in place)
+    /// @param layout The edge layout (for edge info)
+    /// @param nodeLayouts All node layouts
+    /// @param gridSize Grid cell size for coordinate snapping
+    static void finalizeEdgePath(
+        std::vector<Point>& allPoints,
+        const EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
 
     /// Apply directional constraints to channel positions
     /// Ensures edges exit/enter perpendicular to node edges
@@ -166,7 +243,8 @@ private:
     /// @param isSource True if this is the source snap point, false for target
     /// @return Adjusted position respecting directional constraints
     static float applyDirectionalConstraint(float channelPos, float snapPoint,
-                                           NodeEdge edge, bool isSource);
+                                           NodeEdge edge, bool isSource,
+                                           float gridSize = 0.0f);
 
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from

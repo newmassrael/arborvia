@@ -14,10 +14,11 @@ void LayoutUtils::updateEdgePositions(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
     SnapDistribution distribution,
-    const std::unordered_set<NodeId>& movedNodes) {
-    
+    const std::unordered_set<NodeId>& movedNodes,
+    float gridSize) {
+
     algorithms::EdgeRouting::updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges, distribution, movedNodes);
+        edgeLayouts, nodeLayouts, affectedEdges, distribution, movedNodes, gridSize);
 }
 
 float LayoutUtils::pointToSegmentDistance(

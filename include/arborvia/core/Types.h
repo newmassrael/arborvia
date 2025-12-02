@@ -37,6 +37,50 @@ struct Point {
     constexpr bool operator!=(const Point& o) const { return !(*this == o); }
 };
 
+/// Grid-based coordinate (integer units for quantized calculations)
+struct GridPoint {
+    int x = 0;
+    int y = 0;
+
+    constexpr GridPoint() = default;
+    constexpr GridPoint(int x_, int y_) : x(x_), y(y_) {}
+
+    /// Convert to pixel coordinates
+    constexpr Point toPixel(float gridSize) const {
+        return {x * gridSize, y * gridSize};
+    }
+
+    /// Convert from pixel coordinates (round to nearest grid point)
+    static GridPoint fromPixel(const Point& p, float gridSize) {
+        return {
+            static_cast<int>(std::round(p.x / gridSize)),
+            static_cast<int>(std::round(p.y / gridSize))
+        };
+    }
+
+    /// Convert from pixel coordinates with directional rounding
+    /// @param roundUp true for ceil (use for bottom/right bounds), false for floor (use for top/left bounds)
+    static GridPoint fromPixelDirectional(const Point& p, float gridSize, bool roundUp) {
+        if (roundUp) {
+            return {
+                static_cast<int>(std::ceil(p.x / gridSize)),
+                static_cast<int>(std::ceil(p.y / gridSize))
+            };
+        } else {
+            return {
+                static_cast<int>(std::floor(p.x / gridSize)),
+                static_cast<int>(std::floor(p.y / gridSize))
+            };
+        }
+    }
+
+    constexpr GridPoint operator+(const GridPoint& o) const { return {x + o.x, y + o.y}; }
+    constexpr GridPoint operator-(const GridPoint& o) const { return {x - o.x, y - o.y}; }
+
+    constexpr bool operator==(const GridPoint& o) const { return x == o.x && y == o.y; }
+    constexpr bool operator!=(const GridPoint& o) const { return !(*this == o); }
+};
+
 struct Size {
     float width = 0.0f;
     float height = 0.0f;

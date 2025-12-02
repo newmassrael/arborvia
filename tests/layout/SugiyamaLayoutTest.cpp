@@ -927,3 +927,228 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
 
     EXPECT_FALSE(hasDuplicates) << "Snap points should not be duplicated after drag";
 }
+
+// ============================================================================
+// Grid Alignment Tests
+// ============================================================================
+
+namespace {
+    bool isOnGrid(float value, float gridSize) {
+        if (gridSize <= 0.0f) return true;
+        float remainder = std::fmod(std::abs(value), gridSize);
+        return remainder < 0.001f || (gridSize - remainder) < 0.001f;
+    }
+    
+    bool isPointOnGrid(const Point& p, float gridSize) {
+        return isOnGrid(p.x, gridSize) && isOnGrid(p.y, gridSize);
+    }
+}
+
+TEST(SugiyamaLayoutTest, GridAlignment_NodePositionsOnGrid) {
+    // Create a simple graph
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{100, 50}, "Start");
+    NodeId n1 = graph.addNode(Size{100, 50}, "Process");
+    NodeId n2 = graph.addNode(Size{100, 50}, "End");
+    graph.addEdge(n0, n1, "next");
+    graph.addEdge(n1, n2, "next");
+    
+    // Enable grid with 20px cell size
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    LayoutResult result = layout.layout(graph);
+    
+    // Verify all node positions are on grid
+    float gridSize = options.gridConfig.cellSize;
+    for (NodeId nodeId : {n0, n1, n2}) {
+        const NodeLayout* nl = result.getNodeLayout(nodeId);
+        ASSERT_NE(nl, nullptr);
+        
+        EXPECT_TRUE(isOnGrid(nl->position.x, gridSize))
+            << "Node " << nodeId << " X position " << nl->position.x 
+            << " is not on grid (gridSize=" << gridSize << ")";
+        EXPECT_TRUE(isOnGrid(nl->position.y, gridSize))
+            << "Node " << nodeId << " Y position " << nl->position.y 
+            << " is not on grid (gridSize=" << gridSize << ")";
+    }
+}
+
+TEST(SugiyamaLayoutTest, GridAlignment_SnapPointsOnGrid) {
+    // Create a graph with multiple edges to same node
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{100, 50}, "Source1");
+    NodeId n1 = graph.addNode(Size{100, 50}, "Source2");
+    NodeId n2 = graph.addNode(Size{100, 50}, "Target");
+    EdgeId e0 = graph.addEdge(n0, n2, "edge1");
+    EdgeId e1 = graph.addEdge(n1, n2, "edge2");
+    
+    // Enable grid with 20px cell size
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    LayoutResult result = layout.layout(graph);
+    
+    // Verify all snap points are on grid
+    float gridSize = options.gridConfig.cellSize;
+    for (EdgeId edgeId : {e0, e1}) {
+        const EdgeLayout* el = result.getEdgeLayout(edgeId);
+        ASSERT_NE(el, nullptr);
+        
+        EXPECT_TRUE(isPointOnGrid(el->sourcePoint, gridSize))
+            << "Edge " << edgeId << " sourcePoint (" << el->sourcePoint.x << ", " 
+            << el->sourcePoint.y << ") is not on grid";
+        EXPECT_TRUE(isPointOnGrid(el->targetPoint, gridSize))
+            << "Edge " << edgeId << " targetPoint (" << el->targetPoint.x << ", " 
+            << el->targetPoint.y << ") is not on grid";
+        
+        // Verify bend points are on grid
+        for (size_t i = 0; i < el->bendPoints.size(); ++i) {
+            EXPECT_TRUE(isPointOnGrid(el->bendPoints[i].position, gridSize))
+                << "Edge " << edgeId << " bendPoint[" << i << "] (" 
+                << el->bendPoints[i].position.x << ", " 
+                << el->bendPoints[i].position.y << ") is not on grid";
+        }
+    }
+}
+
+TEST(SugiyamaLayoutTest, GridAlignment_AllCoordinatesOnGrid) {
+    // Comprehensive test with complex graph
+    Graph graph;
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    
+    graph.addEdge(idle, running, "start");
+    graph.addEdge(running, paused, "pause");
+    graph.addEdge(paused, running, "resume");  // backward
+    graph.addEdge(running, stopped, "stop");
+    graph.addEdge(paused, stopped, "stop");
+    
+    // Enable grid with 10px cell size
+    LayoutOptions options;
+    options.gridConfig.cellSize = 10.0f;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    LayoutResult result = layout.layout(graph);
+    
+    float gridSize = options.gridConfig.cellSize;
+    int failures = 0;
+    
+    // Check all nodes
+    for (const auto& [nodeId, nl] : result.nodeLayouts()) {
+        if (!isOnGrid(nl.position.x, gridSize) || !isOnGrid(nl.position.y, gridSize)) {
+            std::cout << "Node " << nodeId << " position (" << nl.position.x << ", " 
+                      << nl.position.y << ") NOT on grid\n";
+            failures++;
+        }
+    }
+    
+    // Check all edges
+    for (const auto& [edgeId, el] : result.edgeLayouts()) {
+        if (!isPointOnGrid(el.sourcePoint, gridSize)) {
+            std::cout << "Edge " << edgeId << " sourcePoint (" << el.sourcePoint.x << ", " 
+                      << el.sourcePoint.y << ") NOT on grid\n";
+            failures++;
+        }
+        if (!isPointOnGrid(el.targetPoint, gridSize)) {
+            std::cout << "Edge " << edgeId << " targetPoint (" << el.targetPoint.x << ", " 
+                      << el.targetPoint.y << ") NOT on grid\n";
+            failures++;
+        }
+        for (size_t i = 0; i < el.bendPoints.size(); ++i) {
+            if (!isPointOnGrid(el.bendPoints[i].position, gridSize)) {
+                std::cout << "Edge " << edgeId << " bendPoint[" << i << "] (" 
+                          << el.bendPoints[i].position.x << ", " 
+                          << el.bendPoints[i].position.y << ") NOT on grid\n";
+                failures++;
+            }
+        }
+    }
+    
+    EXPECT_EQ(failures, 0) << "Found " << failures << " coordinates not on grid";
+}
+
+TEST(SugiyamaLayoutTest, GridAlignment_AfterDrag_StillOnGrid) {
+    // Test that grid alignment is maintained after updateEdgePositions
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{100, 50}, "Node0");
+    NodeId n1 = graph.addNode(Size{100, 50}, "Node1");
+    EdgeId e0 = graph.addEdge(n0, n1, "edge");
+    
+    // Enable grid
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    float gridSize = options.gridConfig.cellSize;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    LayoutResult result = layout.layout(graph);
+    
+    // Get mutable copies
+    auto nodeLayouts = result.nodeLayouts();
+    auto edgeLayouts = result.edgeLayouts();
+    
+    // Simulate drag: move node to non-grid position
+    nodeLayouts[n0].position.x += 7.0f;  // 7 is not a multiple of 20
+    nodeLayouts[n0].position.y += 13.0f; // 13 is not a multiple of 20
+    
+    // Node position should be snapped back to grid by updateEdgePositions
+    // But updateEdgePositions doesn't modify node positions!
+    // So we need to snap node positions before calling updateEdgePositions
+    
+    // This test verifies the expectation that nodes should be snapped
+    // Currently this will FAIL because node snap is not implemented in updateEdgePositions
+    
+    std::vector<EdgeId> affectedEdges = {e0};
+    LayoutUtils::updateEdgePositions(
+        edgeLayouts, nodeLayouts, affectedEdges,
+        options.snapDistribution, {}, gridSize);
+    
+    // Verify snap points are on grid
+    const EdgeLayout& el = edgeLayouts[e0];
+    EXPECT_TRUE(isPointOnGrid(el.sourcePoint, gridSize))
+        << "After drag, sourcePoint (" << el.sourcePoint.x << ", " 
+        << el.sourcePoint.y << ") should be on grid";
+    EXPECT_TRUE(isPointOnGrid(el.targetPoint, gridSize))
+        << "After drag, targetPoint (" << el.targetPoint.x << ", " 
+        << el.targetPoint.y << ") should be on grid";
+}
+
+TEST(SugiyamaLayoutTest, GridAlignment_NodePosition_MustBeOnGrid) {
+    // This test documents the requirement that node positions
+    // should be snapped to grid during drag in interactive mode
+    
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{100, 50}, "Node0");
+    
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    float gridSize = options.gridConfig.cellSize;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    LayoutResult result = layout.layout(graph);
+    
+    // Initial position should be on grid
+    const NodeLayout* nl = result.getNodeLayout(n0);
+    ASSERT_NE(nl, nullptr);
+    
+    EXPECT_TRUE(isOnGrid(nl->position.x, gridSize))
+        << "Initial X=" << nl->position.x << " should be on grid";
+    EXPECT_TRUE(isOnGrid(nl->position.y, gridSize))
+        << "Initial Y=" << nl->position.y << " should be on grid";
+    
+    // After layout, position should be multiples of gridSize
+    float expectedX = std::round(nl->position.x / gridSize) * gridSize;
+    float expectedY = std::round(nl->position.y / gridSize) * gridSize;
+    
+    EXPECT_FLOAT_EQ(nl->position.x, expectedX);
+    EXPECT_FLOAT_EQ(nl->position.y, expectedY);
+}

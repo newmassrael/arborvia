@@ -54,6 +54,8 @@ struct BendPointPreview {
 class InteractiveDemo {
 public:
     InteractiveDemo() : manualManager_(std::make_shared<ManualLayoutManager>()) {
+        // Enable grid by default
+        layoutOptions_.gridConfig.cellSize = gridSize_;
         setupGraph();
         doLayout();
     }
@@ -175,7 +177,7 @@ public:
         }
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, allEdges,
-            layoutOptions_.snapDistribution, {});
+            layoutOptions_.snapDistribution, {}, layoutOptions_.gridConfig.cellSize);
         
         // Restore previous mode
         if (prevMode == LayoutMode::Auto) {
@@ -321,32 +323,9 @@ public:
             draggingBendPoint_.clear();
             
             if (draggedNode_ != INVALID_NODE) {
-                // Save node positions before layout recalculation
-                std::unordered_map<NodeId, Point> savedPositions;
-                for (const auto& [id, layout] : nodeLayouts_) {
-                    savedPositions[id] = layout.position;
-                    manualManager_->setNodePosition(id, layout.position);
-                }
-                
-                // Get all edge IDs for update
-                std::vector<EdgeId> allEdges;
-                for (const auto& [edgeId, _] : edgeLayouts_) {
-                    allEdges.push_back(edgeId);
-                }
-                
-                // Recalculate layout (this gives fresh edge routing)
-                doLayout();
-                
-                // Restore node positions
-                for (auto& [id, layout] : nodeLayouts_) {
-                    layout.position = savedPositions[id];
-                }
-                
-                // Update all edge positions using library API
-                // Pass empty set to update ALL endpoints (not just moved nodes)
-                LayoutUtils::updateEdgePositions(
-                    edgeLayouts_, nodeLayouts_, allEdges,
-                    layoutOptions_.snapDistribution, {});
+                // Use same algorithm as during drag - just update affected edges
+                // No need to recalculate full layout, just finalize the drag
+                rerouteAffectedEdges();
             }
             draggedNode_ = INVALID_NODE;
             affectedEdges_.clear();
@@ -412,8 +391,18 @@ public:
         } else if (draggedNode_ != INVALID_NODE && ImGui::IsMouseDragging(0)) {
             // Update node position
             auto& layout = nodeLayouts_[draggedNode_];
-            layout.position.x = graphMouse.x - dragOffset_.x;
-            layout.position.y = graphMouse.y - dragOffset_.y;
+            float newX = graphMouse.x - dragOffset_.x;
+            float newY = graphMouse.y - dragOffset_.y;
+            
+            // Snap to grid if enabled
+            float gridSize = layoutOptions_.gridConfig.cellSize;
+            if (gridSize > 0.0f) {
+                newX = std::round(newX / gridSize) * gridSize;
+                newY = std::round(newY / gridSize) * gridSize;
+            }
+            
+            layout.position.x = newX;
+            layout.position.y = newY;
             
             // Save position (for both modes, so snap distribution works after drag)
             manualManager_->setNodePosition(draggedNode_, layout.position);
@@ -439,10 +428,41 @@ public:
         std::unordered_set<NodeId> movedNodes = {draggedNode_};
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, affectedEdges_, 
-            layoutOptions_.snapDistribution, movedNodes);
+            layoutOptions_.snapDistribution, movedNodes, layoutOptions_.gridConfig.cellSize);
+    }
+    
+    void drawGrid(ImDrawList* drawList, float width, float height) {
+        if (gridSize_ <= 0.0f) return;
+        
+        ImU32 gridColor = IM_COL32(200, 200, 200, 80);  // Light gray, semi-transparent
+        ImU32 gridColorMajor = IM_COL32(180, 180, 180, 120);  // Slightly darker for major lines
+        
+        // Calculate grid bounds
+        float startX = std::fmod(offset_.x, gridSize_);
+        float startY = std::fmod(offset_.y, gridSize_);
+        
+        // Draw vertical lines
+        int lineCount = 0;
+        for (float x = startX; x < width; x += gridSize_) {
+            ImU32 color = (lineCount % 5 == 0) ? gridColorMajor : gridColor;
+            drawList->AddLine({x, 0}, {x, height}, color, 1.0f);
+            lineCount++;
+        }
+        
+        // Draw horizontal lines
+        lineCount = 0;
+        for (float y = startY; y < height; y += gridSize_) {
+            ImU32 color = (lineCount % 5 == 0) ? gridColorMajor : gridColor;
+            drawList->AddLine({0, y}, {width, y}, color, 1.0f);
+            lineCount++;
+        }
     }
     
     void render(ImDrawList* drawList) {
+        // Draw grid background first
+        ImGuiIO& io = ImGui::GetIO();
+        drawGrid(drawList, io.DisplaySize.x, io.DisplaySize.y);
+        
         // Draw edges first
         for (const auto& [id, layout] : edgeLayouts_) {
             bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id) 
@@ -1000,6 +1020,8 @@ private:
     LayoutOptions layoutOptions_;
     
     Point offset_ = {0, 0};
+    float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
+
     NodeId hoveredNode_ = INVALID_NODE;
     NodeId draggedNode_ = INVALID_NODE;
     NodeId selectedNode_ = INVALID_NODE;

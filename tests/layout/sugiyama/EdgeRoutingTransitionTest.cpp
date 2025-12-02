@@ -2354,3 +2354,426 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MustMatchEdgeDesignation) {
               << targetViolations << " target violations\n";
     std::cout << "==========================================\n";
 }
+
+// CRITICAL TEST: Spike detection with grid snapping enabled
+// Grid snapping (cellSize=20) can create spikes that don't appear without grid snapping
+TEST(EdgeRoutingTransitionTest, GridSnapping_AfterDrag_NoSpikesOrDuplicates) {
+    Graph graph;
+
+    // Create same graph as interactive_demo
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");
+
+    // IMPORTANT: Enable grid snapping like interactive_demo
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;  // This is the key difference!
+
+    SugiyamaLayout layoutAlgo(options);
+    LayoutResult result = layoutAlgo.layout(graph);
+
+    // Extract layouts for manipulation
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (const auto& [id, nl] : result.nodeLayouts()) {
+        nodeLayouts[id] = nl;
+    }
+
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (const auto& [id, el] : result.edgeLayouts()) {
+        edgeLayouts[id] = el;
+    }
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+
+    // Simulate multiple drag operations
+    std::vector<std::pair<NodeId, Point>> dragOps = {
+        {idle, {100.0f, 200.0f}},
+        {running, {-50.0f, 100.0f}},
+        {error, {200.0f, -300.0f}},
+        {paused, {-100.0f, 50.0f}}
+    };
+
+    std::cout << "\n===== GRID SNAPPING SPIKE TEST =====\n";
+    constexpr float EPSILON = 0.1f;
+    int totalSpikes = 0;
+    int totalDuplicates = 0;
+
+    for (const auto& [nodeId, delta] : dragOps) {
+        nodeLayouts[nodeId].position.x += delta.x;
+        nodeLayouts[nodeId].position.y += delta.y;
+
+        std::unordered_set<NodeId> movedNodes = {nodeId};
+        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
+                                          SnapDistribution::Separated, movedNodes,
+                                          options.gridConfig.cellSize);
+
+        // Check for spikes and duplicates after each drag
+        for (EdgeId edgeId : allEdges) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it == edgeLayouts.end()) continue;
+
+            const EdgeLayout& layout = it->second;
+            std::vector<Point> points;
+            points.push_back(layout.sourcePoint);
+            for (const auto& bp : layout.bendPoints) {
+                points.push_back(bp.position);
+            }
+            points.push_back(layout.targetPoint);
+
+            // Check for duplicates
+            for (size_t i = 0; i + 1 < points.size(); ++i) {
+                if (std::abs(points[i].x - points[i+1].x) < EPSILON &&
+                    std::abs(points[i].y - points[i+1].y) < EPSILON) {
+                    std::cout << "DUPLICATE in Edge " << edgeId << " after dragging node " 
+                              << nodeId << ": point[" << i << "] = (" 
+                              << points[i].x << "," << points[i].y << ")\n";
+                    totalDuplicates++;
+                }
+            }
+
+            // Check for spikes
+            for (size_t i = 0; i + 2 < points.size(); ++i) {
+                const Point& a = points[i];
+                const Point& b = points[i + 1];
+                const Point& c = points[i + 2];
+
+                bool sameX = (std::abs(a.x - b.x) < EPSILON && std::abs(b.x - c.x) < EPSILON);
+                bool sameY = (std::abs(a.y - b.y) < EPSILON && std::abs(b.y - c.y) < EPSILON);
+
+                if (sameX) {
+                    bool aToB_down = b.y > a.y;
+                    bool bToC_down = c.y > b.y;
+                    if (aToB_down != bToC_down) {
+                        std::cout << "SPIKE in Edge " << edgeId << " after dragging node "
+                                  << nodeId << ":\n";
+                        std::cout << "  (" << a.x << "," << a.y << ") -> ("
+                                  << b.x << "," << b.y << ") -> ("
+                                  << c.x << "," << c.y << ")\n";
+                        totalSpikes++;
+                    }
+                }
+
+                if (sameY) {
+                    bool aToB_right = b.x > a.x;
+                    bool bToC_right = c.x > b.x;
+                    if (aToB_right != bToC_right) {
+                        std::cout << "SPIKE in Edge " << edgeId << " after dragging node "
+                                  << nodeId << ":\n";
+                        std::cout << "  (" << a.x << "," << a.y << ") -> ("
+                                  << b.x << "," << b.y << ") -> ("
+                                  << c.x << "," << c.y << ")\n";
+                        totalSpikes++;
+                    }
+                }
+            }
+        }
+    }
+
+    std::cout << "Total duplicates: " << totalDuplicates << ", spikes: " << totalSpikes << "\n";
+    std::cout << "=====================================\n";
+
+    EXPECT_EQ(totalDuplicates, 0) << "Found " << totalDuplicates << " duplicate points with grid snapping";
+    EXPECT_EQ(totalSpikes, 0) << "Found " << totalSpikes << " spike patterns with grid snapping";
+}
+
+// CRITICAL TEST: Grid-based routing must not have segments passing through nodes
+// This test specifically enables grid routing (gridSize=20) and verifies intersection avoidance
+TEST(EdgeRoutingTransitionTest, GridBased_Segments_MustNotIntersectNodes) {
+    Graph graph;
+
+    // Create state machine from interactive demo
+    NodeId idle = graph.addNode(Size{200, 100}, "idle");
+    NodeId running = graph.addNode(Size{200, 100}, "running");
+    NodeId error = graph.addNode(Size{200, 100}, "error");
+    NodeId processing = graph.addNode(Size{200, 100}, "processing");
+    NodeId success = graph.addNode(Size{200, 100}, "success");
+
+    // All transitions (same as interactive demo)
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, error, "fail");
+    EdgeId e2 = graph.addEdge(error, running, "retry");
+    EdgeId e3 = graph.addEdge(running, processing, "process");
+    EdgeId e4 = graph.addEdge(error, processing, "fix");
+    EdgeId e5 = graph.addEdge(running, success, "complete");
+    EdgeId e6 = graph.addEdge(success, idle, "reset");
+    EdgeId e7 = graph.addEdge(success, success, "continue");
+
+    // Enable grid-based routing with gridSize=20
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;  // Enable grid routing
+    options.snapDistribution = SnapDistribution::Separated;
+    layout.setOptions(options);
+
+    LayoutResult result = layout.layout(graph);
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+    std::vector<NodeId> allNodes = {idle, running, error, processing, success};
+
+    int totalViolations = 0;
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
+        ASSERT_NE(edgeLayout, nullptr);
+
+        // Collect all points
+        std::vector<Point> points;
+        points.push_back(edgeLayout->sourcePoint);
+        for (const auto& bend : edgeLayout->bendPoints) {
+            points.push_back(bend.position);
+        }
+        points.push_back(edgeLayout->targetPoint);
+
+        // Check each segment against all nodes
+        for (size_t i = 0; i + 1 < points.size(); ++i) {
+            const Point& p1 = points[i];
+            const Point& p2 = points[i + 1];
+
+            bool isHorizontal = (std::abs(p1.y - p2.y) < 0.1f);
+            bool isVertical = (std::abs(p1.x - p2.x) < 0.1f);
+
+            for (NodeId nodeId : allNodes) {
+                // Skip source node for first segment, target node for last segment
+                if (i == 0 && nodeId == edgeLayout->from) continue;
+                if (i == points.size() - 2 && nodeId == edgeLayout->to) continue;
+
+                const NodeLayout* node = result.getNodeLayout(nodeId);
+                ASSERT_NE(node, nullptr);
+
+                float nodeXmin = node->position.x;
+                float nodeXmax = node->position.x + node->size.width;
+                float nodeYmin = node->position.y;
+                float nodeYmax = node->position.y + node->size.height;
+
+                bool intersects = false;
+
+                if (isHorizontal) {
+                    float y = p1.y;
+                    float xMin = std::min(p1.x, p2.x);
+                    float xMax = std::max(p1.x, p2.x);
+                    // Strictly inside node interior
+                    if (y > nodeYmin && y < nodeYmax && xMin < nodeXmax && xMax > nodeXmin) {
+                        intersects = true;
+                    }
+                } else if (isVertical) {
+                    float x = p1.x;
+                    float yMin = std::min(p1.y, p2.y);
+                    float yMax = std::max(p1.y, p2.y);
+                    // Strictly inside node interior
+                    if (x > nodeXmin && x < nodeXmax && yMin < nodeYmax && yMax > nodeYmin) {
+                        intersects = true;
+                    }
+                }
+
+                if (intersects) {
+                    totalViolations++;
+                    std::cout << "INTERSECTION: Edge " << edgeId << " segment[" << i << "] "
+                              << "(" << p1.x << "," << p1.y << ") -> (" << p2.x << "," << p2.y << ")"
+                              << " passes through Node " << nodeId
+                              << " [" << nodeXmin << "," << nodeXmax << "]x["
+                              << nodeYmin << "," << nodeYmax << "]\n";
+                }
+            }
+        }
+    }
+
+    EXPECT_EQ(totalViolations, 0) << "Found " << totalViolations
+        << " segment-node intersections with grid-based routing!";
+}
+
+// CRITICAL TEST: Grid-based routing must respect directional constraints
+// This combines grid snapping (cellSize=20) with directional constraint validation
+// Covers the gap where directional tests didn't use grid snapping
+TEST(EdgeRoutingTransitionTest, GridBased_DirectionalConstraints_MustBeRespected) {
+    Graph graph;
+
+    // Create state machine from interactive demo
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");
+
+    // Enable grid-based routing with gridSize=20
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;  // Enable grid routing
+    options.snapDistribution = SnapDistribution::Separated;
+    layout.setOptions(options);
+
+    LayoutResult result = layout.layout(graph);
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+
+    std::cout << "\n===== GRID-BASED DIRECTIONAL CONSTRAINT VALIDATION =====\n";
+    std::cout << "gridSize: " << options.gridConfig.cellSize << "\n\n";
+
+    int sourceViolations = 0;
+    int targetViolations = 0;
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
+        ASSERT_NE(edgeLayout, nullptr);
+
+        // Collect all points
+        std::vector<Point> points;
+        points.push_back(edgeLayout->sourcePoint);
+        for (const auto& bend : edgeLayout->bendPoints) {
+            points.push_back(bend.position);
+        }
+        points.push_back(edgeLayout->targetPoint);
+
+        if (points.size() < 2) continue;
+
+        // Check FIRST segment direction (source exit)
+        const Point& p0 = points[0];
+        const Point& p1 = points[1];
+        float dx1 = p1.x - p0.x;
+        float dy1 = p1.y - p0.y;
+
+        bool firstSegmentCorrect = true;
+        std::string expectedFirst;
+        std::string actualFirst;
+
+        switch (edgeLayout->sourceEdge) {
+            case NodeEdge::Top:
+                expectedFirst = "Vertical UP (dy < 0)";
+                firstSegmentCorrect = (std::abs(dx1) < 0.1f && dy1 < 0);
+                actualFirst = (std::abs(dx1) < 0.1f) ?
+                    (dy1 < 0 ? "Vertical UP" : "Vertical DOWN") :
+                    (std::abs(dy1) < 0.1f ? "Horizontal" : "Diagonal");
+                break;
+            case NodeEdge::Bottom:
+                expectedFirst = "Vertical DOWN (dy > 0)";
+                firstSegmentCorrect = (std::abs(dx1) < 0.1f && dy1 > 0);
+                actualFirst = (std::abs(dx1) < 0.1f) ?
+                    (dy1 < 0 ? "Vertical UP" : "Vertical DOWN") :
+                    (std::abs(dy1) < 0.1f ? "Horizontal" : "Diagonal");
+                break;
+            case NodeEdge::Left:
+                expectedFirst = "Horizontal LEFT (dx < 0)";
+                firstSegmentCorrect = (std::abs(dy1) < 0.1f && dx1 < 0);
+                actualFirst = (std::abs(dy1) < 0.1f) ?
+                    (dx1 < 0 ? "Horizontal LEFT" : "Horizontal RIGHT") :
+                    (std::abs(dx1) < 0.1f ? "Vertical" : "Diagonal");
+                break;
+            case NodeEdge::Right:
+                expectedFirst = "Horizontal RIGHT (dx > 0)";
+                firstSegmentCorrect = (std::abs(dy1) < 0.1f && dx1 > 0);
+                actualFirst = (std::abs(dy1) < 0.1f) ?
+                    (dx1 < 0 ? "Horizontal LEFT" : "Horizontal RIGHT") :
+                    (std::abs(dx1) < 0.1f ? "Vertical" : "Diagonal");
+                break;
+        }
+
+        // Check LAST segment direction (target entry)
+        const Point& pN_1 = points[points.size() - 2];
+        const Point& pN = points[points.size() - 1];
+        float dxLast = pN.x - pN_1.x;
+        float dyLast = pN.y - pN_1.y;
+
+        bool lastSegmentCorrect = true;
+        std::string expectedLast;
+        std::string actualLast;
+
+        switch (edgeLayout->targetEdge) {
+            case NodeEdge::Top:
+                // Into top = coming from above = Y increasing (going down)
+                expectedLast = "Vertical DOWN (dy > 0)";
+                lastSegmentCorrect = (std::abs(dxLast) < 0.1f && dyLast > 0);
+                actualLast = (std::abs(dxLast) < 0.1f) ?
+                    (dyLast < 0 ? "Vertical UP" : "Vertical DOWN") :
+                    (std::abs(dyLast) < 0.1f ? "Horizontal" : "Diagonal");
+                break;
+            case NodeEdge::Bottom:
+                // Into bottom = coming from below = Y decreasing (going up)
+                expectedLast = "Vertical UP (dy < 0)";
+                lastSegmentCorrect = (std::abs(dxLast) < 0.1f && dyLast < 0);
+                actualLast = (std::abs(dxLast) < 0.1f) ?
+                    (dyLast < 0 ? "Vertical UP" : "Vertical DOWN") :
+                    (std::abs(dyLast) < 0.1f ? "Horizontal" : "Diagonal");
+                break;
+            case NodeEdge::Left:
+                // Into left = coming from left side = X increasing (going right)
+                expectedLast = "Horizontal RIGHT (dx > 0)";
+                lastSegmentCorrect = (std::abs(dyLast) < 0.1f && dxLast > 0);
+                actualLast = (std::abs(dyLast) < 0.1f) ?
+                    (dxLast < 0 ? "Horizontal LEFT" : "Horizontal RIGHT") :
+                    (std::abs(dxLast) < 0.1f ? "Vertical" : "Diagonal");
+                break;
+            case NodeEdge::Right:
+                // Into right = coming from right side = X decreasing (going left)
+                expectedLast = "Horizontal LEFT (dx < 0)";
+                lastSegmentCorrect = (std::abs(dyLast) < 0.1f && dxLast < 0);
+                actualLast = (std::abs(dyLast) < 0.1f) ?
+                    (dxLast < 0 ? "Horizontal LEFT" : "Horizontal RIGHT") :
+                    (std::abs(dxLast) < 0.1f ? "Vertical" : "Diagonal");
+                break;
+        }
+
+        // Print diagnostic info
+        std::cout << "Edge " << edgeId << " (" << edgeLayout->from << " -> " << edgeLayout->to << "):\n";
+        std::cout << "  sourceEdge: " << static_cast<int>(edgeLayout->sourceEdge)
+                  << " (0=Top,1=Bottom,2=Left,3=Right)\n";
+        std::cout << "  targetEdge: " << static_cast<int>(edgeLayout->targetEdge) << "\n";
+        std::cout << "  First segment: (" << p0.x << "," << p0.y << ") -> (" << p1.x << "," << p1.y << ")\n";
+        std::cout << "    dx=" << dx1 << ", dy=" << dy1 << "\n";
+        std::cout << "    Expected: " << expectedFirst << ", Actual: " << actualFirst;
+        if (!firstSegmentCorrect) {
+            std::cout << " [VIOLATION]";
+            sourceViolations++;
+        }
+        std::cout << "\n";
+
+        std::cout << "  Last segment: (" << pN_1.x << "," << pN_1.y << ") -> (" << pN.x << "," << pN.y << ")\n";
+        std::cout << "    dx=" << dxLast << ", dy=" << dyLast << "\n";
+        std::cout << "    Expected: " << expectedLast << ", Actual: " << actualLast;
+        if (!lastSegmentCorrect) {
+            std::cout << " [VIOLATION]";
+            targetViolations++;
+        }
+        std::cout << "\n\n";
+
+        // Assert correctness
+        EXPECT_TRUE(firstSegmentCorrect)
+            << "Edge " << edgeId << ": First segment direction mismatch with grid routing!\n"
+            << "  gridSize: " << options.gridConfig.cellSize << "\n"
+            << "  sourceEdge: " << static_cast<int>(edgeLayout->sourceEdge) << "\n"
+            << "  Expected: " << expectedFirst << "\n"
+            << "  Actual: " << actualFirst << " (dx=" << dx1 << ", dy=" << dy1 << ")";
+
+        EXPECT_TRUE(lastSegmentCorrect)
+            << "Edge " << edgeId << ": Last segment direction mismatch with grid routing!\n"
+            << "  gridSize: " << options.gridConfig.cellSize << "\n"
+            << "  targetEdge: " << static_cast<int>(edgeLayout->targetEdge) << "\n"
+            << "  Expected: " << expectedLast << "\n"
+            << "  Actual: " << actualLast << " (dx=" << dxLast << ", dy=" << dyLast << ")";
+    }
+
+    std::cout << "Summary: " << sourceViolations << " source violations, "
+              << targetViolations << " target violations\n";
+    std::cout << "==========================================\n";
+
+    EXPECT_EQ(sourceViolations + targetViolations, 0)
+        << "Grid-based routing violated directional constraints!";
+}
