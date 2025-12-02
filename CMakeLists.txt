@@ -65,6 +65,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/LayoutUtilsTest.cpp
         tests/layout/ManualLayoutTest.cpp
         tests/layout/sugiyama/SnapIndexManagerTest.cpp
+        tests/layout/sugiyama/EdgeRoutingTransitionTest.cpp
         tests/layout/manual/BendPointTest.cpp
         tests/layout/manual/OrthogonalDragTest.cpp
         tests/export/SvgExportTest.cpp

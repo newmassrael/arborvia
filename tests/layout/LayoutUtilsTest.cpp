@@ -375,11 +375,15 @@ TEST_F(LayoutUtilsTest, LabelPosition_UpdatesAfterDrag) {
     const EdgeLayout& updatedEdge = edgeLayouts[e1_];
     Point updatedLabelPos = updatedEdge.labelPosition;
     
-    // Label position should have moved
-    EXPECT_NE(initialLabelPos.x, updatedLabelPos.x)
-        << "Label position X should change after drag";
-    EXPECT_NE(initialLabelPos.y, updatedLabelPos.y)
-        << "Label position Y should change after drag";
+    // Label position should have moved (at least in one dimension)
+    // Note: With corrected directional constraints, Y may not change if the node
+    // moves to a position where the channel is still valid for both endpoints
+    bool labelMoved = (initialLabelPos.x != updatedLabelPos.x) || 
+                      (initialLabelPos.y != updatedLabelPos.y);
+    EXPECT_TRUE(labelMoved)
+        << "Label position should change after drag. "
+        << "Initial: (" << initialLabelPos.x << ", " << initialLabelPos.y << "), "
+        << "Updated: (" << updatedLabelPos.x << ", " << updatedLabelPos.y << ")";
     
     // Label position should be calculated from updated bendPoints
     Point expectedLabelPos = LayoutUtils::calculateEdgeLabelPosition(updatedEdge);

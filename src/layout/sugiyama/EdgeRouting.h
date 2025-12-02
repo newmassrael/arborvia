@@ -132,8 +132,42 @@ private:
     static int unifiedToLocalIndex(int unifiedIdx, int offset, int count);
 
     /// Recalculate bend points for an edge based on source and target points
-    static void recalculateBendPoints(EdgeLayout& layout);
-    
+    /// @param layout The edge layout to recalculate bend points for
+    /// @param nodeLayouts All node layouts for intersection checking
+    static void recalculateBendPoints(
+        EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Check if an orthogonal segment intersects a node's interior
+    /// @param p1 Start point of segment
+    /// @param p2 End point of segment
+    /// @param node The node to check intersection with
+    /// @return True if segment passes through node interior (excluding boundary)
+    static bool segmentIntersectsNode(
+        const Point& p1,
+        const Point& p2,
+        const NodeLayout& node);
+
+    /// Calculate coordinate to avoid blocking node
+    /// @param nodeMin Minimum coordinate of blocking node
+    /// @param nodeMax Maximum coordinate of blocking node
+    /// @param goPositive True to go right/down, false to go left/up
+    /// @return Safe coordinate outside blocking node with margin
+    static float calculateAvoidanceCoordinate(
+        float nodeMin,
+        float nodeMax,
+        bool goPositive);
+
+    /// Apply directional constraints to channel positions
+    /// Ensures edges exit/enter perpendicular to node edges
+    /// @param channelPos Base channel position (Y for vertical, X for horizontal)
+    /// @param snapPoint The snap point position (Y for vertical, X for horizontal)
+    /// @param edge Which edge of the node (Top, Bottom, Left, Right)
+    /// @param isSource True if this is the source snap point, false for target
+    /// @return Adjusted position respecting directional constraints
+    static float applyDirectionalConstraint(float channelPos, float snapPoint,
+                                           NodeEdge edge, bool isSource);
+
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from
     /// @param nodeId The node to count connections for
@@ -200,13 +234,21 @@ private:
     }
 
     /// Route edge using channel assignment
+    /// @param edge The edge data
+    /// @param fromLayout Source node layout
+    /// @param toLayout Target node layout
+    /// @param isReversed Whether edge is reversed
+    /// @param channel Channel assignment info
+    /// @param options Layout options
+    /// @param allNodeLayouts Optional: all node layouts for segment-node intersection checking
     EdgeLayout routeChannelOrthogonal(
         const EdgeData& edge,
         const NodeLayout& fromLayout,
         const NodeLayout& toLayout,
         bool isReversed,
         const ChannelAssignment& channel,
-        const LayoutOptions& options);
+        const LayoutOptions& options,
+        const std::unordered_map<NodeId, NodeLayout>* allNodeLayouts = nullptr);
 
     /// Route self-loop edge
     EdgeLayout routeSelfLoop(
