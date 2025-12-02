@@ -2777,3 +2777,423 @@ TEST(EdgeRoutingTransitionTest, GridBased_DirectionalConstraints_MustBeRespected
     EXPECT_EQ(sourceViolations + targetViolations, 0)
         << "Grid-based routing violated directional constraints!";
 }
+
+// =============================================================================
+// PATH QUALITY TESTS - Detect routing inefficiencies and anomalies
+// =============================================================================
+
+// Test: Detect duplicate bend points within the same edge
+// This catches cases where routing logic creates redundant points at same coordinates
+TEST(EdgeRoutingTransitionTest, NoDuplicateBendPoints) {
+    Graph graph;
+
+    // Create state machine matching interactive_demo
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");
+
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    options.snapDistribution = SnapDistribution::Separated;
+    layout.setOptions(options);
+
+    LayoutResult result = layout.layout(graph);
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+    constexpr float EPSILON = 0.1f;
+
+    std::cout << "\n===== DUPLICATE BEND POINT TEST =====\n";
+
+    int totalDuplicates = 0;
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
+        ASSERT_NE(edgeLayout, nullptr);
+
+        // Build full path
+        std::vector<Point> points;
+        points.push_back(edgeLayout->sourcePoint);
+        for (const auto& bend : edgeLayout->bendPoints) {
+            points.push_back(bend.position);
+        }
+        points.push_back(edgeLayout->targetPoint);
+
+        // Check for duplicate points
+        int edgeDuplicates = 0;
+        for (size_t i = 0; i < points.size(); ++i) {
+            for (size_t j = i + 1; j < points.size(); ++j) {
+                if (std::abs(points[i].x - points[j].x) < EPSILON &&
+                    std::abs(points[i].y - points[j].y) < EPSILON) {
+                    edgeDuplicates++;
+                    std::cout << "DUPLICATE in Edge " << edgeId
+                              << ": point[" << i << "] and point[" << j << "] both at ("
+                              << points[i].x << ", " << points[i].y << ")\n";
+                }
+            }
+        }
+
+        if (edgeDuplicates > 0) {
+            std::cout << "Edge " << edgeId << " full path (" << points.size() << " points):\n";
+            for (size_t k = 0; k < points.size(); ++k) {
+                std::cout << "  [" << k << "]: (" << points[k].x << ", " << points[k].y << ")\n";
+            }
+            totalDuplicates += edgeDuplicates;
+        }
+    }
+
+    std::cout << "Total duplicate pairs: " << totalDuplicates << "\n";
+    std::cout << "======================================\n";
+
+    EXPECT_EQ(totalDuplicates, 0) << "Found " << totalDuplicates
+        << " duplicate bend points - routing logic creates redundant points!";
+}
+
+// Test: Detect excessive bend points (path inefficiency)
+// A well-routed edge should not have more than 6 bend points for typical cases
+TEST(EdgeRoutingTransitionTest, PathEfficiency_NoBendPointExplosion) {
+    Graph graph;
+
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");
+
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    options.snapDistribution = SnapDistribution::Separated;
+    layout.setOptions(options);
+
+    LayoutResult result = layout.layout(graph);
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+
+    // Maximum reasonable bend points for non-self-loop edges
+    // Forward edges: typically 2 bend points (orthogonal routing)
+    // Backward edges: typically 4-6 bend points (needs to route around)
+    constexpr size_t MAX_BENDPOINTS_FORWARD = 4;
+    constexpr size_t MAX_BENDPOINTS_BACKWARD = 8;
+    constexpr size_t MAX_BENDPOINTS_SELFLOOP = 6;
+
+    std::cout << "\n===== PATH EFFICIENCY TEST =====\n";
+
+    int inefficientPaths = 0;
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
+        ASSERT_NE(edgeLayout, nullptr);
+
+        size_t bendCount = edgeLayout->bendPoints.size();
+        bool isSelfLoop = (edgeLayout->from == edgeLayout->to);
+        bool isBackward = (edgeId == e2 || edgeId == e6);  // resume, reset
+
+        size_t maxAllowed = isSelfLoop ? MAX_BENDPOINTS_SELFLOOP :
+                           (isBackward ? MAX_BENDPOINTS_BACKWARD : MAX_BENDPOINTS_FORWARD);
+
+        std::cout << "Edge " << edgeId << " (" << edgeLayout->from << " -> " << edgeLayout->to << "): "
+                  << bendCount << " bend points";
+
+        if (bendCount > maxAllowed) {
+            std::cout << " [EXCESSIVE! max=" << maxAllowed << "]";
+            inefficientPaths++;
+
+            // Print full path for debugging
+            std::cout << "\n  Full path:\n";
+            std::cout << "    src: (" << edgeLayout->sourcePoint.x << ", "
+                      << edgeLayout->sourcePoint.y << ")\n";
+            for (size_t i = 0; i < edgeLayout->bendPoints.size(); ++i) {
+                std::cout << "    b" << i << ": (" << edgeLayout->bendPoints[i].position.x
+                          << ", " << edgeLayout->bendPoints[i].position.y << ")\n";
+            }
+            std::cout << "    tgt: (" << edgeLayout->targetPoint.x << ", "
+                      << edgeLayout->targetPoint.y << ")\n";
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "Inefficient paths: " << inefficientPaths << "\n";
+    std::cout << "================================\n";
+
+    EXPECT_EQ(inefficientPaths, 0) << "Found " << inefficientPaths
+        << " edges with excessive bend points - routing is inefficient!";
+}
+
+// Test: Detect unnecessary backtracking in path
+// Backtracking = going in one direction then immediately reversing
+// Example: UP then DOWN on adjacent segments with only horizontal movement between
+TEST(EdgeRoutingTransitionTest, NoUnnecessaryBacktracking) {
+    Graph graph;
+
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");
+
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    options.snapDistribution = SnapDistribution::Separated;
+    layout.setOptions(options);
+
+    LayoutResult result = layout.layout(graph);
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+    constexpr float EPSILON = 0.1f;
+
+    std::cout << "\n===== BACKTRACKING DETECTION TEST =====\n";
+
+    int totalBacktracks = 0;
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
+        ASSERT_NE(edgeLayout, nullptr);
+
+        // Skip self-loops (they naturally have direction changes)
+        if (edgeLayout->from == edgeLayout->to) continue;
+
+        std::vector<Point> points;
+        points.push_back(edgeLayout->sourcePoint);
+        for (const auto& bend : edgeLayout->bendPoints) {
+            points.push_back(bend.position);
+        }
+        points.push_back(edgeLayout->targetPoint);
+
+        if (points.size() < 4) continue;  // Need at least 3 segments
+
+        int edgeBacktracks = 0;
+
+        // Check for pattern: V-H-V where V directions are opposite
+        // or H-V-H where H directions are opposite
+        for (size_t i = 0; i + 3 < points.size(); ++i) {
+            const Point& p0 = points[i];
+            const Point& p1 = points[i + 1];
+            const Point& p2 = points[i + 2];
+            const Point& p3 = points[i + 3];
+
+            // Segment directions
+            bool seg1_vertical = std::abs(p1.x - p0.x) < EPSILON;
+            bool seg2_horizontal = std::abs(p2.y - p1.y) < EPSILON;
+            bool seg3_vertical = std::abs(p3.x - p2.x) < EPSILON;
+
+            // Check V-H-V pattern with opposite vertical directions
+            if (seg1_vertical && seg2_horizontal && seg3_vertical) {
+                float dy1 = p1.y - p0.y;  // First vertical direction
+                float dy3 = p3.y - p2.y;  // Second vertical direction
+
+                // Backtrack if directions are opposite AND horizontal distance is small
+                if ((dy1 > EPSILON && dy3 < -EPSILON) || (dy1 < -EPSILON && dy3 > EPSILON)) {
+                    float horizontalDistance = std::abs(p2.x - p1.x);
+                    // Only flag if horizontal movement is relatively small (< 3 grid cells)
+                    if (horizontalDistance < options.gridConfig.cellSize * 3) {
+                        edgeBacktracks++;
+                        std::cout << "BACKTRACK in Edge " << edgeId << " at points ["
+                                  << i << "-" << (i+3) << "]:\n";
+                        std::cout << "  (" << p0.x << "," << p0.y << ") -> ("
+                                  << p1.x << "," << p1.y << ") [" << (dy1 > 0 ? "DOWN" : "UP") << "]\n";
+                        std::cout << "  -> (" << p2.x << "," << p2.y << ") [HORIZONTAL]\n";
+                        std::cout << "  -> (" << p3.x << "," << p3.y << ") [" << (dy3 > 0 ? "DOWN" : "UP") << "]\n";
+                    }
+                }
+            }
+
+            // Similarly check H-V-H pattern
+            bool seg1_horizontal = std::abs(p1.y - p0.y) < EPSILON;
+            bool seg2_vertical = std::abs(p2.x - p1.x) < EPSILON;
+            bool seg3_horizontal = std::abs(p3.y - p2.y) < EPSILON;
+
+            if (seg1_horizontal && seg2_vertical && seg3_horizontal) {
+                float dx1 = p1.x - p0.x;
+                float dx3 = p3.x - p2.x;
+
+                if ((dx1 > EPSILON && dx3 < -EPSILON) || (dx1 < -EPSILON && dx3 > EPSILON)) {
+                    float verticalDistance = std::abs(p2.y - p1.y);
+                    if (verticalDistance < options.gridConfig.cellSize * 3) {
+                        edgeBacktracks++;
+                        std::cout << "BACKTRACK in Edge " << edgeId << " at points ["
+                                  << i << "-" << (i+3) << "]:\n";
+                        std::cout << "  (" << p0.x << "," << p0.y << ") -> ("
+                                  << p1.x << "," << p1.y << ") [" << (dx1 > 0 ? "RIGHT" : "LEFT") << "]\n";
+                        std::cout << "  -> (" << p2.x << "," << p2.y << ") [VERTICAL]\n";
+                        std::cout << "  -> (" << p3.x << "," << p3.y << ") [" << (dx3 > 0 ? "RIGHT" : "LEFT") << "]\n";
+                    }
+                }
+            }
+        }
+
+        if (edgeBacktracks > 0) {
+            std::cout << "Edge " << edgeId << " has " << edgeBacktracks << " backtrack(s)\n";
+            totalBacktracks += edgeBacktracks;
+        }
+    }
+
+    std::cout << "Total backtracks: " << totalBacktracks << "\n";
+    std::cout << "=======================================\n";
+
+    EXPECT_EQ(totalBacktracks, 0) << "Found " << totalBacktracks
+        << " unnecessary backtracking patterns - routing creates wasteful detours!";
+}
+
+// Test: Use exact node positions from current interactive_demo output
+// This ensures the exact scenario that triggered the bug is tested
+TEST(EdgeRoutingTransitionTest, CurrentInteractiveDemo_PathQuality) {
+    Graph graph;
+
+    // Create graph matching interactive_demo
+    NodeId start = graph.addNode(Size{200, 100}, "Start");     // id=0
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");       // id=1
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");   // id=2
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped"); // id=3
+    NodeId error = graph.addNode(Size{200, 100}, "Error");     // id=4
+
+    EdgeId e0 = graph.addEdge(start, idle, "init");
+    EdgeId e1 = graph.addEdge(idle, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, idle, "resume");   // backward - problematic edge
+    EdgeId e3 = graph.addEdge(idle, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop2");
+    EdgeId e5 = graph.addEdge(idle, error, "fail");
+    EdgeId e6 = graph.addEdge(error, start, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");    // self-loop
+
+    // Exact positions from user's interactive_demo JSON output
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    nodeLayouts[error] = NodeLayout{error, {400.0f, 180.0f}, {200.0f, 100.0f}, 3, 1};
+    nodeLayouts[stopped] = NodeLayout{stopped, {0.0f, 520.0f}, {200.0f, 100.0f}, 3, 0};
+    nodeLayouts[paused] = NodeLayout{paused, {0.0f, 360.0f}, {200.0f, 100.0f}, 2, 0};
+    nodeLayouts[idle] = NodeLayout{idle, {700.0f, 580.0f}, {200.0f, 100.0f}, 1, 0};
+    nodeLayouts[start] = NodeLayout{start, {100.0f, 60.0f}, {200.0f, 100.0f}, 0, 0};
+
+    // Route with these exact positions
+    EdgeRouting router;
+    std::unordered_set<EdgeId> reversedEdges = {e2, e6};  // backward edges
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+
+    auto result = router.route(graph, nodeLayouts, reversedEdges, options);
+
+    std::cout << "\n===== CURRENT INTERACTIVE_DEMO PATH QUALITY =====\n";
+    std::cout << "Using exact node positions from user's JSON output\n\n";
+
+    constexpr float EPSILON = 0.1f;
+    constexpr size_t MAX_BENDPOINTS = 8;  // Reasonable maximum for any edge
+
+    int totalIssues = 0;
+
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+
+    for (EdgeId edgeId : allEdges) {
+        const EdgeLayout* layout = result.getEdgeLayout(edgeId);
+        if (!layout) continue;
+
+        std::vector<Point> points;
+        points.push_back(layout->sourcePoint);
+        for (const auto& bend : layout->bendPoints) {
+            points.push_back(bend.position);
+        }
+        points.push_back(layout->targetPoint);
+
+        std::cout << "Edge " << edgeId << " (" << layout->from << " -> " << layout->to << "): "
+                  << layout->bendPoints.size() << " bends\n";
+
+        int edgeIssues = 0;
+
+        // Check 1: Duplicate points
+        for (size_t i = 0; i < points.size(); ++i) {
+            for (size_t j = i + 1; j < points.size(); ++j) {
+                if (std::abs(points[i].x - points[j].x) < EPSILON &&
+                    std::abs(points[i].y - points[j].y) < EPSILON) {
+                    std::cout << "  ISSUE: Duplicate points [" << i << "] and [" << j
+                              << "] at (" << points[i].x << ", " << points[i].y << ")\n";
+                    edgeIssues++;
+                }
+            }
+        }
+
+        // Check 2: Excessive bend points
+        if (layout->bendPoints.size() > MAX_BENDPOINTS) {
+            std::cout << "  ISSUE: Excessive bend points (" << layout->bendPoints.size()
+                      << " > " << MAX_BENDPOINTS << ")\n";
+            edgeIssues++;
+        }
+
+        // Check 3: Path goes past target then comes back (detour)
+        // For non-self-loop edges, check if path exceeds target bounds then returns
+        if (layout->from != layout->to && points.size() > 3) {
+            float targetX = layout->targetPoint.x;
+            float targetY = layout->targetPoint.y;
+            float sourceX = layout->sourcePoint.x;
+            float sourceY = layout->sourcePoint.y;
+
+            // Check if any intermediate point goes significantly past target
+            for (size_t i = 1; i + 1 < points.size(); ++i) {
+                const Point& p = points[i];
+
+                // Check X overshoot (going past target in X then coming back)
+                bool xOvershoot = false;
+                if (targetX > sourceX && p.x > targetX + 100) xOvershoot = true;
+                if (targetX < sourceX && p.x < targetX - 100) xOvershoot = true;
+
+                // Check Y overshoot
+                bool yOvershoot = false;
+                if (targetY > sourceY && p.y > targetY + 100) yOvershoot = true;
+                if (targetY < sourceY && p.y < targetY - 100) yOvershoot = true;
+
+                if (xOvershoot || yOvershoot) {
+                    std::cout << "  ISSUE: Point [" << i << "] at (" << p.x << ", " << p.y
+                              << ") overshoots target (" << targetX << ", " << targetY << ")\n";
+                    edgeIssues++;
+                    break;  // Only report once per edge
+                }
+            }
+        }
+
+        if (edgeIssues > 0) {
+            std::cout << "  Full path:\n";
+            for (size_t k = 0; k < points.size(); ++k) {
+                std::string label = (k == 0) ? "src" :
+                                   (k == points.size() - 1) ? "tgt" :
+                                   "b" + std::to_string(k - 1);
+                std::cout << "    " << label << ": (" << points[k].x << ", " << points[k].y << ")\n";
+            }
+            totalIssues += edgeIssues;
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "Total issues: " << totalIssues << "\n";
+    std::cout << "================================================\n";
+
+    EXPECT_EQ(totalIssues, 0) << "Found " << totalIssues
+        << " path quality issues with current interactive_demo positions!";
+}

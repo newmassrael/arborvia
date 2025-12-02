@@ -670,7 +670,8 @@ namespace {
         return false;
     }
     
-    /// Remove spikes and duplicate points from a path
+    /// Remove spikes, duplicate points, and circular detours from a path
+    /// A circular detour is when the path returns to a previously visited point
     void removeSpikesAndDuplicates(std::vector<Point>& points) {
         bool modified = true;
         while (modified && points.size() > 2) {
@@ -693,6 +694,45 @@ namespace {
                     modified = true;
                     break;
                 }
+            }
+            if (modified) continue;
+
+            // Remove redundant collinear intermediate points
+            // If three consecutive points are on the same line (vertical or horizontal),
+            // the middle point can be removed as it doesn't affect the path
+            for (size_t i = 0; i + 2 < points.size(); ++i) {
+                const Point& a = points[i];
+                const Point& b = points[i + 1];
+                const Point& c = points[i + 2];
+
+                // Check if all three are on same vertical line
+                bool sameX = (std::abs(a.x - b.x) < EPSILON && std::abs(b.x - c.x) < EPSILON);
+                // Check if all three are on same horizontal line
+                bool sameY = (std::abs(a.y - b.y) < EPSILON && std::abs(b.y - c.y) < EPSILON);
+
+                if (sameX || sameY) {
+                    // Middle point is redundant, remove it
+                    points.erase(points.begin() + i + 1);
+                    modified = true;
+                    break;
+                }
+            }
+            if (modified) continue;
+            
+            // Remove non-consecutive duplicate points and the circular detour between them
+            // This is safe because if two points are identical, the path between them
+            // is a closed loop that accomplishes nothing
+            for (size_t i = 0; i + 2 < points.size(); ++i) {
+                for (size_t j = i + 2; j < points.size(); ++j) {
+                    if (isPointDuplicate(points[i], points[j])) {
+                        // Found duplicate at i and j - remove all points from i+1 to j (inclusive)
+                        // This eliminates the circular detour between them
+                        points.erase(points.begin() + i + 1, points.begin() + j + 1);
+                        modified = true;
+                        break;
+                    }
+                }
+                if (modified) break;
             }
         }
     }
@@ -1462,20 +1502,34 @@ void EdgeRouting::fixSegmentNodeIntersections(
             if (segmentHasIntersection) {
                 bool isVerticalSeg = std::abs(p1.x - p2.x) < 0.1f;
 
+                // Get target point to determine optimal avoidance direction
+                const Point& targetPoint = allPoints.back();
+
                 if (isVerticalSeg) {
                     // Vertical segment: go around horizontally
-                    float avoidX = calculateAvoidanceCoordinate(
+                    // Calculate both avoidance coordinates and pick the one closer to target
+                    float avoidXRight = calculateAvoidanceCoordinate(
                         blockingNode.position.x,
                         blockingNode.position.x + blockingNode.size.width,
                         true, gridSize);
+                    float avoidXLeft = calculateAvoidanceCoordinate(
+                        blockingNode.position.x,
+                        blockingNode.position.x + blockingNode.size.width,
+                        false, gridSize);
 
-                    bool rightWorks = checkAvoidancePathClear(p1, p2, avoidX, true, nodeLayouts);
+                    // Prefer the direction that results in less total distance to target
+                    float distRight = std::abs(avoidXRight - targetPoint.x);
+                    float distLeft = std::abs(avoidXLeft - targetPoint.x);
+                    bool preferRight = distRight <= distLeft;
 
-                    if (!rightWorks) {
-                        avoidX = calculateAvoidanceCoordinate(
-                            blockingNode.position.x,
-                            blockingNode.position.x + blockingNode.size.width,
-                            false, gridSize);
+                    float avoidXFirst = preferRight ? avoidXRight : avoidXLeft;
+                    float avoidXSecond = preferRight ? avoidXLeft : avoidXRight;
+
+                    float avoidX = avoidXFirst;
+                    bool firstWorks = checkAvoidancePathClear(p1, p2, avoidX, true, nodeLayouts);
+
+                    if (!firstWorks) {
+                        avoidX = avoidXSecond;
 
                         if (!checkAvoidancePathClear(p1, p2, avoidX, true, nodeLayouts)) {
                             // 4-point path around the node
@@ -1536,18 +1590,29 @@ void EdgeRouting::fixSegmentNodeIntersections(
                     }
                 } else {
                     // Horizontal segment: go around vertically
-                    float avoidY = calculateAvoidanceCoordinate(
+                    // Calculate both avoidance coordinates and pick the one closer to target
+                    float avoidYDown = calculateAvoidanceCoordinate(
                         blockingNode.position.y,
                         blockingNode.position.y + blockingNode.size.height,
                         true, gridSize);
+                    float avoidYUp = calculateAvoidanceCoordinate(
+                        blockingNode.position.y,
+                        blockingNode.position.y + blockingNode.size.height,
+                        false, gridSize);
 
-                    bool downWorks = checkAvoidancePathClear(p1, p2, avoidY, false, nodeLayouts);
+                    // Prefer the direction that results in less total distance to target
+                    float distDown = std::abs(avoidYDown - targetPoint.y);
+                    float distUp = std::abs(avoidYUp - targetPoint.y);
+                    bool preferDown = distDown <= distUp;
 
-                    if (!downWorks) {
-                        avoidY = calculateAvoidanceCoordinate(
-                            blockingNode.position.y,
-                            blockingNode.position.y + blockingNode.size.height,
-                            false, gridSize);
+                    float avoidYFirst = preferDown ? avoidYDown : avoidYUp;
+                    float avoidYSecond = preferDown ? avoidYUp : avoidYDown;
+
+                    float avoidY = avoidYFirst;
+                    bool firstWorks = checkAvoidancePathClear(p1, p2, avoidY, false, nodeLayouts);
+
+                    if (!firstWorks) {
+                        avoidY = avoidYSecond;
 
                         if (!checkAvoidancePathClear(p1, p2, avoidY, false, nodeLayouts)) {
                             float avoidX = calculateAvoidanceCoordinate(
