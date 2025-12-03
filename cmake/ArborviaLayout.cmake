@@ -14,6 +14,8 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/CoordinateAssignment.cpp
     src/layout/sugiyama/EdgeRouting.cpp
     src/layout/sugiyama/SnapIndexManager.cpp
+    src/layout/sugiyama/ObstacleMap.cpp
+    src/layout/sugiyama/PathFinder.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS

@@ -84,6 +84,48 @@ public:
     /// @param edge The edge layout
     /// @return Optimal label position
     static Point calculateEdgeLabelPosition(const EdgeLayout& edge);
+
+    /// Result of drag validation check
+    struct DragValidation {
+        bool valid = true;              ///< True if node can be moved to this position
+        std::vector<EdgeId> invalidEdges;  ///< Edges that would have invalid routing
+    };
+
+    /// Check if a node can be moved to a specific position
+    /// Validates that all connected edges can still have valid routing
+    /// @param nodeId Node being moved
+    /// @param newPosition Proposed new position
+    /// @param nodeLayouts Current node layouts
+    /// @param edgeLayouts Current edge layouts
+    /// @param gridSize Grid size for routing calculations
+    /// @return DragValidation indicating if move is valid
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        float gridSize = 20.0f);
+
+    /// Get edges connected to a node
+    /// @param nodeId The node to query
+    /// @param edgeLayouts All edge layouts
+    /// @return Vector of edge IDs connected to this node
+    static std::vector<EdgeId> getConnectedEdges(
+        NodeId nodeId,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts);
+
+    /// Fast check if a node position would overlap with other nodes
+    /// Much faster than canMoveNodeTo - use for real-time drag feedback
+    /// @param nodeId Node being moved
+    /// @param newPosition Proposed new position
+    /// @param nodeLayouts Current node layouts
+    /// @param margin Minimum gap between nodes (default 0)
+    /// @return true if position is valid (no overlap)
+    static bool canMoveNodeToFast(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float margin = 0.0f);
 };
 
 }  // namespace arborvia

@@ -108,8 +108,8 @@ struct LayoutOptions {
     Direction direction = Direction::TopToBottom;
     
     // Spacing
-    float nodeSpacingHorizontal = 50.0f;  // Space between nodes in same layer
-    float nodeSpacingVertical = 75.0f;    // Space between layers
+    float nodeSpacingHorizontal = 100.0f;  // Space between nodes in same layer (5 grid units @ 20px)
+    float nodeSpacingVertical = 100.0f;    // Space between layers (5 grid units @ 20px)
     
     // Compound node settings
     float compoundPadding = 20.0f;        // Padding inside compound nodes

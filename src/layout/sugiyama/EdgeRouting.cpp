@@ -1,5 +1,7 @@
 #include "EdgeRouting.h"
 #include "SnapIndexManager.h"
+#include "ObstacleMap.h"
+#include "PathFinder.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
 
@@ -23,20 +25,7 @@ namespace {
     /// Tolerance for floating point comparisons in path calculations
     constexpr float EPSILON = 0.1f;
     
-    /// Margin for avoiding node intersections during routing
-    constexpr float SAFE_MARGIN = 20.0f;
     
-    /// Offset for direction correction when inserting bend points
-    constexpr float DIRECTION_OFFSET = 20.0f;
-    
-    /// Margin for rerouting around nodes when direction is wrong
-    constexpr float REROUTE_MARGIN = 30.0f;
-    
-    /// Minimum perpendicular distance from snap point for directional routing
-    constexpr float MIN_PERPENDICULAR_OFFSET = 10.0f;
-    
-    /// Margin for segment-node intersection avoidance
-    constexpr float AVOIDANCE_MARGIN = 15.0f;
     
     /// Self-loop spacing between source and target points
     constexpr float SELF_LOOP_SPACING = 10.0f;
@@ -45,14 +34,6 @@ namespace {
     /// Self-loops route outside the node by this amount
     constexpr float DEFAULT_SELF_LOOP_OFFSET = 20.0f;
     
-    /// Tolerance for safe avoidance checks
-    constexpr float SAFE_TOLERANCE = 5.0f;
-    
-    /// Maximum number of bend points before stopping iteration
-    constexpr int MAX_PATH_POINTS = 30;
-    
-    /// Maximum number of intersection fixing passes
-    constexpr int MAX_FIX_PASSES = 5;
 
     // =========================================================================
     // Grid-Relative Offset Functions
@@ -60,30 +41,12 @@ namespace {
     // These functions return offsets that are guaranteed to be grid-aligned
     // when gridSize > 0, preventing post-hoc snap from creating spikes/duplicates.
 
-    /// Direction offset: minimum distance from node edge for directional routing
-    inline float getDirectionOffset(float gridSize) {
-        return gridSize > 0.0f ? gridSize : DIRECTION_OFFSET;
-    }
-
-    /// Reroute margin: distance for routing around when direction conflicts
-    inline float getRerouteMargin(float gridSize) {
-        return gridSize > 0.0f ? gridSize * 2.0f : REROUTE_MARGIN;
-    }
-
-    /// Avoidance margin: distance for avoiding node intersections
-    inline float getAvoidanceMargin(float gridSize) {
-        return gridSize > 0.0f ? gridSize : AVOIDANCE_MARGIN;
-    }
 
     /// Self-loop spacing: distance between source and target on self-loops
     inline float getSelfLoopSpacing(float gridSize) {
         return gridSize > 0.0f ? gridSize : SELF_LOOP_SPACING;
     }
 
-    /// Perpendicular offset: minimum distance from snap point for directional routing
-    inline float getPerpendicularOffset(float gridSize) {
-        return gridSize > 0.0f ? gridSize : MIN_PERPENDICULAR_OFFSET;
-    }
 
     /// Get effective grid size for calculations
     /// Returns 1.0f when grid is disabled (gridSize <= 0) to prevent division by zero
@@ -102,6 +65,9 @@ namespace {
     constexpr int GRID_AVOIDANCE_MARGIN = 1;      // 1 grid cell for node avoidance
     constexpr int GRID_REROUTE_MARGIN = 2;        // 2 grid cells for routing around
     constexpr int GRID_SELF_LOOP_SPACING = 1;     // 1 grid cell for self-loops
+
+    // Default grid size when grid is disabled (used for minimum clearance)
+    constexpr float DEFAULT_GRID_SIZE = 20.0f;
 
     // =========================================================================
     // Grid Coordinate Types for Quantized-First Calculations
@@ -394,242 +360,17 @@ namespace {
     // These functions perform all calculations in grid units (integers).
     // Conversion to pixel coordinates happens only at the final BendPoint creation.
 
-    /// Apply directional constraint in grid units
-    /// Returns the constrained coordinate in grid units
-    /// @param gridChannelPos Channel position in grid units
-    /// @param gridSnapPoint Snap point position in grid units
-    /// @param edge Which edge of the node
-    /// @param offset Perpendicular offset in grid units (typically GRID_PERPENDICULAR_OFFSET)
-    /// @return Constrained position in grid units
-    int applyDirectionalConstraintGrid(int gridChannelPos, int gridSnapPoint, NodeEdge edge, int offset = GRID_PERPENDICULAR_OFFSET) {
-        switch (edge) {
-            case NodeEdge::Top:
-            case NodeEdge::Left:
-                // Bend points must be toward smaller coordinate
-                return std::min(gridChannelPos, gridSnapPoint - offset);
-            case NodeEdge::Bottom:
-            case NodeEdge::Right:
-                // Bend points must be toward larger coordinate
-                return std::max(gridChannelPos, gridSnapPoint + offset);
-            default:
-                return gridChannelPos;
-        }
-    }
 
-    /// Check if a three-segment grid path intersects any node
-    /// @param gridOrthogonal The orthogonal coordinate in grid units
-    /// @param gridSrcSecondary Source secondary coordinate in grid units
-    /// @param gridTgtSecondary Target secondary coordinate in grid units
-    /// @param axis Axis configuration
-    /// @param nodeLayouts All node layouts
-    /// @param excludeFrom Source node ID to exclude
-    /// @param excludeTo Target node ID to exclude
-    /// @param gridSize Grid cell size
-    bool gridPathIntersectsNodes(
-        int gridOrthogonal,
-        int gridSrcSecondary,
-        int gridTgtSecondary,
-        const AxisConfig& axis,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        NodeId excludeFrom,
-        NodeId excludeTo,
-        float gridSize) {
 
-        // Convert to pixel coordinates for intersection checking
-        float orthogonal = axis.toPixel(gridOrthogonal, gridSize);
-        float srcSecondary = axis.toPixel(gridSrcSecondary, gridSize);
-        float tgtSecondary = axis.toPixel(gridTgtSecondary, gridSize);
 
-        Point seg1Start = axis.makePoint(orthogonal, srcSecondary);
-        Point seg1End = axis.makePoint(orthogonal, tgtSecondary);
 
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            if (nodeId == excludeFrom || nodeId == excludeTo) continue;
-            if (EdgeRouting::segmentIntersectsNode(seg1Start, seg1End, nodeLayout)) {
-                return true;
-            }
-        }
-        return false;
-    }
 
-    /// Add bend points from grid coordinates (conversion to pixel at the end)
-    void addBendPointsFromGrid(
-        EdgeLayout& layout,
-        int gridOrthogonal,
-        int gridSrcSecondary,
-        int gridTgtSecondary,
-        const AxisConfig& axis,
-        float gridSize) {
 
-        layout.bendPoints.push_back({axis.makePointFromGrid(gridOrthogonal, gridSrcSecondary, gridSize)});
-        layout.bendPoints.push_back({axis.makePointFromGrid(gridOrthogonal, gridTgtSecondary, gridSize)});
-    }
 
-    /// Route edge with same bound constraints using grid-first calculation (Case 1)
-    void routeSameBoundCaseGrid(
-        EdgeLayout& layout,
-        int gridSourceConstraint,
-        int gridTargetConstraint,
-        int gridSrcSecondary,
-        int gridTgtSecondary,
-        const AxisConfig& axis,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize) {
 
-        // Try min constraint first
-        int gridOrthogonal = std::min(gridSourceConstraint, gridTargetConstraint);
 
-        if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
-                                    axis, nodeLayouts, layout.from, layout.to, gridSize)) {
-            // Try max constraint
-            gridOrthogonal = std::max(gridSourceConstraint, gridTargetConstraint);
 
-            if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
-                                        axis, nodeLayouts, layout.from, layout.to, gridSize)) {
-                // Find bounds outside all blocking nodes
-                int gridMinBound = INT_MIN / 2;  // Avoid overflow
-                int gridMaxBound = INT_MAX / 2;
 
-                for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                    if (nodeId == layout.from || nodeId == layout.to) continue;
-                    int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
-                    axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
-                    gridMinBound = std::max(gridMinBound, nodeMax + GRID_AVOIDANCE_MARGIN);
-                    gridMaxBound = std::min(gridMaxBound, nodeMin - GRID_AVOIDANCE_MARGIN);
-                }
-
-                // Choose direction requiring less deviation
-                int distMin = std::abs(gridOrthogonal - gridMinBound);
-                int distMax = std::abs(gridOrthogonal - gridMaxBound);
-                gridOrthogonal = (distMin < distMax) ? gridMinBound : gridMaxBound;
-            }
-        }
-
-        addBendPointsFromGrid(layout, gridOrthogonal, gridSrcSecondary, gridTgtSecondary, axis, gridSize);
-    }
-
-    /// Route edge with compatible bound constraints using grid-first calculation (Case 2)
-    void routeCompatibleBoundsCaseGrid(
-        EdgeLayout& layout,
-        int gridLowerBound,
-        int gridUpperBound,
-        int gridSrcSecondary,
-        int gridTgtSecondary,
-        const AxisConfig& axis,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize) {
-
-        // Try midpoint first (integer division preserves grid alignment)
-        int gridOrthogonal = (gridLowerBound + gridUpperBound) / 2;
-
-        if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
-                                    axis, nodeLayouts, layout.from, layout.to, gridSize)) {
-            // Try lower bound
-            gridOrthogonal = gridLowerBound;
-
-            if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
-                                        axis, nodeLayouts, layout.from, layout.to, gridSize)) {
-                // Try upper bound
-                gridOrthogonal = gridUpperBound;
-
-                if (gridPathIntersectsNodes(gridOrthogonal, gridSrcSecondary, gridTgtSecondary,
-                                            axis, nodeLayouts, layout.from, layout.to, gridSize)) {
-                    // Find safe coordinate outside all nodes
-                    int gridMinBound = INT_MIN / 2;
-                    int gridMaxBound = INT_MAX / 2;
-
-                    for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                        if (nodeId == layout.from || nodeId == layout.to) continue;
-                        int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
-                        axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
-                        gridMinBound = std::max(gridMinBound, nodeMax + GRID_AVOIDANCE_MARGIN);
-                        gridMaxBound = std::min(gridMaxBound, nodeMin - GRID_AVOIDANCE_MARGIN);
-                    }
-
-                    int distMin = std::abs(gridOrthogonal - gridMinBound);
-                    int distMax = std::abs(gridOrthogonal - gridMaxBound);
-                    gridOrthogonal = (distMin < distMax) ? gridMinBound : gridMaxBound;
-                }
-            }
-        }
-
-        addBendPointsFromGrid(layout, gridOrthogonal, gridSrcSecondary, gridTgtSecondary, axis, gridSize);
-    }
-
-    /// Route edge with conflicting bound constraints using grid-first calculation (Case 3)
-    void routeConflictingBoundsCaseGrid(
-        EdgeLayout& layout,
-        int gridExitCoord,      // lowerBound in original
-        int gridApproachCoord,  // upperBound in original
-        int gridSrcSecondary,
-        int gridTgtSecondary,
-        int gridTgtPrimary,
-        const AxisConfig& axis,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize) {
-
-        // Check for spike-inducing geometry
-        bool wouldCreateSpike = false;
-        bool sourceIsPositive = axis.isPositiveEdge(layout.sourceEdge);
-        bool targetIsPositive = axis.isPositiveEdge(layout.targetEdge);
-
-        if (sourceIsPositive && !targetIsPositive) {
-            wouldCreateSpike = (gridExitCoord >= gridTgtPrimary);
-        } else if (!sourceIsPositive && targetIsPositive) {
-            wouldCreateSpike = (gridExitCoord <= gridTgtPrimary);
-        }
-
-        if (wouldCreateSpike) {
-            // Alternative routing: Go perpendicular first
-            int gridDetourSecondary;
-            if (gridSrcSecondary < gridTgtSecondary) {
-                gridDetourSecondary = gridSrcSecondary - GRID_REROUTE_MARGIN;
-            } else {
-                gridDetourSecondary = gridSrcSecondary + GRID_REROUTE_MARGIN;
-            }
-
-            // Create 4-point detour path (convert to pixels)
-            layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
-            layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridDetourSecondary, gridSize)});
-            layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridDetourSecondary, gridSize)});
-            layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
-        } else {
-            // Check for node intersection on the exit segment
-            bool hasIntersection = false;
-            int blockingNodeSecMax = 0;
-
-            for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                if (nodeId == layout.from || nodeId == layout.to) continue;
-
-                Point segStart = axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize);
-                Point segEnd = axis.makePointFromGrid(gridExitCoord, gridTgtSecondary, gridSize);
-
-                if (EdgeRouting::segmentIntersectsNode(segStart, segEnd, nodeLayout)) {
-                    hasIntersection = true;
-                    int nodeMin, nodeMax, nodeSecMin, nodeSecMax;
-                    axis.getNodeGridBounds(nodeLayout, gridSize, nodeMin, nodeMax, nodeSecMin, nodeSecMax);
-                    (void)nodeSecMin;  // Only nodeSecMax used for avoidance
-                    blockingNodeSecMax = nodeSecMax;
-                    break;
-                }
-            }
-
-            if (hasIntersection) {
-                // Route around blocking node
-                int gridAvoidSecondary = blockingNodeSecMax + GRID_AVOIDANCE_MARGIN;
-
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridAvoidSecondary, gridSize)});
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridAvoidSecondary, gridSize)});
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
-            } else {
-                // Simple 3-point path
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridSrcSecondary, gridSize)});
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridExitCoord, gridTgtSecondary, gridSize)});
-                layout.bendPoints.push_back({axis.makePointFromGrid(gridApproachCoord, gridTgtSecondary, gridSize)});
-            }
-        }
-    }
 
     struct PairHash {
         template <typename T1, typename T2>
@@ -737,580 +478,7 @@ namespace {
         }
     }
     
-    /// Check if edge needs vertical or horizontal first/last segment
-    bool needsVerticalSegment(NodeEdge edge) {
-        return edge == NodeEdge::Top || edge == NodeEdge::Bottom;
-    }
-    
-    /// Check if segment is vertical (same X coordinates)
-    bool isVerticalSegment(const Point& p1, const Point& p2) {
-        return std::abs(p1.x - p2.x) < EPSILON;
-    }
-    
-    /// Check if a point is strictly inside a node (not on boundary)
-    bool isPointInsideNode(const Point& pt, const NodeLayout& node) {
-        return (pt.x > node.position.x && pt.x < node.position.x + node.size.width &&
-                pt.y > node.position.y && pt.y < node.position.y + node.size.height);
-    }
-    
-    /// Check if a point is inside any node in the layout
-    /// @param pt Point to check
-    /// @param nodeLayouts All node layouts
-    /// @param excludeNodes Optional nodes to exclude from checking
-    /// @return Pointer to blocking node if found, nullptr otherwise
-    const NodeLayout* findBlockingNode(
-        const Point& pt,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_set<NodeId>& excludeNodes = {}) {
-        
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            if (excludeNodes.count(nodeId) > 0) continue;
-            if (isPointInsideNode(pt, nodeLayout)) {
-                return &nodeLayout;
-            }
-        }
-        return nullptr;
-    }
-    
-    /// Move a point outside a blocking node to the nearest edge
-    /// @param pt Point to move (modified in place)
-    /// @param node The blocking node
-    void movePointOutsideNode(Point& pt, const NodeLayout& node, float gridSize = 0.0f) {
-        float nodeLeft = node.position.x;
-        float nodeRight = node.position.x + node.size.width;
-        float nodeTop = node.position.y;
-        float nodeBottom = node.position.y + node.size.height;
-        float avoidMargin = getAvoidanceMargin(gridSize);
-        
-        // Calculate distances to each edge
-        float distToLeft = pt.x - nodeLeft;
-        float distToRight = nodeRight - pt.x;
-        float distToTop = pt.y - nodeTop;
-        float distToBottom = nodeBottom - pt.y;
-        
-        // Find minimum distance and move that way
-        float minDist = std::min({distToLeft, distToRight, distToTop, distToBottom});
-        
-        if (minDist == distToTop) {
-            pt.y = nodeTop - avoidMargin;
-        } else if (minDist == distToBottom) {
-            pt.y = nodeBottom + avoidMargin;
-        } else if (minDist == distToLeft) {
-            pt.x = nodeLeft - avoidMargin;
-        } else {
-            pt.x = nodeRight + avoidMargin;
-        }
-    }
-    
-    /// Find valid orthogonal intermediate point for non-orthogonal segment
-    /// @param prev Previous point
-    /// @param curr Current point  
-    /// @param nodeLayouts All node layouts for intersection checking
-    /// @return Valid intermediate point, or nullopt if neither simple option works
-    std::optional<Point> findSimpleOrthogonalIntermediate(
-        const Point& prev,
-        const Point& curr,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-        
-        Point option1 = {curr.x, prev.y};  // Horizontal first
-        Point option2 = {prev.x, curr.y};  // Vertical first
-        
-        bool option1Ok = true;
-        bool option2Ok = true;
-        
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            if (isPointInsideNode(option1, nodeLayout)) option1Ok = false;
-            if (isPointInsideNode(option2, nodeLayout)) option2Ok = false;
-            if (!option1Ok && !option2Ok) break;
-        }
-        
-        if (option1Ok) return option1;
-        if (option2Ok) return option2;
-        return std::nullopt;
-    }
-    
-    /// Compute safe Y coordinate for routing around blocking nodes
-    /// @param prev Previous point
-    /// @param curr Current point
-    /// @param nodeLayouts All node layouts
-    /// @return Pair of (safeY, success) where success indicates if valid Y was found
-    std::pair<float, bool> computeSafeY(
-        const Point& prev,
-        const Point& curr,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-        
-        float minSafeY = std::numeric_limits<float>::max();
-        float maxSafeY = std::numeric_limits<float>::lowest();
-        float minX = std::min(prev.x, curr.x);
-        float maxX = std::max(prev.x, curr.x);
-        
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            float nodeTop = nodeLayout.position.y;
-            float nodeBottom = nodeLayout.position.y + nodeLayout.size.height;
-            float nodeLeft = nodeLayout.position.x;
-            float nodeRight = nodeLayout.position.x + nodeLayout.size.width;
-            
-            // If node overlaps X range, we need to avoid its Y range
-            if (nodeRight > minX && nodeLeft < maxX) {
-                minSafeY = std::min(minSafeY, nodeTop);
-                maxSafeY = std::max(maxSafeY, nodeBottom);
-            }
-        }
-        
-        if (minSafeY == std::numeric_limits<float>::max()) {
-            return {0.0f, false};  // No blocking nodes
-        }
-        
-        // Choose safe Y: go above or below all blocking nodes
-        float distToAbove = std::abs(prev.y - (minSafeY - SAFE_MARGIN));
-        float distToBelow = std::abs(prev.y - (maxSafeY + SAFE_MARGIN));
-        
-        float safeY = (distToAbove < distToBelow) ? (minSafeY - SAFE_MARGIN) : (maxSafeY + SAFE_MARGIN);
-        return {safeY, true};
-    }
-    
-    /// Compute safe X coordinate for routing around blocking nodes
-    /// @param prev Previous point
-    /// @param curr Current point
-    /// @param nodeLayouts All node layouts
-    /// @return Pair of (safeX, success) where success indicates if valid X was found
-    std::pair<float, bool> computeSafeX(
-        const Point& prev,
-        const Point& curr,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-        
-        float minSafeX = std::numeric_limits<float>::max();
-        float maxSafeX = std::numeric_limits<float>::lowest();
-        float minY = std::min(prev.y, curr.y);
-        float maxY = std::max(prev.y, curr.y);
-        
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            float nodeLeft = nodeLayout.position.x;
-            float nodeRight = nodeLayout.position.x + nodeLayout.size.width;
-            float nodeTop = nodeLayout.position.y;
-            float nodeBottom = nodeLayout.position.y + nodeLayout.size.height;
-            
-            // If node overlaps Y range, we need to avoid its X range
-            if (nodeBottom > minY && nodeTop < maxY) {
-                minSafeX = std::min(minSafeX, nodeLeft);
-                maxSafeX = std::max(maxSafeX, nodeRight);
-            }
-        }
-        
-        if (minSafeX == std::numeric_limits<float>::max()) {
-            return {0.0f, false};  // No blocking nodes
-        }
-        
-        float distToLeft = std::abs(prev.x - (minSafeX - SAFE_MARGIN));
-        float distToRight = std::abs(prev.x - (maxSafeX + SAFE_MARGIN));
-        
-        float safeX = (distToLeft < distToRight) ? (minSafeX - SAFE_MARGIN) : (maxSafeX + SAFE_MARGIN);
-        return {safeX, true};
-    }
-    
-    /// Get ranges of existing segments at a given coordinate
-    /// For horizontal segments at Y, returns X ranges
-    /// For vertical segments at X, returns Y ranges
-    std::vector<std::pair<float, float>> getSegmentRanges(
-        const std::vector<Point>& points,
-        float coord,
-        bool horizontal) {
-        std::vector<std::pair<float, float>> ranges;
-        for (size_t j = 1; j < points.size(); ++j) {
-            const Point& p1 = points[j - 1];
-            const Point& p2 = points[j];
-            if (horizontal) {
-                // Looking for horizontal segments at Y=coord
-                if (std::abs(p1.y - p2.y) < EPSILON && std::abs(p1.y - coord) < EPSILON) {
-                    ranges.push_back({std::min(p1.x, p2.x), std::max(p1.x, p2.x)});
-                }
-            } else {
-                // Looking for vertical segments at X=coord
-                if (std::abs(p1.x - p2.x) < EPSILON && std::abs(p1.x - coord) < EPSILON) {
-                    ranges.push_back({std::min(p1.y, p2.y), std::max(p1.y, p2.y)});
-                }
-            }
-        }
-        return ranges;
-    }
-    
-    /// Check if a range overlaps with any of the given ranges
-    bool rangesOverlap(const std::vector<std::pair<float, float>>& ranges, float minVal, float maxVal) {
-        for (const auto& range : ranges) {
-            if (std::max(minVal, range.first) < std::min(maxVal, range.second) - EPSILON) {
-                return true;
-            }
-        }
-        return false;
-    }
-    
-    /// Find a safe coordinate that doesn't overlap with existing segments
-    float findSafeCoordinate(
-        const std::vector<Point>& points,
-        float preferredCoord,
-        float rangeMin,
-        float rangeMax,
-        bool horizontal) {
-        
-        auto ranges = getSegmentRanges(points, preferredCoord, horizontal);
-        if (ranges.empty()) return preferredCoord;
-        
-        if (!rangesOverlap(ranges, rangeMin, rangeMax)) return preferredCoord;
-        
-        // Try shifting away from existing segments
-        float rightCoord = preferredCoord + SAFE_MARGIN;
-        float leftCoord = preferredCoord - SAFE_MARGIN;
-        
-        for (int attempt = 0; attempt < 10; ++attempt) {
-            auto rightRanges = getSegmentRanges(points, rightCoord, horizontal);
-            if (!rangesOverlap(rightRanges, rangeMin, rangeMax)) return rightCoord;
-            
-            auto leftRanges = getSegmentRanges(points, leftCoord, horizontal);
-            if (!rangesOverlap(leftRanges, rangeMin, rangeMax)) return leftCoord;
-            
-            rightCoord += SAFE_MARGIN;
-            leftCoord -= SAFE_MARGIN;
-        }
-        
-        return preferredCoord;
-    }
-    
-    /// Check if a proposed segment would overlap with existing path segments
-    /// @param points The path points to check against
-    /// @param newP1 Start of proposed segment
-    /// @param newP2 End of proposed segment
-    /// @param skipSegmentIdx Index of segment to skip (the one being replaced)
-    /// @return True if overlap detected
-    bool wouldSegmentsOverlap(
-        const std::vector<Point>& points,
-        const Point& newP1,
-        const Point& newP2,
-        int skipSegmentIdx) {
-        
-        bool newIsVertical = std::abs(newP1.x - newP2.x) < EPSILON;
-        bool newIsHorizontal = std::abs(newP1.y - newP2.y) < EPSILON;
-        
-        for (int j = 1; j < static_cast<int>(points.size()); ++j) {
-            if (j == skipSegmentIdx) continue;
-            
-            const Point& existP1 = points[j - 1];
-            const Point& existP2 = points[j];
-            
-            bool existIsVertical = std::abs(existP1.x - existP2.x) < EPSILON;
-            bool existIsHorizontal = std::abs(existP1.y - existP2.y) < EPSILON;
-            
-            // Check if both segments are on the same vertical line
-            if (newIsVertical && existIsVertical && std::abs(newP1.x - existP1.x) < EPSILON) {
-                float newMin = std::min(newP1.y, newP2.y);
-                float newMax = std::max(newP1.y, newP2.y);
-                float existMin = std::min(existP1.y, existP2.y);
-                float existMax = std::max(existP1.y, existP2.y);
-                
-                float overlapStart = std::max(newMin, existMin);
-                float overlapEnd = std::min(newMax, existMax);
-                if (overlapEnd - overlapStart > EPSILON) {
-                    return true;
-                }
-            }
-            
-            // Check if both segments are on the same horizontal line
-            if (newIsHorizontal && existIsHorizontal && std::abs(newP1.y - existP1.y) < EPSILON) {
-                float newMin = std::min(newP1.x, newP2.x);
-                float newMax = std::max(newP1.x, newP2.x);
-                float existMin = std::min(existP1.x, existP2.x);
-                float existMax = std::max(existP1.x, existP2.x);
-                
-                float overlapStart = std::max(newMin, existMin);
-                float overlapEnd = std::min(newMax, existMax);
-                if (overlapEnd - overlapStart > EPSILON) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-    
-    /// Check if an avoidance path around a blocking node would intersect any nodes
-    /// @param p1 Start point of original segment
-    /// @param p2 End point of original segment
-    /// @param avoidCoord The coordinate to route around (X for vertical segments, Y for horizontal)
-    /// @param isVerticalSegment True if original segment is vertical (needs horizontal avoidance)
-    /// @param nodeLayouts All node layouts to check against
-    /// @return True if avoidance path is clear (no intersections)
-    bool checkAvoidancePathClear(
-        const Point& p1,
-        const Point& p2,
-        float avoidCoord,
-        bool isVerticalSegment,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-        
-        Point seg1Start, seg1End, seg2Start, seg2End, seg3Start, seg3End;
-        
-        if (isVerticalSegment) {
-            // Vertical segment: create horizontal-vertical-horizontal path
-            seg1Start = p1;
-            seg1End = {avoidCoord, p1.y};
-            seg2Start = {avoidCoord, p1.y};
-            seg2End = {avoidCoord, p2.y};
-            seg3Start = {avoidCoord, p2.y};
-            seg3End = p2;
-        } else {
-            // Horizontal segment: create vertical-horizontal-vertical path
-            seg1Start = p1;
-            seg1End = {p1.x, avoidCoord};
-            seg2Start = {p1.x, avoidCoord};
-            seg2End = {p2.x, avoidCoord};
-            seg3Start = {p2.x, avoidCoord};
-            seg3End = p2;
-        }
-        
-        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-            if (EdgeRouting::segmentIntersectsNode(seg1Start, seg1End, nodeLayout) ||
-                EdgeRouting::segmentIntersectsNode(seg2Start, seg2End, nodeLayout) ||
-                EdgeRouting::segmentIntersectsNode(seg3Start, seg3End, nodeLayout)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    
-    /// Calculate safe coordinate for rerouting around a node
-    /// @param nodeMin Minimum bound of node (left or top)
-    /// @param nodeMax Maximum bound of node (right or bottom)
-    /// @param referenceCoord Reference coordinate to decide which side to go
-    /// @param goToMin True to go toward min side, false to go toward max side
-    /// @param gridSize Grid cell size for grid-aligned offsets
-    float calculateSafeCoordinate(float nodeMin, float nodeMax, float referenceCoord, bool goToMin, float gridSize = 0.0f) {
-        float nodeCenter = (nodeMin + nodeMax) / 2;
-        float rerouteMargin = getRerouteMargin(gridSize);
-        if (goToMin || referenceCoord < nodeCenter) {
-            return nodeMin - rerouteMargin;
-        } else {
-            return nodeMax + rerouteMargin;
-        }
-    }
-    
-    /// Insert reroute points at the beginning of path (after source point)
-    /// Used when source exit direction is wrong
-    void insertSourceReroutePoints(
-        std::vector<Point>& points,
-        const Point& p1,
-        const Point& p2,
-        const Point& p3) {
-        points.insert(points.begin() + 1, p3);
-        points.insert(points.begin() + 1, p2);
-        points.insert(points.begin() + 1, p1);
-    }
-    
-    /// Insert reroute points at the end of path (before target point)
-    /// Used when target entry direction is wrong
-    void insertTargetReroutePoints(
-        std::vector<Point>& points,
-        const Point& p1,
-        const Point& p2,
-        const Point& p3) {
-        points.insert(points.end() - 1, p3);
-        points.insert(points.end() - 2, p2);
-        points.insert(points.end() - 3, p1);
-    }
-    
-    /// Correct source exit direction when orientation is wrong
-    /// @param points Path points to modify
-    /// @param sourceEdge Which edge of source node
-    /// @param gridSize Grid cell size for grid-aligned offsets
-    void correctSourceOrientation(
-        std::vector<Point>& points,
-        NodeEdge sourceEdge,
-        float gridSize = 0.0f) {
-        
-        if (points.size() < 2) return;
-        
-        const Point& srcPt = points[0];
-        const Point& firstBend = points[1];
-        
-        bool needsVertical = needsVerticalSegment(sourceEdge);
-        bool isVertical = isVerticalSegment(srcPt, firstBend);
-        float dirOffset = getDirectionOffset(gridSize);
-        
-        if (needsVertical && !isVertical) {
-            // Need to insert a vertical segment before the horizontal one
-            float newY = (sourceEdge == NodeEdge::Top) ?
-                         (srcPt.y - dirOffset) : (srcPt.y + dirOffset);
-            Point newBend1 = {srcPt.x, newY};
-            Point newBend2 = {firstBend.x, newY};
-            points.insert(points.begin() + 1, newBend2);
-            points.insert(points.begin() + 1, newBend1);
-        } else if (!needsVertical && isVertical) {
-            // Need to insert a horizontal segment before the vertical one
-            float newX = (sourceEdge == NodeEdge::Left) ?
-                         (srcPt.x - dirOffset) : (srcPt.x + dirOffset);
-            Point newBend1 = {newX, srcPt.y};
-            Point newBend2 = {newX, firstBend.y};
-            points.insert(points.begin() + 1, newBend2);
-            points.insert(points.begin() + 1, newBend1);
-        }
-    }
-    
-    /// Correct source exit direction when direction is wrong (correct orientation but wrong direction)
-    /// @param points Path points to modify
-    /// @param sourceEdge Which edge of source node
-    /// @param sourceNode Layout of source node
-    /// @param gridSize Grid cell size for grid-aligned offsets
-    void correctSourceDirection(
-        std::vector<Point>& points,
-        NodeEdge sourceEdge,
-        const NodeLayout& sourceNode,
-        float gridSize = 0.0f) {
-        
-        if (points.size() < 2) return;
-        
-        const Point& srcPt = points[0];
-        const Point& firstBend = points[1];
-        float dx = firstBend.x - srcPt.x;
-        float dy = firstBend.y - srcPt.y;
-        
-        bool needsVertical = needsVerticalSegment(sourceEdge);
-        bool isVertical = isVerticalSegment(srcPt, firstBend);
-        
-        // Only handle case where orientation is correct but direction is wrong
-        if (needsVertical != isVertical) return;
-        
-        float nodeTop = sourceNode.position.y;
-        float nodeBottom = sourceNode.position.y + sourceNode.size.height;
-        float nodeLeft = sourceNode.position.x;
-        float nodeRight = sourceNode.position.x + sourceNode.size.width;
-        float rerouteMargin = getRerouteMargin(gridSize);
-        
-        if (needsVertical) {
-            // Check vertical direction: Top -> up (dy < 0), Bottom -> down (dy > 0)
-            bool directionCorrect = (sourceEdge == NodeEdge::Top) ?
-                                    (dy < -EPSILON) : (dy > EPSILON);
-            if (directionCorrect) return;
-            
-            float safeY = (sourceEdge == NodeEdge::Top) ?
-                          (nodeTop - rerouteMargin) : (nodeBottom + rerouteMargin);
-            float safeX = calculateSafeCoordinate(nodeLeft, nodeRight, firstBend.x, false, gridSize);
-            
-            insertSourceReroutePoints(points,
-                {srcPt.x, safeY},
-                {safeX, safeY},
-                {safeX, firstBend.y});
-        } else {
-            // Check horizontal direction: Left -> left (dx < 0), Right -> right (dx > 0)
-            bool directionCorrect = (sourceEdge == NodeEdge::Left) ?
-                                    (dx < -EPSILON) : (dx > EPSILON);
-            if (directionCorrect) return;
-            
-            float safeX = (sourceEdge == NodeEdge::Left) ?
-                          (nodeLeft - rerouteMargin) : (nodeRight + rerouteMargin);
-            float safeY = calculateSafeCoordinate(nodeTop, nodeBottom, firstBend.y, false, gridSize);
-            
-            insertSourceReroutePoints(points,
-                {safeX, srcPt.y},
-                {safeX, safeY},
-                {firstBend.x, safeY});
-        }
-    }
-    
-    /// Correct target entry direction when orientation is wrong
-    /// @param points Path points to modify
-    /// @param targetEdge Which edge of target node
-    /// @param gridSize Grid cell size for grid-aligned offsets
-    void correctTargetOrientation(
-        std::vector<Point>& points,
-        NodeEdge targetEdge,
-        float gridSize = 0.0f) {
-        
-        if (points.size() < 2) return;
-        
-        size_t lastIdx = points.size() - 1;
-        const Point& lastBend = points[lastIdx - 1];
-        const Point& tgtPt = points[lastIdx];
-        
-        bool needsVertical = needsVerticalSegment(targetEdge);
-        bool isVertical = isVerticalSegment(lastBend, tgtPt);
-        float dirOffset = getDirectionOffset(gridSize);
-        
-        if (needsVertical && !isVertical) {
-            // Need to insert bend points to make last segment vertical
-            float newY = (targetEdge == NodeEdge::Top) ?
-                         (tgtPt.y - dirOffset) : (tgtPt.y + dirOffset);
-            Point newBend1 = {lastBend.x, newY};
-            Point newBend2 = {tgtPt.x, newY};
-            points[lastIdx - 1] = newBend1;
-            points.insert(points.end() - 1, newBend2);
-        } else if (!needsVertical && isVertical) {
-            // Need to insert bend points to make last segment horizontal
-            float newX = (targetEdge == NodeEdge::Left) ?
-                         (tgtPt.x - dirOffset) : (tgtPt.x + dirOffset);
-            Point newBend1 = {newX, lastBend.y};
-            Point newBend2 = {newX, tgtPt.y};
-            points[lastIdx - 1] = newBend1;
-            points.insert(points.end() - 1, newBend2);
-        }
-    }
-    
-    /// Correct target entry direction when direction is wrong (correct orientation but wrong direction)
-    /// @param points Path points to modify
-    /// @param targetEdge Which edge of target node
-    /// @param targetNode Layout of target node
-    /// @param gridSize Grid cell size for grid-aligned offsets
-    void correctTargetDirection(
-        std::vector<Point>& points,
-        NodeEdge targetEdge,
-        const NodeLayout& targetNode,
-        float gridSize = 0.0f) {
-        
-        if (points.size() < 2) return;
-        
-        size_t lastIdx = points.size() - 1;
-        const Point& lastBend = points[lastIdx - 1];
-        const Point& tgtPt = points[lastIdx];
-        float dx = tgtPt.x - lastBend.x;
-        float dy = tgtPt.y - lastBend.y;
-        
-        bool needsVertical = needsVerticalSegment(targetEdge);
-        bool isVertical = isVerticalSegment(lastBend, tgtPt);
-        
-        // Only handle case where orientation is correct but direction is wrong
-        if (needsVertical != isVertical) return;
-        
-        float nodeTop = targetNode.position.y;
-        float nodeBottom = targetNode.position.y + targetNode.size.height;
-        float nodeLeft = targetNode.position.x;
-        float nodeRight = targetNode.position.x + targetNode.size.width;
-        float rerouteMargin = getRerouteMargin(gridSize);
-        
-        if (needsVertical) {
-            // Check vertical direction: Top -> down (dy > 0), Bottom -> up (dy < 0)
-            bool directionCorrect = (targetEdge == NodeEdge::Top) ?
-                                    (dy > EPSILON) : (dy < -EPSILON);
-            if (directionCorrect) return;
-            
-            float safeY = (targetEdge == NodeEdge::Top) ?
-                          (nodeTop - rerouteMargin) : (nodeBottom + rerouteMargin);
-            float safeX = calculateSafeCoordinate(nodeLeft, nodeRight, lastBend.x, false, gridSize);
-            
-            insertTargetReroutePoints(points,
-                {safeX, lastBend.y},
-                {safeX, safeY},
-                {tgtPt.x, safeY});
-        } else {
-            // Check horizontal direction: Left -> right (dx > 0), Right -> left (dx < 0)
-            bool directionCorrect = (targetEdge == NodeEdge::Left) ?
-                                    (dx > EPSILON) : (dx < -EPSILON);
-            if (directionCorrect) return;
-            
-            float safeX = (targetEdge == NodeEdge::Left) ?
-                          (nodeLeft - rerouteMargin) : (nodeRight + rerouteMargin);
-            float safeY = calculateSafeCoordinate(nodeTop, nodeBottom, lastBend.y, false, gridSize);
-            
-            insertTargetReroutePoints(points,
-                {lastBend.x, safeY},
-                {safeX, safeY},
-                {safeX, tgtPt.y});
-        }
-    }
+
 }
 
 // =============================================================================
@@ -1321,484 +489,13 @@ Point EdgeRouting::calculateSnapPosition(const NodeLayout& node, NodeEdge edge, 
     return LayoutUtils::calculateSnapPointFromPosition(node, edge, position);
 }
 
-float EdgeRouting::calculateRelativePosition(int snapIdx, int count, float rangeStart, float rangeEnd) {
-    // Delegate to SnapIndexManager for centralized logic
-    SnapRange range{rangeStart, rangeEnd};
-    return SnapIndexManager::calculatePosition(snapIdx, count, range);
-}
-
 int EdgeRouting::unifiedToLocalIndex(int unifiedIdx, int offset, int count) {
     // Delegate to SnapIndexManager for centralized logic
     return SnapIndexManager::unifiedToLocal(unifiedIdx, offset, count);
 }
 
 // =============================================================================
-// recalculateBendPoints Helper Methods (SRP Decomposition)
-// =============================================================================
-
-void EdgeRouting::performChannelBasedRouting(
-    EdgeLayout& layout,
-    bool isHorizontal,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
-
-    float effectiveGridSize = getEffectiveGridSize(gridSize);
-
-    AxisConfig axis{isHorizontal};
-
-    // Convert all coordinates to grid units at the start
-    int gridChannel = axis.toGrid(layout.channelY, effectiveGridSize);
-    int gridSrcPrimary = axis.primaryGrid(layout.sourcePoint, effectiveGridSize);
-    int gridTgtPrimary = axis.primaryGrid(layout.targetPoint, effectiveGridSize);
-    int gridSrcSecondary = axis.secondaryGrid(layout.sourcePoint, effectiveGridSize);
-    int gridTgtSecondary = axis.secondaryGrid(layout.targetPoint, effectiveGridSize);
-
-    // Calculate perpendicular offset in grid units
-    // When grid is disabled (effectiveGridSize = 1.0f), this ensures minimum pixel clearance
-    int gridOffset = static_cast<int>(std::ceil(MIN_PERPENDICULAR_OFFSET / effectiveGridSize));
-
-    // Apply directional constraints in grid units
-    int gridSourceConstraint = applyDirectionalConstraintGrid(gridChannel, gridSrcPrimary, layout.sourceEdge, gridOffset);
-    int gridTargetConstraint = applyDirectionalConstraintGrid(gridChannel, gridTgtPrimary, layout.targetEdge, gridOffset);
-
-    bool sourceIsLowerBound = axis.isLowerBound(layout.sourceEdge);
-    bool targetIsLowerBound = axis.isLowerBound(layout.targetEdge);
-
-    if (sourceIsLowerBound == targetIsLowerBound) {
-        routeSameBoundCaseGrid(layout, gridSourceConstraint, gridTargetConstraint,
-                               gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
-    } else {
-        int gridLowerBound = sourceIsLowerBound ? gridSourceConstraint : gridTargetConstraint;
-        int gridUpperBound = sourceIsLowerBound ? gridTargetConstraint : gridSourceConstraint;
-
-        if (gridLowerBound <= gridUpperBound) {
-            routeCompatibleBoundsCaseGrid(layout, gridLowerBound, gridUpperBound,
-                                          gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
-        } else {
-            routeConflictingBoundsCaseGrid(layout, gridLowerBound, gridUpperBound,
-                                           gridSrcSecondary, gridTgtSecondary, gridTgtPrimary,
-                                           axis, nodeLayouts, effectiveGridSize);
-        }
-    }
-}
-
-void EdgeRouting::performFallbackRouting(
-    EdgeLayout& layout,
-    bool isHorizontal,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
-
-    float effectiveGridSize = getEffectiveGridSize(gridSize);
-
-    AxisConfig axis{isHorizontal};
-
-    // Convert all coordinates to grid units at the start
-    int gridSrcPrimary = axis.primaryGrid(layout.sourcePoint, effectiveGridSize);
-    int gridTgtPrimary = axis.primaryGrid(layout.targetPoint, effectiveGridSize);
-    int gridSrcSecondary = axis.secondaryGrid(layout.sourcePoint, effectiveGridSize);
-    int gridTgtSecondary = axis.secondaryGrid(layout.targetPoint, effectiveGridSize);
-
-    // Calculate midpoint in grid units (integer division preserves alignment)
-    int gridMid = (gridSrcPrimary + gridTgtPrimary) / 2;
-
-    // Calculate perpendicular offset in grid units
-    // When grid is disabled (effectiveGridSize = 1.0f), this ensures minimum pixel clearance
-    int gridOffset = static_cast<int>(std::ceil(MIN_PERPENDICULAR_OFFSET / effectiveGridSize));
-
-    // Apply directional constraints in grid units
-    int gridSourceConstraint = applyDirectionalConstraintGrid(gridMid, gridSrcPrimary, layout.sourceEdge, gridOffset);
-    int gridTargetConstraint = applyDirectionalConstraintGrid(gridMid, gridTgtPrimary, layout.targetEdge, gridOffset);
-
-    routeSameBoundCaseGrid(layout, gridSourceConstraint, gridTargetConstraint,
-                           gridSrcSecondary, gridTgtSecondary, axis, nodeLayouts, effectiveGridSize);
-}
-
-void EdgeRouting::moveIntermediatePointsOutsideNodes(
-    std::vector<Point>& allPoints,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
-
-    (void)gridSize;  // Reserved for future grid-aligned movement
-    for (size_t idx = 1; idx + 1 < allPoints.size(); ++idx) {
-        Point& pt = allPoints[idx];
-        const NodeLayout* blockingNode = findBlockingNode(pt, nodeLayouts);
-        if (blockingNode) {
-            movePointOutsideNode(pt, *blockingNode, gridSize);
-        }
-    }
-}
-
-void EdgeRouting::fixNonOrthogonalSegments(
-    std::vector<Point>& allPoints,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-
-    for (size_t idx = 1; idx < allPoints.size(); ++idx) {
-        const Point& prev = allPoints[idx - 1];
-        Point& curr = allPoints[idx];
-
-        bool isHoriz = std::abs(prev.y - curr.y) < EPSILON;
-        bool isVert = std::abs(prev.x - curr.x) < EPSILON;
-
-        if (!isHoriz && !isVert) {
-            // Non-orthogonal segment - try simple orthogonal intermediates first
-            auto simpleIntermediate = findSimpleOrthogonalIntermediate(prev, curr, nodeLayouts);
-
-            if (simpleIntermediate) {
-                allPoints.insert(allPoints.begin() + idx, *simpleIntermediate);
-                idx++;
-            } else {
-                // Both simple options inside nodes - try Y-based routing
-                auto [safeY, foundY] = computeSafeY(prev, curr, nodeLayouts);
-
-                if (foundY) {
-                    Point pt1 = {prev.x, safeY};
-                    Point pt2 = {curr.x, safeY};
-
-                    if (!findBlockingNode(pt1, nodeLayouts) && !findBlockingNode(pt2, nodeLayouts)) {
-                        allPoints.insert(allPoints.begin() + idx, pt2);
-                        allPoints.insert(allPoints.begin() + idx, pt1);
-                        idx += 2;
-                        continue;
-                    }
-                }
-
-                // Last resort: try X-based routing
-                auto [safeX, foundX] = computeSafeX(prev, curr, nodeLayouts);
-                (void)foundX;  // Always use the result
-                Point ptA = {safeX, prev.y};
-                Point ptB = {safeX, curr.y};
-
-                allPoints.insert(allPoints.begin() + idx, ptB);
-                allPoints.insert(allPoints.begin() + idx, ptA);
-                idx += 2;
-            }
-        }
-    }
-}
-
-void EdgeRouting::fixSegmentNodeIntersections(
-    std::vector<Point>& allPoints,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
-
-    for (int pass = 0; pass < MAX_FIX_PASSES && allPoints.size() < MAX_PATH_POINTS; ++pass) {
-        bool foundIntersection = false;
-
-        for (int i = 1; i < static_cast<int>(allPoints.size()); ++i) {
-            const Point p1 = allPoints[i - 1];
-            const Point p2 = allPoints[i];
-
-            NodeLayout blockingNode = nodeLayouts.begin()->second;
-            bool segmentHasIntersection = false;
-
-            for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                if (segmentIntersectsNode(p1, p2, nodeLayout)) {
-                    blockingNode = nodeLayout;
-                    segmentHasIntersection = true;
-                    break;
-                }
-            }
-
-            if (segmentHasIntersection) {
-                bool isVerticalSeg = std::abs(p1.x - p2.x) < 0.1f;
-
-                // Get target point to determine optimal avoidance direction
-                const Point& targetPoint = allPoints.back();
-
-                if (isVerticalSeg) {
-                    // Vertical segment: go around horizontally
-                    // Calculate both avoidance coordinates and pick the one closer to target
-                    float avoidXRight = calculateAvoidanceCoordinate(
-                        blockingNode.position.x,
-                        blockingNode.position.x + blockingNode.size.width,
-                        true, gridSize);
-                    float avoidXLeft = calculateAvoidanceCoordinate(
-                        blockingNode.position.x,
-                        blockingNode.position.x + blockingNode.size.width,
-                        false, gridSize);
-
-                    // Prefer the direction that results in less total distance to target
-                    float distRight = std::abs(avoidXRight - targetPoint.x);
-                    float distLeft = std::abs(avoidXLeft - targetPoint.x);
-                    bool preferRight = distRight <= distLeft;
-
-                    float avoidXFirst = preferRight ? avoidXRight : avoidXLeft;
-                    float avoidXSecond = preferRight ? avoidXLeft : avoidXRight;
-
-                    float avoidX = avoidXFirst;
-                    bool firstWorks = checkAvoidancePathClear(p1, p2, avoidX, true, nodeLayouts);
-
-                    if (!firstWorks) {
-                        avoidX = avoidXSecond;
-
-                        if (!checkAvoidancePathClear(p1, p2, avoidX, true, nodeLayouts)) {
-                            // 4-point path around the node
-                            float safeY = calculateAvoidanceCoordinate(
-                                blockingNode.position.y,
-                                blockingNode.position.y + blockingNode.size.height,
-                                p1.y < blockingNode.position.y, gridSize);
-
-                            float safeX = calculateAvoidanceCoordinate(
-                                blockingNode.position.x,
-                                blockingNode.position.x + blockingNode.size.width,
-                                true, gridSize);
-
-                            Point newPt1 = {safeX, p1.y};
-                            Point newPt2 = {safeX, safeY};
-                            Point newPt3 = {p2.x, safeY};
-
-                            bool wouldOverlap =
-                                wouldSegmentsOverlap(allPoints, p1, newPt1, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt1, newPt2, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt2, newPt3, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt3, p2, i);
-
-                            if (!wouldOverlap) {
-                                allPoints.insert(allPoints.begin() + i, {newPt1});
-                                allPoints.insert(allPoints.begin() + i + 1, {newPt2});
-                                allPoints.insert(allPoints.begin() + i + 2, {newPt3});
-                                foundIntersection = true;
-                            }
-                            break;
-                        }
-                    }
-
-                    float safeAvoidX = findSafeCoordinate(allPoints, avoidX, std::min(p1.y, p2.y), std::max(p1.y, p2.y), false);
-
-                    bool safeXAvoidsNode = (safeAvoidX > blockingNode.position.x + blockingNode.size.width + SAFE_TOLERANCE) ||
-                                           (safeAvoidX < blockingNode.position.x - SAFE_TOLERANCE);
-
-                    if (safeXAvoidsNode) {
-                        Point newPtA = {safeAvoidX, p1.y};
-                        Point newPtB = {safeAvoidX, p2.y};
-
-                        bool segmentsOk = true;
-                        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                            if (segmentIntersectsNode(p1, newPtA, nodeLayout) ||
-                                segmentIntersectsNode(newPtA, newPtB, nodeLayout) ||
-                                segmentIntersectsNode(newPtB, p2, nodeLayout)) {
-                                segmentsOk = false;
-                                break;
-                            }
-                        }
-
-                        if (segmentsOk) {
-                            allPoints.insert(allPoints.begin() + i, {newPtA});
-                            allPoints.insert(allPoints.begin() + i + 1, {newPtB});
-                            foundIntersection = true;
-                        }
-                    }
-                } else {
-                    // Horizontal segment: go around vertically
-                    // Calculate both avoidance coordinates and pick the one closer to target
-                    float avoidYDown = calculateAvoidanceCoordinate(
-                        blockingNode.position.y,
-                        blockingNode.position.y + blockingNode.size.height,
-                        true, gridSize);
-                    float avoidYUp = calculateAvoidanceCoordinate(
-                        blockingNode.position.y,
-                        blockingNode.position.y + blockingNode.size.height,
-                        false, gridSize);
-
-                    // Prefer the direction that results in less total distance to target
-                    float distDown = std::abs(avoidYDown - targetPoint.y);
-                    float distUp = std::abs(avoidYUp - targetPoint.y);
-                    bool preferDown = distDown <= distUp;
-
-                    float avoidYFirst = preferDown ? avoidYDown : avoidYUp;
-                    float avoidYSecond = preferDown ? avoidYUp : avoidYDown;
-
-                    float avoidY = avoidYFirst;
-                    bool firstWorks = checkAvoidancePathClear(p1, p2, avoidY, false, nodeLayouts);
-
-                    if (!firstWorks) {
-                        avoidY = avoidYSecond;
-
-                        if (!checkAvoidancePathClear(p1, p2, avoidY, false, nodeLayouts)) {
-                            float avoidX = calculateAvoidanceCoordinate(
-                                blockingNode.position.x,
-                                blockingNode.position.x + blockingNode.size.width,
-                                p1.x < blockingNode.position.x, gridSize);
-
-                            float safeY = calculateAvoidanceCoordinate(
-                                blockingNode.position.y,
-                                blockingNode.position.y + blockingNode.size.height,
-                                true, gridSize);
-
-                            Point newPt1 = {p1.x, safeY};
-                            Point newPt2 = {avoidX, safeY};
-                            Point newPt3 = {avoidX, p2.y};
-
-                            bool wouldOverlap =
-                                wouldSegmentsOverlap(allPoints, p1, newPt1, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt1, newPt2, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt2, newPt3, i) ||
-                                wouldSegmentsOverlap(allPoints, newPt3, p2, i);
-
-                            if (!wouldOverlap) {
-                                allPoints.insert(allPoints.begin() + i, {newPt1});
-                                allPoints.insert(allPoints.begin() + i + 1, {newPt2});
-                                allPoints.insert(allPoints.begin() + i + 2, {newPt3});
-                                foundIntersection = true;
-                            }
-                            break;
-                        }
-                    }
-
-                    float safeAvoidY = findSafeCoordinate(allPoints, avoidY, std::min(p1.x, p2.x), std::max(p1.x, p2.x), true);
-
-                    bool safeYAvoidsNode = (safeAvoidY > blockingNode.position.y + blockingNode.size.height + SAFE_TOLERANCE) ||
-                                           (safeYAvoidsNode < blockingNode.position.y - SAFE_TOLERANCE);
-
-                    if (safeYAvoidsNode) {
-                        Point newPtA = {p1.x, safeAvoidY};
-                        Point newPtB = {p2.x, safeAvoidY};
-
-                        bool segmentsOk = true;
-                        for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                            if (segmentIntersectsNode(p1, newPtA, nodeLayout) ||
-                                segmentIntersectsNode(newPtA, newPtB, nodeLayout) ||
-                                segmentIntersectsNode(newPtB, p2, nodeLayout)) {
-                                segmentsOk = false;
-                                break;
-                            }
-                        }
-
-                        if (segmentsOk) {
-                            allPoints.insert(allPoints.begin() + i, {newPtA});
-                            allPoints.insert(allPoints.begin() + i + 1, {newPtB});
-                            foundIntersection = true;
-                        }
-                    }
-                }
-
-                if (foundIntersection) {
-                    break;
-                }
-            }
-        }
-
-        if (!foundIntersection) break;
-    }
-}
-
-void EdgeRouting::fixIntermediateNodeIntersections(
-    std::vector<Point>& allPoints,
-    const EdgeLayout& layout,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-
-    for (int maxIter = 0; maxIter < 10; ++maxIter) {
-        bool foundNodeIntersection = false;
-
-        for (size_t i = 0; i + 1 < allPoints.size() && !foundNodeIntersection; ++i) {
-            const Point& p1 = allPoints[i];
-            const Point& p2 = allPoints[i + 1];
-
-            bool isHoriz = std::abs(p1.y - p2.y) < EPSILON;
-            bool isVert = std::abs(p1.x - p2.x) < EPSILON;
-
-            for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-                if (i == 0 && nodeId == layout.from) continue;
-                if (i == allPoints.size() - 2 && nodeId == layout.to) continue;
-
-                float nodeXmin = nodeLayout.position.x;
-                float nodeXmax = nodeLayout.position.x + nodeLayout.size.width;
-                float nodeYmin = nodeLayout.position.y;
-                float nodeYmax = nodeLayout.position.y + nodeLayout.size.height;
-
-                bool intersects = false;
-
-                if (isVert) {
-                    float x = p1.x;
-                    float segYmin = std::min(p1.y, p2.y);
-                    float segYmax = std::max(p1.y, p2.y);
-                    intersects = (x > nodeXmin && x < nodeXmax && segYmin < nodeYmax && segYmax > nodeYmin);
-                } else if (isHoriz) {
-                    float y = p1.y;
-                    float segXmin = std::min(p1.x, p2.x);
-                    float segXmax = std::max(p1.x, p2.x);
-                    intersects = (y > nodeYmin && y < nodeYmax && segXmin < nodeXmax && segXmax > nodeXmin);
-                }
-
-                if (intersects) {
-                    if (isHoriz) {
-                        float safeY = (p1.y < nodeYmin) ? (nodeYmin - SAFE_MARGIN) : (nodeYmax + SAFE_MARGIN);
-                        bool fromLeft = (std::min(p1.x, p2.x) < nodeXmin);
-                        bool fromRight = (std::max(p1.x, p2.x) > nodeXmax);
-
-                        if (fromLeft && fromRight) {
-                            float avoidX1 = nodeXmin - SAFE_MARGIN;
-                            float avoidX2 = nodeXmax + SAFE_MARGIN;
-                            float detourX = (std::abs(p1.x - avoidX1) < std::abs(p1.x - avoidX2)) ? avoidX1 : avoidX2;
-
-                            Point newPt1 = {detourX, p1.y};
-                            Point newPt2 = {detourX, safeY};
-                            Point newPt3 = {p2.x, safeY};
-
-                            allPoints.insert(allPoints.begin() + i + 1, newPt3);
-                            allPoints.insert(allPoints.begin() + i + 1, newPt2);
-                            allPoints.insert(allPoints.begin() + i + 1, newPt1);
-                            foundNodeIntersection = true;
-                            break;
-                        }
-                    } else if (isVert) {
-                        float safeX = (p1.x < nodeXmin) ? (nodeXmin - SAFE_MARGIN) : (nodeXmax + SAFE_MARGIN);
-                        bool fromTop = (std::min(p1.y, p2.y) < nodeYmin);
-                        bool fromBottom = (std::max(p1.y, p2.y) > nodeYmax);
-
-                        if (fromTop && fromBottom) {
-                            float avoidY1 = nodeYmin - SAFE_MARGIN;
-                            float avoidY2 = nodeYmax + SAFE_MARGIN;
-                            float detourY = (std::abs(p1.y - avoidY1) < std::abs(p1.y - avoidY2)) ? avoidY1 : avoidY2;
-
-                            Point newPt1 = {p1.x, detourY};
-                            Point newPt2 = {safeX, detourY};
-                            Point newPt3 = {safeX, p2.y};
-
-                            allPoints.insert(allPoints.begin() + i + 1, newPt3);
-                            allPoints.insert(allPoints.begin() + i + 1, newPt2);
-                            allPoints.insert(allPoints.begin() + i + 1, newPt1);
-                            foundNodeIntersection = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!foundNodeIntersection) break;
-    }
-}
-
-void EdgeRouting::finalizeEdgePath(
-    std::vector<Point>& allPoints,
-    const EdgeLayout& layout,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
-
-    // Simplify path by removing spikes and duplicate points
-    removeSpikesAndDuplicates(allPoints);
-
-    // Correct source exit direction (orientation + direction)
-    correctSourceOrientation(allPoints, layout.sourceEdge, gridSize);
-    auto sourceIt = nodeLayouts.find(layout.from);
-    if (sourceIt != nodeLayouts.end()) {
-        correctSourceDirection(allPoints, layout.sourceEdge, sourceIt->second, gridSize);
-    }
-
-    // Correct target entry direction (orientation + direction)
-    correctTargetOrientation(allPoints, layout.targetEdge, gridSize);
-    auto targetIt = nodeLayouts.find(layout.to);
-    if (targetIt != nodeLayouts.end()) {
-        correctTargetDirection(allPoints, layout.targetEdge, targetIt->second, gridSize);
-    }
-
-    // Final cleanup: remove any spikes created during direction correction
-    removeSpikesAndDuplicates(allPoints);
-}
-
-// =============================================================================
-// Main recalculateBendPoints Method (Refactored)
+// Main recalculateBendPoints Method
 // =============================================================================
 
 void EdgeRouting::recalculateBendPoints(
@@ -1854,28 +551,181 @@ void EdgeRouting::recalculateBendPoints(
         return;  // Self-loops don't need further processing
     }
 
-    // Determine layout direction from source/target edges
-    bool isHorizontal = (layout.sourceEdge == NodeEdge::Right ||
-                         layout.sourceEdge == NodeEdge::Left);
+    // Use effective grid size for routing calculations
+    float effectiveGridSize = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
 
-    // Step 1: Initial routing based on channel or fallback
-    bool hasSignificantDistance =
-        std::abs(layout.sourcePoint.x - layout.targetPoint.x) > 1.0f ||
-        std::abs(layout.sourcePoint.y - layout.targetPoint.y) > 1.0f;
+    // Build obstacle map from node layouts
+    ObstacleMap obstacles;
+    obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);  // margin = 0 (no extra padding)
 
-    if (hasSignificantDistance) {
-        if (layout.channelY >= 0.0f) {
-            // Channel-based routing
-            performChannelBasedRouting(layout, isHorizontal, nodeLayouts, gridSize);
-        } else {
-            // Fallback routing for non-channel edges
-            performFallbackRouting(layout, isHorizontal, nodeLayouts, gridSize);
+    // Convert source/target points to grid coordinates
+    GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
+    GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
+
+    // Find additional nodes to exclude at start/goal cells
+    // These are nodes (other than source/target) that contain the source/target points
+    std::unordered_set<NodeId> extraStartExcludes;
+    std::unordered_set<NodeId> extraGoalExcludes;
+    
+    for (const auto& [nodeId, node] : nodeLayouts) {
+        if (nodeId == layout.from || nodeId == layout.to) continue;
+        
+        // Check if sourcePoint is inside this node
+        if (layout.sourcePoint.x >= node.position.x &&
+            layout.sourcePoint.x <= node.position.x + node.size.width &&
+            layout.sourcePoint.y >= node.position.y &&
+            layout.sourcePoint.y <= node.position.y + node.size.height) {
+            extraStartExcludes.insert(nodeId);
+        }
+        
+        // Check if targetPoint is inside this node
+        if (layout.targetPoint.x >= node.position.x &&
+            layout.targetPoint.x <= node.position.x + node.size.width &&
+            layout.targetPoint.y >= node.position.y &&
+            layout.targetPoint.y <= node.position.y + node.size.height) {
+            extraGoalExcludes.insert(nodeId);
         }
     }
 
-    // Step 2: Post-processing - validate and fix path
-    if (!nodeLayouts.empty() && !layout.bendPoints.empty()) {
-        // Build complete path from source through bends to target
+    // Use PathFinder with direction constraints:
+    // - sourceEdge constrains first move direction
+    // - targetEdge constrains arrival direction
+    // - sourceNode (layout.from) + extraStartExcludes excluded only at start cell
+    // - targetNode (layout.to) + extraGoalExcludes excluded only at goal cell
+    PathFinder pathFinder;
+    PathResult pathResult = pathFinder.findPath(startGrid, goalGrid, obstacles, 
+                                                 layout.from, layout.to,
+                                                 layout.sourceEdge, layout.targetEdge,
+                                                 extraStartExcludes, extraGoalExcludes);
+
+    if (pathResult.found && pathResult.path.size() >= 2) {
+        // Convert grid path to pixel bend points
+        // Skip first (source) and last (target) points - they're the endpoints
+        layout.bendPoints.clear();
+        for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
+            Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
+            layout.bendPoints.push_back({pixelPoint});
+        }
+    } else {
+        // PathFinder couldn't find a valid path.
+        // Create fallback path that avoids intermediate nodes.
+        layout.bendPoints.clear();
+        
+        bool sourceVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
+        bool targetVertical = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
+        
+        bool sourceGoesDown = (layout.sourceEdge == NodeEdge::Bottom);
+        bool targetEntersDown = (layout.targetEdge == NodeEdge::Top);
+        
+        bool isHorizontal = std::abs(layout.sourcePoint.y - layout.targetPoint.y) < 0.1f;
+        bool isVertical = std::abs(layout.sourcePoint.x - layout.targetPoint.x) < 0.1f;
+        
+        // Find intermediate nodes that might block the path
+        float minBlockingX = std::numeric_limits<float>::max();
+        float maxBlockingX = std::numeric_limits<float>::lowest();
+        bool hasBlockingNodes = false;
+        
+        float pathMinY = std::min(layout.sourcePoint.y, layout.targetPoint.y);
+        float pathMaxY = std::max(layout.sourcePoint.y, layout.targetPoint.y);
+        float pathMinX = std::min(layout.sourcePoint.x, layout.targetPoint.x);
+        float pathMaxX = std::max(layout.sourcePoint.x, layout.targetPoint.x);
+        
+        for (const auto& [nodeId, node] : nodeLayouts) {
+            if (nodeId == layout.from || nodeId == layout.to) continue;
+            
+            // Check if node is in the vertical path range
+            float nodeTop = node.position.y;
+            float nodeBottom = node.position.y + node.size.height;
+            float nodeLeft = node.position.x;
+            float nodeRight = node.position.x + node.size.width;
+            
+            // Node blocks path if it's between source and target Y-wise
+            // and overlaps with the X range of source or target
+            if (nodeBottom > pathMinY && nodeTop < pathMaxY) {
+                if (nodeRight > pathMinX - effectiveGridSize && nodeLeft < pathMaxX + effectiveGridSize) {
+                    hasBlockingNodes = true;
+                    minBlockingX = std::min(minBlockingX, nodeLeft);
+                    maxBlockingX = std::max(maxBlockingX, nodeRight);
+                }
+            }
+        }
+        
+        if (isHorizontal || isVertical) {
+            // Direct line - no bends needed if collinear
+        } else if (sourceVertical && targetVertical && hasBlockingNodes) {
+            // Route around blocking nodes
+            float bypassX;
+            float srcX = layout.sourcePoint.x;
+            float tgtX = layout.targetPoint.x;
+            float avgX = (srcX + tgtX) / 2.0f;
+            float centerBlocking = (minBlockingX + maxBlockingX) / 2.0f;
+            
+            // Choose which side to bypass
+            if (avgX < centerBlocking) {
+                bypassX = minBlockingX - effectiveGridSize;
+            } else {
+                bypassX = maxBlockingX + effectiveGridSize;
+            }
+            
+            if (effectiveGridSize > 0) {
+                bypassX = std::round(bypassX / effectiveGridSize) * effectiveGridSize;
+            }
+            
+            // Create bypass path with 4 bends
+            float exitY = layout.sourcePoint.y + (sourceGoesDown ? effectiveGridSize : -effectiveGridSize);
+            float entryY = layout.targetPoint.y + (targetEntersDown ? -effectiveGridSize : effectiveGridSize);
+            
+            if (effectiveGridSize > 0) {
+                exitY = std::round(exitY / effectiveGridSize) * effectiveGridSize;
+                entryY = std::round(entryY / effectiveGridSize) * effectiveGridSize;
+            }
+            
+            layout.bendPoints.push_back({{layout.sourcePoint.x, exitY}});
+            layout.bendPoints.push_back({{bypassX, exitY}});
+            layout.bendPoints.push_back({{bypassX, entryY}});
+            layout.bendPoints.push_back({{layout.targetPoint.x, entryY}});
+            
+        } else if (sourceVertical && targetVertical) {
+            // No blocking nodes - simple Z-path
+            float midY;
+            if (sourceGoesDown && targetEntersDown) {
+                midY = layout.targetPoint.y - effectiveGridSize;
+            } else {
+                midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
+            }
+            
+            if (effectiveGridSize > 0) {
+                midY = std::round(midY / effectiveGridSize) * effectiveGridSize;
+            }
+            
+            layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
+            layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+            
+        } else if (!sourceVertical && !targetVertical) {
+            // Both horizontal edges
+            float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
+            
+            if (effectiveGridSize > 0) {
+                midX = std::round(midX / effectiveGridSize) * effectiveGridSize;
+            }
+            
+            layout.bendPoints.push_back({{midX, layout.sourcePoint.y}});
+            layout.bendPoints.push_back({{midX, layout.targetPoint.y}});
+            
+        } else {
+            // Different orientations - simple L-path
+            Point corner;
+            if (sourceVertical) {
+                corner = {layout.sourcePoint.x, layout.targetPoint.y};
+            } else {
+                corner = {layout.targetPoint.x, layout.sourcePoint.y};
+            }
+            layout.bendPoints.push_back({corner});
+        }
+    }
+
+    // Cleanup: remove spikes and duplicates first
+    {
         std::vector<Point> allPoints;
         allPoints.push_back(layout.sourcePoint);
         for (const auto& bend : layout.bendPoints) {
@@ -1883,25 +733,68 @@ void EdgeRouting::recalculateBendPoints(
         }
         allPoints.push_back(layout.targetPoint);
 
-        // Step 2a: Move intermediate points outside nodes
-        moveIntermediatePointsOutsideNodes(allPoints, nodeLayouts, gridSize);
-
-        // Step 2b: Fix non-orthogonal segments
-        fixNonOrthogonalSegments(allPoints, nodeLayouts);
-
-        // Step 2c: Fix segments that intersect nodes
-        fixSegmentNodeIntersections(allPoints, nodeLayouts, gridSize);
-
-        // Step 2d: Final pass for intermediate node intersections
-        fixIntermediateNodeIntersections(allPoints, layout, nodeLayouts);
-
-        // Step 2e: Finalize path with direction corrections
-        finalizeEdgePath(allPoints, layout, nodeLayouts, gridSize);
+        // Clean up any spikes or duplicates
+        removeSpikesAndDuplicates(allPoints);
 
         // Reconstruct bendPoints from allPoints
         layout.bendPoints.clear();
         for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
             layout.bendPoints.push_back({allPoints[i]});
+        }
+    }
+
+    // Post-processing: ensure first bend has proper clearance from source
+    // This handles cases where PathFinder or fallback paths don't maintain direction clearance
+    // Also updates second bend to maintain orthogonality
+    if (!layout.bendPoints.empty()) {
+        Point& firstBend = layout.bendPoints[0].position;
+        float minClearance = std::max(effectiveGridSize, DEFAULT_GRID_SIZE);
+
+        switch (layout.sourceEdge) {
+            case NodeEdge::Top:
+                // First bend must be ABOVE source (smaller Y)
+                if (firstBend.y > layout.sourcePoint.y - minClearance) {
+                    float newY = layout.sourcePoint.y - minClearance;
+                    firstBend.y = newY;
+                    // Update second bend's Y to maintain horizontal segment
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.y = newY;
+                    }
+                }
+                break;
+            case NodeEdge::Bottom:
+                // First bend must be BELOW source (larger Y)
+                if (firstBend.y < layout.sourcePoint.y + minClearance) {
+                    float newY = layout.sourcePoint.y + minClearance;
+                    firstBend.y = newY;
+                    // Update second bend's Y to maintain horizontal segment
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.y = newY;
+                    }
+                }
+                break;
+            case NodeEdge::Left:
+                // First bend must be LEFT of source (smaller X)
+                if (firstBend.x > layout.sourcePoint.x - minClearance) {
+                    float newX = layout.sourcePoint.x - minClearance;
+                    firstBend.x = newX;
+                    // Update second bend's X to maintain vertical segment
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.x = newX;
+                    }
+                }
+                break;
+            case NodeEdge::Right:
+                // First bend must be RIGHT of source (larger X)
+                if (firstBend.x < layout.sourcePoint.x + minClearance) {
+                    float newX = layout.sourcePoint.x + minClearance;
+                    firstBend.x = newX;
+                    // Update second bend's X to maintain vertical segment
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.x = newX;
+                    }
+                }
+                break;
         }
     }
 }
@@ -1927,13 +820,14 @@ std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
 bool EdgeRouting::segmentIntersectsNode(
     const Point& p1,
     const Point& p2,
-    const NodeLayout& node) {
-    
-    
-    float nodeXmin = node.position.x;
-    float nodeXmax = node.position.x + node.size.width;
-    float nodeYmin = node.position.y;
-    float nodeYmax = node.position.y + node.size.height;
+    const NodeLayout& node,
+    float margin) {
+
+    // Expand node bounds by margin for proximity detection
+    float nodeXmin = node.position.x - margin;
+    float nodeXmax = node.position.x + node.size.width + margin;
+    float nodeYmin = node.position.y - margin;
+    float nodeYmax = node.position.y + node.size.height + margin;
     
     bool isHorizontal = (std::abs(p1.y - p2.y) < EPSILON);
     bool isVertical = (std::abs(p1.x - p2.x) < EPSILON);
@@ -1958,15 +852,6 @@ bool EdgeRouting::segmentIntersectsNode(
     }
     
     return false;  // No diagonal segments in orthogonal routing
-}
-
-float EdgeRouting::calculateAvoidanceCoordinate(
-    float nodeMin,
-    float nodeMax,
-    bool goPositive,
-    float gridSize) {
-    float margin = getAvoidanceMargin(gridSize);
-    return goPositive ? (nodeMax + margin) : (nodeMin - margin);
 }
 
 EdgeRouting::Result EdgeRouting::route(
@@ -2019,35 +904,6 @@ EdgeRouting::Result EdgeRouting::route(
     }
 
     return result;
-}
-
-Point EdgeRouting::computeSnapPoint(
-    const NodeLayout& node,
-    Direction direction,
-    bool isSource) {
-    
-    Point center = node.center();
-    
-    switch (direction) {
-        case Direction::TopToBottom:
-            return isSource 
-                ? Point{center.x, node.position.y + node.size.height}
-                : Point{center.x, node.position.y};
-        case Direction::BottomToTop:
-            return isSource 
-                ? Point{center.x, node.position.y}
-                : Point{center.x, node.position.y + node.size.height};
-        case Direction::LeftToRight:
-            return isSource 
-                ? Point{node.position.x + node.size.width, center.y}
-                : Point{node.position.x, center.y};
-        case Direction::RightToLeft:
-            return isSource 
-                ? Point{node.position.x, center.y}
-                : Point{node.position.x + node.size.width, center.y};
-    }
-    
-    return center;
 }
 
 // =============================================================================
@@ -2172,6 +1028,51 @@ void EdgeRouting::distributeAutoSnapPoints(
         layout.bendPoints.clear();
         for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
             layout.bendPoints.push_back({fullPath[i]});
+        }
+
+        // Ensure first bend has proper clearance from source
+        if (!layout.bendPoints.empty()) {
+            Point& firstBend = layout.bendPoints[0].position;
+            float minClearance = std::max(effectiveGridSize, DEFAULT_GRID_SIZE);
+
+            switch (layout.sourceEdge) {
+                case NodeEdge::Top:
+                    if (firstBend.y > layout.sourcePoint.y - minClearance) {
+                        float newY = layout.sourcePoint.y - minClearance;
+                        firstBend.y = newY;
+                        if (layout.bendPoints.size() >= 2) {
+                            layout.bendPoints[1].position.y = newY;
+                        }
+                    }
+                    break;
+                case NodeEdge::Bottom:
+                    if (firstBend.y < layout.sourcePoint.y + minClearance) {
+                        float newY = layout.sourcePoint.y + minClearance;
+                        firstBend.y = newY;
+                        if (layout.bendPoints.size() >= 2) {
+                            layout.bendPoints[1].position.y = newY;
+                        }
+                    }
+                    break;
+                case NodeEdge::Left:
+                    if (firstBend.x > layout.sourcePoint.x - minClearance) {
+                        float newX = layout.sourcePoint.x - minClearance;
+                        firstBend.x = newX;
+                        if (layout.bendPoints.size() >= 2) {
+                            layout.bendPoints[1].position.x = newX;
+                        }
+                    }
+                    break;
+                case NodeEdge::Right:
+                    if (firstBend.x < layout.sourcePoint.x + minClearance) {
+                        float newX = layout.sourcePoint.x + minClearance;
+                        firstBend.x = newX;
+                        if (layout.bendPoints.size() >= 2) {
+                            layout.bendPoints[1].position.x = newX;
+                        }
+                    }
+                    break;
+            }
         }
 
         layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
@@ -2361,6 +1262,159 @@ void EdgeRouting::updateEdgePositions(
 
         it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
     }
+}
+
+// =============================================================================
+// Edge Layout Validation
+// =============================================================================
+
+std::string EdgeRouting::ValidationResult::getErrorDescription() const {
+    if (valid) return "Valid";
+    
+    std::string desc;
+    if (!orthogonal) desc += "Non-orthogonal segments; ";
+    if (!noNodeIntersection) desc += "Segments pass through nodes; ";
+    if (!sourceDirectionOk) desc += "First segment direction violates sourceEdge; ";
+    if (!targetDirectionOk) desc += "Last segment direction violates targetEdge; ";
+    
+    if (!desc.empty() && desc.back() == ' ') {
+        desc.pop_back();
+        desc.pop_back();  // Remove trailing "; "
+    }
+    return desc;
+}
+
+EdgeRouting::ValidationResult EdgeRouting::validateEdgeLayout(
+    const EdgeLayout& layout,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    
+    ValidationResult result;
+    
+    // Build path points
+    std::vector<Point> path;
+    path.push_back(layout.sourcePoint);
+    for (const auto& bp : layout.bendPoints) {
+        path.push_back(bp.position);
+    }
+    path.push_back(layout.targetPoint);
+    
+    // Need at least 2 points
+    if (path.size() < 2) {
+        result.valid = false;
+        result.orthogonal = false;
+        return result;
+    }
+    
+    // === Check 1: Source direction constraint ===
+    // First segment must exit in the direction indicated by sourceEdge
+    {
+        float dx = path[1].x - path[0].x;
+        float dy = path[1].y - path[0].y;
+        
+        switch (layout.sourceEdge) {
+            case NodeEdge::Top:    result.sourceDirectionOk = (dy < -0.1f); break;
+            case NodeEdge::Bottom: result.sourceDirectionOk = (dy > 0.1f);  break;
+            case NodeEdge::Left:   result.sourceDirectionOk = (dx < -0.1f); break;
+            case NodeEdge::Right:  result.sourceDirectionOk = (dx > 0.1f);  break;
+        }
+    }
+    
+    // === Check 2: Target direction constraint ===
+    // Last segment must enter in the direction indicated by targetEdge
+    {
+        size_t last = path.size() - 1;
+        float dx = path[last].x - path[last - 1].x;
+        float dy = path[last].y - path[last - 1].y;
+        
+        switch (layout.targetEdge) {
+            case NodeEdge::Top:    result.targetDirectionOk = (dy > 0.1f);  break;  // Enter from above
+            case NodeEdge::Bottom: result.targetDirectionOk = (dy < -0.1f); break;  // Enter from below
+            case NodeEdge::Left:   result.targetDirectionOk = (dx > 0.1f);  break;  // Enter from left
+            case NodeEdge::Right:  result.targetDirectionOk = (dx < -0.1f); break;  // Enter from right
+        }
+    }
+    
+    // === Check 3: Orthogonality and node intersection ===
+    constexpr float TOLERANCE = 1.0f;
+    
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        const Point& p1 = path[i];
+        const Point& p2 = path[i + 1];
+        
+        bool isHoriz = std::abs(p1.y - p2.y) < 0.1f;
+        bool isVert = std::abs(p1.x - p2.x) < 0.1f;
+        
+        // Orthogonality check
+        if (!isHoriz && !isVert) {
+            result.orthogonal = false;
+        }
+        
+        // Node intersection check
+        bool isFirstSeg = (i == 0);
+        bool isLastSeg = (i == path.size() - 2);
+        
+        for (const auto& [nodeId, node] : nodeLayouts) {
+            // Skip source node at first segment start, target node at last segment end
+            bool skipAtP1 = (isFirstSeg && nodeId == layout.from);
+            bool skipAtP2 = (isLastSeg && nodeId == layout.to);
+            
+            // Check if segment passes through node interior
+            float xmin = node.position.x;
+            float xmax = node.position.x + node.size.width;
+            float ymin = node.position.y;
+            float ymax = node.position.y + node.size.height;
+            
+            bool intersects = false;
+            
+            if (isHoriz) {
+                float y = p1.y;
+                float segXmin = std::min(p1.x, p2.x);
+                float segXmax = std::max(p1.x, p2.x);
+                
+                // Shrink segment if endpoints should be excluded
+                if (skipAtP1) {
+                    if (segXmin == p1.x) segXmin += TOLERANCE;
+                    else segXmax -= TOLERANCE;
+                }
+                if (skipAtP2) {
+                    if (segXmax == p2.x) segXmax -= TOLERANCE;
+                    else segXmin += TOLERANCE;
+                }
+                
+                // Check if y is strictly inside node and x ranges overlap
+                intersects = (y > ymin && y < ymax && segXmin < xmax && segXmax > xmin);
+            } else if (isVert) {
+                float x = p1.x;
+                float segYmin = std::min(p1.y, p2.y);
+                float segYmax = std::max(p1.y, p2.y);
+                
+                // Shrink segment if endpoints should be excluded
+                if (skipAtP1) {
+                    if (segYmin == p1.y) segYmin += TOLERANCE;
+                    else segYmax -= TOLERANCE;
+                }
+                if (skipAtP2) {
+                    if (segYmax == p2.y) segYmax -= TOLERANCE;
+                    else segYmin += TOLERANCE;
+                }
+                
+                // Check if x is strictly inside node and y ranges overlap
+                intersects = (x > xmin && x < xmax && segYmin < ymax && segYmax > ymin);
+            }
+            
+            if (intersects) {
+                result.noNodeIntersection = false;
+            }
+        }
+    }
+    
+    // Final validity
+    result.valid = result.orthogonal && 
+                   result.noNodeIntersection && 
+                   result.sourceDirectionOk && 
+                   result.targetDirectionOk;
+    
+    return result;
 }
 
 // =============================================================================
@@ -2726,36 +1780,143 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
         }
         allPoints.push_back(layout.targetPoint);
         
-        // Quick check: Do any segments (except first and last) intersect nodes?
+        // Check ALL segments for intersection (skip only source/target nodes appropriately)
         bool hasIntersection = false;
-        for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
-            const Point& p1 = allPoints[i - 1];
-            const Point& p2 = allPoints[i];
+        NodeId intersectingNode = 0;
+        for (size_t i = 0; i + 1 < allPoints.size(); ++i) {
+            const Point& p1 = allPoints[i];
+            const Point& p2 = allPoints[i + 1];
             
             for (const auto& [nodeId, nodeLayout] : *allNodeLayouts) {
-                if (nodeId == layout.from || nodeId == layout.to) continue;
+                // Skip source node for first segment, target node for last segment
+                if (i == 0 && nodeId == layout.from) continue;
+                if (i == allPoints.size() - 2 && nodeId == layout.to) continue;
+                
                 if (segmentIntersectsNode(p1, p2, nodeLayout)) {
                     hasIntersection = true;
+                    intersectingNode = nodeId;
                     break;
                 }
             }
             if (hasIntersection) break;
         }
         
-        // If intersection found and we used channel routing, try alternative channel
-        if (hasIntersection && layout.channelY >= 0.0f) {
-            // Offset channel position and recalculate
-            float offset = 30.0f;
-            if (layout.sourceEdge == NodeEdge::Right || layout.sourceEdge == NodeEdge::Left) {
-                // Horizontal layout: adjust X channel
-                layout.channelY += offset;
-            } else {
-                // Vertical layout: adjust Y channel
-                layout.channelY += offset;
+        // If intersection found, create bypass path directly (don't rely on pathfinding)
+        if (hasIntersection) {
+            auto nodeIt = allNodeLayouts->find(intersectingNode);
+            if (nodeIt != allNodeLayouts->end()) {
+                const NodeLayout& blockingNode = nodeIt->second;
+                
+                // Calculate bypass route to the left or right of all blocking nodes
+                float margin = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
+                
+                // Find leftmost and rightmost edges of all intermediate nodes
+                float leftmostEdge = blockingNode.position.x;
+                float rightmostEdge = blockingNode.position.x + blockingNode.size.width;
+                
+                for (const auto& [nid, nlayout] : *allNodeLayouts) {
+                    if (nid == layout.from || nid == layout.to) continue;
+                    leftmostEdge = std::min(leftmostEdge, nlayout.position.x);
+                    rightmostEdge = std::max(rightmostEdge, nlayout.position.x + nlayout.size.width);
+                }
+                
+                // Choose side based on source and target positions
+                float sourceX = layout.sourcePoint.x;
+                float targetX = layout.targetPoint.x;
+                float avgX = (sourceX + targetX) / 2.0f;
+                float centerNodes = (leftmostEdge + rightmostEdge) / 2.0f;
+                
+                float bypassX;
+                if (avgX < centerNodes) {
+                    // Prefer left bypass
+                    bypassX = leftmostEdge - margin;
+                } else {
+                    // Prefer right bypass
+                    bypassX = rightmostEdge + margin;
+                }
+                
+                // Snap to grid if enabled
+                if (gridSize > 0.0f) {
+                    bypassX = std::round(bypassX / gridSize) * gridSize;
+                }
+                
+                // Create bypass path directly: source -> (bypassX, src.y) -> (bypassX, tgt.y) -> target
+                layout.bendPoints.clear();
+                
+                float exitY, entryY;
+                if (layout.sourceEdge == NodeEdge::Bottom) {
+                    exitY = layout.sourcePoint.y + margin;
+                } else if (layout.sourceEdge == NodeEdge::Top) {
+                    exitY = layout.sourcePoint.y - margin;
+                } else {
+                    exitY = layout.sourcePoint.y;
+                }
+                
+                if (layout.targetEdge == NodeEdge::Top) {
+                    entryY = layout.targetPoint.y - margin;
+                } else if (layout.targetEdge == NodeEdge::Bottom) {
+                    entryY = layout.targetPoint.y + margin;
+                } else {
+                    entryY = layout.targetPoint.y;
+                }
+                
+                // Snap Y coordinates to grid
+                if (gridSize > 0.0f) {
+                    exitY = std::round(exitY / gridSize) * gridSize;
+                    entryY = std::round(entryY / gridSize) * gridSize;
+                }
+                
+                // Create bend points for bypass route
+                layout.bendPoints.push_back({{layout.sourcePoint.x, exitY}});
+                layout.bendPoints.push_back({{bypassX, exitY}});
+                layout.bendPoints.push_back({{bypassX, entryY}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, entryY}});
             }
-            
-            // Recalculate with new channel position
-            recalculateBendPoints(layout, *allNodeLayouts, gridSize);
+        }
+    }
+
+    // Final clearance check: ensure first bend has minimum distance from source
+    float minClearance = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
+    if (!layout.bendPoints.empty()) {
+        Point& firstBend = layout.bendPoints[0].position;
+
+        switch (layout.sourceEdge) {
+            case NodeEdge::Top:
+                if (firstBend.y > layout.sourcePoint.y - minClearance) {
+                    float newY = layout.sourcePoint.y - minClearance;
+                    firstBend.y = newY;
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.y = newY;
+                    }
+                }
+                break;
+            case NodeEdge::Bottom:
+                if (firstBend.y < layout.sourcePoint.y + minClearance) {
+                    float newY = layout.sourcePoint.y + minClearance;
+                    firstBend.y = newY;
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.y = newY;
+                    }
+                }
+                break;
+            case NodeEdge::Left:
+                if (firstBend.x > layout.sourcePoint.x - minClearance) {
+                    float newX = layout.sourcePoint.x - minClearance;
+                    firstBend.x = newX;
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.x = newX;
+                    }
+                }
+                break;
+            case NodeEdge::Right:
+                if (firstBend.x < layout.sourcePoint.x + minClearance) {
+                    float newX = layout.sourcePoint.x + minClearance;
+                    firstBend.x = newX;
+                    if (layout.bendPoints.size() >= 2) {
+                        layout.bendPoints[1].position.x = newX;
+                    }
+                }
+                break;
         }
     }
 

@@ -53,6 +53,13 @@ void CoordinateAssignment::simpleAssignment(
     bool horizontal = (options.direction == Direction::LeftToRight || 
                       options.direction == Direction::RightToLeft);
     
+    // Ensure minimum layer spacing for valid edge routing
+    // Edge routing needs at least one grid cell between layers for bend points
+    const float gridSize = options.gridConfig.cellSize;
+    const float minLayerSpacing = gridSize * 2.0f;  // Minimum gap for edge routing channel
+    const float effectiveVerticalSpacing = std::max(options.nodeSpacingVertical, minLayerSpacing);
+    const float effectiveHorizontalSpacing = std::max(options.nodeSpacingHorizontal, gridSize);
+    
     float currentLayerPos = 0.0f;
     
     for (size_t layerIdx = 0; layerIdx < layers.size(); ++layerIdx) {
@@ -77,7 +84,7 @@ void CoordinateAssignment::simpleAssignment(
         
         // Add spacing between nodes
         if (!layer.empty()) {
-            totalWidth += options.nodeSpacingHorizontal * (layer.size() - 1);
+            totalWidth += effectiveHorizontalSpacing * (layer.size() - 1);
         }
         
         // Assign positions within layer
@@ -94,11 +101,11 @@ void CoordinateAssignment::simpleAssignment(
             if (horizontal) {
                 pos.x = currentLayerPos;
                 pos.y = currentNodePos;
-                currentNodePos += size.height + options.nodeSpacingHorizontal;
+                currentNodePos += size.height + effectiveHorizontalSpacing;
             } else {
                 pos.x = currentNodePos;
                 pos.y = currentLayerPos;
-                currentNodePos += size.width + options.nodeSpacingHorizontal;
+                currentNodePos += size.width + effectiveHorizontalSpacing;
             }
             
             // Handle different directions
@@ -116,8 +123,8 @@ void CoordinateAssignment::simpleAssignment(
             result.positions[node] = pos;
         }
         
-        // Move to next layer
-        currentLayerPos += layerHeight + options.nodeSpacingVertical;
+        // Move to next layer with minimum spacing for edge routing
+        currentLayerPos += layerHeight + effectiveVerticalSpacing;
     }
 }
 

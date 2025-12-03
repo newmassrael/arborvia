@@ -28,6 +28,9 @@ const ImU32 COLOR_SNAP_POINT_HOVER = IM_COL32(255, 200, 0, 255);
 const ImU32 COLOR_EDGE_SELECTED = IM_COL32(0, 200, 100, 255);
 const ImU32 COLOR_NODE_SELECTED = IM_COL32(100, 255, 100, 255);
 
+// Grid obstacle colors
+const ImU32 COLOR_BLOCKED_CELL = IM_COL32(255, 100, 100, 60);  // Red, semi-transparent
+
 // Bend point colors
 const ImU32 COLOR_BEND_POINT = IM_COL32(100, 150, 255, 200);
 const ImU32 COLOR_BEND_POINT_HOVER = IM_COL32(150, 200, 255, 255);
@@ -305,6 +308,9 @@ public:
             dragOffset_ = {graphMouse.x - layout.position.x, 
                           graphMouse.y - layout.position.y};
             affectedEdges_ = graph_.getConnectedEdges(draggedNode_);
+            // Initialize drag constraint state
+            lastValidPosition_ = layout.position;
+            isInvalidDragPosition_ = false;
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
             selectedEdge_ = hoveredEdge_;
             selectedNode_ = INVALID_NODE;
@@ -323,12 +329,19 @@ public:
             draggingBendPoint_.clear();
             
             if (draggedNode_ != INVALID_NODE) {
-                // Use same algorithm as during drag - just update affected edges
-                // No need to recalculate full layout, just finalize the drag
+                // Check if drop position is valid
+                if (isInvalidDragPosition_) {
+                    // Revert to last valid position
+                    auto& layout = nodeLayouts_[draggedNode_];
+                    layout.position = lastValidPosition_;
+                    manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
+                }
+                // Finalize edge routing
                 rerouteAffectedEdges();
             }
             draggedNode_ = INVALID_NODE;
             affectedEdges_.clear();
+            isInvalidDragPosition_ = false;
         }
         
         // Handle bend point dragging with orthogonal constraint
@@ -401,13 +414,26 @@ public:
                 newY = std::round(newY / gridSize) * gridSize;
             }
             
+            // Full validation: check if all edges can be routed properly
+            Point proposedPosition = {newX, newY};
+            auto validation = LayoutUtils::canMoveNodeTo(
+                draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, gridSize);
+            
+            // Always update position during drag (visual feedback)
             layout.position.x = newX;
             layout.position.y = newY;
             
-            // Save position (for both modes, so snap distribution works after drag)
-            manualManager_->setNodePosition(draggedNode_, layout.position);
+            if (validation.valid) {
+                // Valid position - save as last valid
+                isInvalidDragPosition_ = false;
+                lastValidPosition_ = proposedPosition;
+                manualManager_->setNodePosition(draggedNode_, layout.position);
+            } else {
+                // Invalid position - show red but still follow mouse
+                isInvalidDragPosition_ = true;
+            }
             
-            // Re-route connected edges
+            // Re-route connected edges for visual feedback
             rerouteAffectedEdges();
         }
         
@@ -433,14 +459,14 @@ public:
     
     void drawGrid(ImDrawList* drawList, float width, float height) {
         if (gridSize_ <= 0.0f) return;
-        
+
         ImU32 gridColor = IM_COL32(200, 200, 200, 80);  // Light gray, semi-transparent
         ImU32 gridColorMajor = IM_COL32(180, 180, 180, 120);  // Slightly darker for major lines
-        
+
         // Calculate grid bounds
         float startX = std::fmod(offset_.x, gridSize_);
         float startY = std::fmod(offset_.y, gridSize_);
-        
+
         // Draw vertical lines
         int lineCount = 0;
         for (float x = startX; x < width; x += gridSize_) {
@@ -448,7 +474,7 @@ public:
             drawList->AddLine({x, 0}, {x, height}, color, 1.0f);
             lineCount++;
         }
-        
+
         // Draw horizontal lines
         lineCount = 0;
         for (float y = startY; y < height; y += gridSize_) {
@@ -457,12 +483,65 @@ public:
             lineCount++;
         }
     }
+
+    void drawBlockedCells(ImDrawList* drawList) {
+        // Only show during drag, and skip if disabled
+        if (!showBlockedCells_ || gridSize_ <= 0.0f || draggedNode_ == INVALID_NODE) return;
+
+        // MIN_GRID_DISTANCE from LayoutUtils::canMoveNodeTo
+        constexpr float MIN_GRID_DISTANCE = 5.0f;
+        float margin = MIN_GRID_DISTANCE * gridSize_;
+
+        // Draw forbidden zone around each node (excluding the dragged node)
+        for (const auto& [id, layout] : nodeLayouts_) {
+            // Skip the node being dragged
+            if (id == draggedNode_) continue;
+            // Forbidden zone extends margin pixels beyond node boundaries
+            float zoneLeft = layout.position.x - margin;
+            float zoneTop = layout.position.y - margin;
+            float zoneRight = layout.position.x + layout.size.width + margin;
+            float zoneBottom = layout.position.y + layout.size.height + margin;
+
+            // Calculate grid cells for the forbidden zone
+            int leftCell = static_cast<int>(std::floor(zoneLeft / gridSize_));
+            int topCell = static_cast<int>(std::floor(zoneTop / gridSize_));
+            int rightCell = static_cast<int>(std::ceil(zoneRight / gridSize_));
+            int bottomCell = static_cast<int>(std::ceil(zoneBottom / gridSize_));
+
+            // Node's actual cell range (to exclude from red coloring)
+            int nodeLeftCell = static_cast<int>(std::floor(layout.position.x / gridSize_));
+            int nodeTopCell = static_cast<int>(std::floor(layout.position.y / gridSize_));
+            int nodeRightCell = static_cast<int>(std::ceil((layout.position.x + layout.size.width) / gridSize_));
+            int nodeBottomCell = static_cast<int>(std::ceil((layout.position.y + layout.size.height) / gridSize_));
+
+            // Draw forbidden cells (excluding node's own cells)
+            for (int gx = leftCell; gx < rightCell; ++gx) {
+                for (int gy = topCell; gy < bottomCell; ++gy) {
+                    // Skip cells occupied by the node itself
+                    if (gx >= nodeLeftCell && gx < nodeRightCell &&
+                        gy >= nodeTopCell && gy < nodeBottomCell) {
+                        continue;
+                    }
+
+                    float x1 = gx * gridSize_ + offset_.x;
+                    float y1 = gy * gridSize_ + offset_.y;
+                    float x2 = x1 + gridSize_;
+                    float y2 = y1 + gridSize_;
+
+                    drawList->AddRectFilled({x1, y1}, {x2, y2}, COLOR_BLOCKED_CELL);
+                }
+            }
+        }
+    }
     
     void render(ImDrawList* drawList) {
         // Draw grid background first
         ImGuiIO& io = ImGui::GetIO();
         drawGrid(drawList, io.DisplaySize.x, io.DisplaySize.y);
-        
+
+        // Draw blocked cells (node obstacle areas)
+        drawBlockedCells(drawList);
+
         // Draw edges first
         for (const auto& [id, layout] : edgeLayouts_) {
             bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id) 
@@ -571,7 +650,11 @@ public:
         for (const auto& [id, layout] : nodeLayouts_) {
             ImU32 fillColor = COLOR_NODE;
             if (id == draggedNode_) {
-                fillColor = COLOR_NODE_DRAG;
+                if (isInvalidDragPosition_) {
+                    fillColor = IM_COL32(255, 80, 80, 255);  // Red for invalid position
+                } else {
+                    fillColor = COLOR_NODE_DRAG;
+                }
             } else if (id == selectedNode_) {
                 fillColor = COLOR_NODE_SELECTED;
             } else if (id == hoveredNode_) {
@@ -859,7 +942,11 @@ public:
                 ImGui::SetTooltip("T=Top, B=Bottom, L=Left, R=Right\nGreen=Outgoing, Red=Incoming");
             }
         }
-        
+        ImGui::Checkbox("Show Blocked Cells", &showBlockedCells_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Show no-drag zones while dragging (5 grid units margin)");
+        }
+
         // Snap point configuration for selected node
         if (selectedNode_ != INVALID_NODE && manualManager_->getMode() == LayoutMode::Manual) {
             auto selectedNode = graph_.tryGetNode(selectedNode_);
@@ -1031,6 +1118,11 @@ private:
     std::vector<EdgeId> affectedEdges_;
     bool showSnapPoints_ = true;
     bool showSnapIndices_ = true;
+    bool showBlockedCells_ = true;  // Show node obstacle areas in red
+    
+    // Drag constraint state
+    bool isInvalidDragPosition_ = false;      // Current drag position is invalid
+    Point lastValidPosition_ = {0, 0};        // Last known valid position during drag
     
     // Bend point interaction state
     HoveredBendPoint hoveredBendPoint_;
