@@ -1,42 +1,26 @@
 #pragma once
 
-#include "ObstacleMap.h"
-#include "arborvia/core/Types.h"
-#include "arborvia/layout/LayoutEnums.h"
-
-#include <vector>
-#include <unordered_set>
+#include "arborvia/layout/IPathFinder.h"
 
 namespace arborvia {
 namespace algorithms {
 
-/// Direction of movement in the grid
-enum class MoveDirection {
-    None,
-    Up,
-    Down,
-    Left,
-    Right
-};
-
-/// Result of pathfinding operation
-struct PathResult {
-    bool found = false;
-    std::vector<GridPoint> path;  ///< Path in grid coordinates
-    int bendCount = 0;            ///< Number of direction changes
-    int totalCost = 0;            ///< Total path cost
-};
-
 /// A* based orthogonal pathfinder for edge routing
 /// Finds paths that avoid obstacles and minimize bend points
-class PathFinder {
+/// 
+/// This is the default implementation of IPathFinder using the A* algorithm
+/// with Manhattan distance heuristic and bend penalties.
+class AStarPathFinder : public IPathFinder {
 public:
     /// Cost constants for pathfinding
     static constexpr int MOVE_COST = 1;
     static constexpr int BEND_COST = 3;  ///< Penalty for changing direction (minimizes bends)
     static constexpr int MAX_ITERATIONS = 50000;  ///< Safety limit for iterations
 
-    PathFinder() = default;
+    AStarPathFinder() = default;
+
+    /// Get algorithm name
+    const char* algorithmName() const override { return "A*"; }
 
     /// Find path using A* algorithm with direction constraints
     /// @param start Starting grid point
@@ -52,13 +36,13 @@ public:
     PathResult findPath(
         const GridPoint& start,
         const GridPoint& goal,
-        const ObstacleMap& obstacles,
+        const IObstacleProvider& obstacles,
         NodeId sourceNode,
         NodeId targetNode,
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
         const std::unordered_set<NodeId>& extraStartExcludes = {},
-        const std::unordered_set<NodeId>& extraGoalExcludes = {}) const;
+        const std::unordered_set<NodeId>& extraGoalExcludes = {}) const override;
 
     /// Find path via safe zone (guaranteed fallback)
     /// Routes outside all nodes for guaranteed success
@@ -75,35 +59,35 @@ public:
     PathResult findPathViaSafeZone(
         const GridPoint& start,
         const GridPoint& goal,
-        const ObstacleMap& obstacles,
+        const IObstacleProvider& obstacles,
         NodeId sourceNode,
         NodeId targetNode,
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
         const std::unordered_set<NodeId>& extraStartExcludes = {},
-        const std::unordered_set<NodeId>& extraGoalExcludes = {}) const;
+        const std::unordered_set<NodeId>& extraGoalExcludes = {}) const override;
 
     /// Simple direct path if start and goal are aligned
     /// Returns empty path if direct connection not possible
     PathResult tryDirectPath(
         const GridPoint& start,
         const GridPoint& goal,
-        const ObstacleMap& obstacles,
+        const IObstacleProvider& obstacles,
         NodeId sourceNode,
         NodeId targetNode,
         const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const;
+        const std::unordered_set<NodeId>& extraGoalExcludes) const override;
 
     /// Simple L-shaped path (one bend)
     /// Tries both horizontal-first and vertical-first
     PathResult tryLShapedPath(
         const GridPoint& start,
         const GridPoint& goal,
-        const ObstacleMap& obstacles,
+        const IObstacleProvider& obstacles,
         NodeId sourceNode,
         NodeId targetNode,
         const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const;
+        const std::unordered_set<NodeId>& extraGoalExcludes) const override;
 
 private:
     /// Internal node for A* search
@@ -131,7 +115,7 @@ private:
     bool validateSegment(
         const GridPoint& from,
         const GridPoint& to,
-        const ObstacleMap& obstacles) const;
+        const IObstacleProvider& obstacles) const;
     
     /// Validate segment with per-endpoint exclusion logic
     /// @param isFirstSegment If true, exclude sourceNode + extraStartExcludes from 'from' cell
@@ -139,7 +123,7 @@ private:
     bool validateSegmentWithEndpoints(
         const GridPoint& from,
         const GridPoint& to,
-        const ObstacleMap& obstacles,
+        const IObstacleProvider& obstacles,
         NodeId sourceNode,
         NodeId targetNode,
         bool isFirstSegment,

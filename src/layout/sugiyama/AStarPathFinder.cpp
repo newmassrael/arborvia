@@ -1,4 +1,4 @@
-#include "PathFinder.h"
+#include "AStarPathFinder.h"
 #include <queue>
 #include <unordered_map>
 #include <cmath>
@@ -33,7 +33,7 @@ struct SearchKeyHash {
     }
 };
 
-MoveDirection PathFinder::getRequiredSourceDirection(NodeEdge sourceEdge) {
+MoveDirection AStarPathFinder::getRequiredSourceDirection(NodeEdge sourceEdge) {
     switch (sourceEdge) {
         case NodeEdge::Top:    return MoveDirection::Up;
         case NodeEdge::Bottom: return MoveDirection::Down;
@@ -43,7 +43,7 @@ MoveDirection PathFinder::getRequiredSourceDirection(NodeEdge sourceEdge) {
     }
 }
 
-MoveDirection PathFinder::getRequiredTargetArrivalDirection(NodeEdge targetEdge) {
+MoveDirection AStarPathFinder::getRequiredTargetArrivalDirection(NodeEdge targetEdge) {
     // Arrival direction is opposite to the edge - we arrive "from" outside
     // e.g., entering Top edge means we come from above, so last move is Down
     switch (targetEdge) {
@@ -55,10 +55,10 @@ MoveDirection PathFinder::getRequiredTargetArrivalDirection(NodeEdge targetEdge)
     }
 }
 
-PathResult PathFinder::findPath(
+PathResult AStarPathFinder::findPath(
     const GridPoint& start,
     const GridPoint& goal,
-    const ObstacleMap& obstacles,
+    const IObstacleProvider& obstacles,
     NodeId sourceNode,
     NodeId targetNode,
     NodeEdge sourceEdge,
@@ -214,10 +214,10 @@ PathResult PathFinder::findPath(
                                sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
 }
 
-PathResult PathFinder::findPathViaSafeZone(
+PathResult AStarPathFinder::findPathViaSafeZone(
     const GridPoint& start,
     const GridPoint& goal,
-    const ObstacleMap& obstacles,
+    const IObstacleProvider& obstacles,
     NodeId sourceNode,
     NodeId targetNode,
     NodeEdge sourceEdge,
@@ -435,10 +435,10 @@ PathResult PathFinder::findPathViaSafeZone(
     return result;
 }
 
-PathResult PathFinder::tryDirectPath(
+PathResult AStarPathFinder::tryDirectPath(
     const GridPoint& start,
     const GridPoint& goal,
-    const ObstacleMap& obstacles,
+    const IObstacleProvider& obstacles,
     NodeId sourceNode,
     NodeId targetNode,
     const std::unordered_set<NodeId>& extraStartExcludes,
@@ -464,10 +464,10 @@ PathResult PathFinder::tryDirectPath(
     return result;
 }
 
-PathResult PathFinder::tryLShapedPath(
+PathResult AStarPathFinder::tryLShapedPath(
     const GridPoint& start,
     const GridPoint& goal,
-    const ObstacleMap& obstacles,
+    const IObstacleProvider& obstacles,
     NodeId sourceNode,
     NodeId targetNode,
     const std::unordered_set<NodeId>& extraStartExcludes,
@@ -508,11 +508,11 @@ PathResult PathFinder::tryLShapedPath(
     return result;
 }
 
-int PathFinder::manhattanDistance(const GridPoint& a, const GridPoint& b) {
+int AStarPathFinder::manhattanDistance(const GridPoint& a, const GridPoint& b) {
     return std::abs(a.x - b.x) + std::abs(a.y - b.y);
 }
 
-std::vector<std::pair<GridPoint, MoveDirection>> PathFinder::getNeighbors(const GridPoint& p) {
+std::vector<std::pair<GridPoint, MoveDirection>> AStarPathFinder::getNeighbors(const GridPoint& p) {
     return {
         {{p.x, p.y - 1}, MoveDirection::Up},
         {{p.x, p.y + 1}, MoveDirection::Down},
@@ -521,20 +521,20 @@ std::vector<std::pair<GridPoint, MoveDirection>> PathFinder::getNeighbors(const 
     };
 }
 
-bool PathFinder::validateSegment(
+bool AStarPathFinder::validateSegment(
     const GridPoint& from,
     const GridPoint& to,
-    const ObstacleMap& obstacles) const {
+    const IObstacleProvider& obstacles) const {
 
     // No exclusions - all cells must be clear
     std::unordered_set<NodeId> empty;
     return !obstacles.segmentBlocked(from.x, from.y, to.x, to.y, empty);
 }
 
-bool PathFinder::validateSegmentWithEndpoints(
+bool AStarPathFinder::validateSegmentWithEndpoints(
     const GridPoint& from,
     const GridPoint& to,
-    const ObstacleMap& obstacles,
+    const IObstacleProvider& obstacles,
     NodeId sourceNode,
     NodeId targetNode,
     bool isFirstSegment,
@@ -586,7 +586,7 @@ bool PathFinder::validateSegmentWithEndpoints(
     return true;
 }
 
-int PathFinder::countBends(const std::vector<GridPoint>& path) {
+int AStarPathFinder::countBends(const std::vector<GridPoint>& path) {
     if (path.size() < 3) {
         return 0;
     }
@@ -611,7 +611,7 @@ int PathFinder::countBends(const std::vector<GridPoint>& path) {
     return bends;
 }
 
-std::vector<GridPoint> PathFinder::simplifyPath(const std::vector<GridPoint>& path) {
+std::vector<GridPoint> AStarPathFinder::simplifyPath(const std::vector<GridPoint>& path) {
     if (path.size() <= 2) {
         return path;
     }

@@ -1,7 +1,6 @@
 #pragma once
 
-#include "arborvia/core/Graph.h"
-#include "arborvia/layout/LayoutOptions.h"
+#include "arborvia/layout/ILayerAssignment.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -10,36 +9,45 @@
 namespace arborvia {
 namespace algorithms {
 
-/// Assigns nodes to layers (ranks) in a hierarchical layout
-class LayerAssignment {
+/// Longest-path based layer assignment algorithm
+/// 
+/// This is the default implementation of ILayerAssignment using the
+/// longest path algorithm to minimize the height of the layout.
+class LongestPathLayerAssignment : public ILayerAssignment {
 public:
-    struct Result {
-        std::unordered_map<NodeId, int> nodeLayer;  // Node -> layer index
-        int layerCount = 0;
-        std::vector<std::vector<NodeId>> layers;    // Layer -> nodes in that layer
-    };
-    
+    /// Type alias for backward compatibility
+    using Result = LayerAssignmentResult;
+
+    LongestPathLayerAssignment() = default;
+
+    /// Get algorithm name
+    const char* algorithmName() const override { return "LongestPath"; }
+
     /// Assign layers using longest path algorithm
-    /// reversedEdges: edges that should be treated as reversed for layer calculation
-    Result assignLayers(const Graph& graph, 
-                       const std::unordered_set<EdgeId>& reversedEdges,
-                       arborvia::LayerAssignment strategy = arborvia::LayerAssignment::LongestPath);
-    
+    LayerAssignmentResult assignLayers(
+        const Graph& graph,
+        const std::unordered_set<EdgeId>& reversedEdges,
+        arborvia::LayerAssignment strategy = arborvia::LayerAssignment::LongestPath) const override;
+
     /// Assign layers with specified root nodes (they become layer 0)
-    Result assignLayersWithRoots(const Graph& graph,
-                                const std::vector<NodeId>& roots,
-                                const std::unordered_set<EdgeId>& reversedEdges);
+    LayerAssignmentResult assignLayersWithRoots(
+        const Graph& graph,
+        const std::vector<NodeId>& roots,
+        const std::unordered_set<EdgeId>& reversedEdges) const override;
 
 private:
     void longestPathAssignment(const Graph& graph,
                                const std::unordered_set<EdgeId>& reversedEdges,
-                               Result& result);
-    
-    int computeLayerDFS(NodeId node, 
+                               LayerAssignmentResult& result) const;
+
+    int computeLayerDFS(NodeId node,
                         const Graph& graph,
                         const std::unordered_set<EdgeId>& reversedEdges,
-                        std::unordered_map<NodeId, int>& memo);
+                        std::unordered_map<NodeId, int>& memo) const;
 };
+
+/// Backward compatibility alias
+using LayerAssignment = LongestPathLayerAssignment;
 
 }  // namespace algorithms
 }  // namespace arborvia

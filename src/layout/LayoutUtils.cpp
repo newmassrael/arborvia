@@ -20,7 +20,8 @@ void LayoutUtils::updateEdgePositions(
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
-    algorithms::EdgeRouting::updateEdgePositions(
+    algorithms::EdgeRouting routing;
+    routing.updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges, distribution, movedNodes, gridSize);
 }
 

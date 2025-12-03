@@ -1337,8 +1337,9 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
     
     // Call updateEdgePositions - this is what interactive_demo does after drag
     std::unordered_set<NodeId> movedNodes = {idle, running, paused, stopped, error};
-    EdgeRouting::updateEdgePositions(edgeLayouts, draggedLayouts, allEdges, 
-                                      SnapDistribution::Separated, movedNodes);
+    EdgeRouting routing;
+    routing.updateEdgePositions(edgeLayouts, draggedLayouts, allEdges, 
+                                SnapDistribution::Separated, movedNodes);
     
     std::cout << "\n===== AFTER updateEdgePositions ORTHOGONALITY TEST (TDD) =====\n";
     
@@ -1905,8 +1906,9 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_NoSpikePatterns) {
 
     // Call updateEdgePositions - this is what interactive_demo does after drag
     std::unordered_set<NodeId> movedNodes = {idle, running, paused, stopped, error};
-    EdgeRouting::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
-                                      SnapDistribution::Separated, movedNodes);
+    EdgeRouting routing;
+    routing.updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
+                                SnapDistribution::Separated, movedNodes);
 
     // Check for spike patterns
     std::cout << "\n===== SPIKE DETECTION AFTER DRAG =====\n";

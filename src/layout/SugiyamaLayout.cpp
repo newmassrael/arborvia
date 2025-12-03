@@ -1,8 +1,14 @@
 #include "arborvia/layout/SugiyamaLayout.h"
+#include "arborvia/layout/ICycleRemoval.h"
+#include "arborvia/layout/ILayerAssignment.h"
+#include "arborvia/layout/ICrossingMinimization.h"
+#include "arborvia/layout/ICoordinateAssignment.h"
+#include "arborvia/layout/IPathFinder.h"
 #include "sugiyama/CycleRemoval.h"
 #include "sugiyama/LayerAssignment.h"
 #include "sugiyama/CrossingMinimization.h"
 #include "sugiyama/CoordinateAssignment.h"
+#include "sugiyama/AStarPathFinder.h"
 #include "sugiyama/EdgeRouting.h"
 
 #include <unordered_set>
@@ -35,6 +41,11 @@ SugiyamaLayout::SugiyamaLayout()
 
 SugiyamaLayout::SugiyamaLayout(const LayoutOptions& options)
     : options_(options)
+    , cycleRemoval_(std::make_shared<algorithms::CycleRemoval>())
+    , layerAssignment_(std::make_shared<algorithms::LongestPathLayerAssignment>())
+    , crossingMinimization_(std::make_shared<algorithms::BarycenterCrossingMinimization>())
+    , coordinateAssignment_(std::make_shared<algorithms::SimpleCoordinateAssignment>())
+    , pathFinder_(std::make_shared<algorithms::AStarPathFinder>())
     , state_(std::make_unique<LayoutState>()) {}
 
 SugiyamaLayout::~SugiyamaLayout() = default;
@@ -44,6 +55,26 @@ SugiyamaLayout& SugiyamaLayout::operator=(SugiyamaLayout&&) noexcept = default;
 
 void SugiyamaLayout::setOptions(const LayoutOptions& options) {
     options_ = options;
+}
+
+void SugiyamaLayout::setCycleRemoval(std::shared_ptr<algorithms::ICycleRemoval> impl) {
+    if (impl) cycleRemoval_ = std::move(impl);
+}
+
+void SugiyamaLayout::setLayerAssignment(std::shared_ptr<algorithms::ILayerAssignment> impl) {
+    if (impl) layerAssignment_ = std::move(impl);
+}
+
+void SugiyamaLayout::setCrossingMinimization(std::shared_ptr<algorithms::ICrossingMinimization> impl) {
+    if (impl) crossingMinimization_ = std::move(impl);
+}
+
+void SugiyamaLayout::setCoordinateAssignment(std::shared_ptr<algorithms::ICoordinateAssignment> impl) {
+    if (impl) coordinateAssignment_ = std::move(impl);
+}
+
+void SugiyamaLayout::setPathFinder(std::shared_ptr<algorithms::IPathFinder> impl) {
+    if (impl) pathFinder_ = std::move(impl);
 }
 
 LayoutResult SugiyamaLayout::layout(const Graph& graph) {
@@ -179,36 +210,34 @@ std::pair<LayoutResult, bool> SugiyamaLayout::layoutIncremental(CompoundGraph& g
 }
 
 void SugiyamaLayout::removeCycles() {
-    algorithms::CycleRemoval cycleRemoval;
-    auto result = cycleRemoval.findEdgesToReverse(*state_->graph);
-    
+    auto result = cycleRemoval_->findEdgesToReverse(*state_->graph);
+
     state_->reversedEdges.clear();
     for (EdgeId id : result.reversedEdges) {
         state_->reversedEdges.insert(id);
     }
-    
+
     stats_.reversedEdges = static_cast<int>(result.reversedEdges.size());
 }
 
 void SugiyamaLayout::assignLayers() {
-    algorithms::LayerAssignment layerAssignment;
-    auto result = layerAssignment.assignLayers(*state_->graph, state_->reversedEdges);
-    
+    auto result = layerAssignment_->assignLayers(
+        *state_->graph, state_->reversedEdges, options_.layerAssignment);
+
     state_->layers = std::move(result.layers);
     state_->nodeLayer = std::move(result.nodeLayer);
-    
+
     stats_.layerCount = result.layerCount;
     state_->result.setLayerCount(result.layerCount);
 }
 
 void SugiyamaLayout::minimizeCrossings() {
-    algorithms::CrossingMinimization crossing;
-    auto result = crossing.minimize(*state_->graph, 
-                                    state_->layers,
-                                    state_->reversedEdges,
-                                    options_.crossingMinimization,
-                                    options_.crossingMinimizationPasses);
-    
+    auto result = crossingMinimization_->minimize(*state_->graph,
+                                 state_->layers,
+                                 state_->reversedEdges,
+                                 options_.crossingMinimization,
+                                 options_.crossingMinimizationPasses);
+
     state_->layers = std::move(result.layers);
     stats_.edgeCrossings = result.crossingCount;
     
@@ -220,12 +249,11 @@ void SugiyamaLayout::minimizeCrossings() {
 }
 
 void SugiyamaLayout::assignCoordinates() {
-    algorithms::CoordinateAssignment coord;
-    auto result = coord.assignWithSizes(*state_->graph, 
+    auto result = coordinateAssignment_->assignWithSizes(*state_->graph,
                                         state_->layers,
                                         state_->nodeSizes,
                                         options_);
-    
+
     state_->nodePositions = std::move(result.positions);
     
     // Build node layouts
@@ -250,7 +278,8 @@ void SugiyamaLayout::assignCoordinates() {
 }
 
 void SugiyamaLayout::routeEdges() {
-    algorithms::EdgeRouting routing;
+    // Create EdgeRouting with injected pathfinder if available
+    algorithms::EdgeRouting routing(pathFinder_);
     auto result = routing.route(*state_->graph,
                                state_->result.nodeLayouts(),
                                state_->reversedEdges,
@@ -258,7 +287,7 @@ void SugiyamaLayout::routeEdges() {
     
     // Apply auto snap point distribution if enabled
     if (options_.autoSnapPoints && options_.mode == LayoutMode::Auto) {
-        algorithms::EdgeRouting::distributeAutoSnapPoints(
+        routing.distributeAutoSnapPoints(
             result, state_->result.nodeLayouts(), options_.snapDistribution,
             options_.gridConfig.cellSize);
     }
@@ -284,7 +313,8 @@ void SugiyamaLayout::updateEdgePositionsAfterManualState() {
     }
     
     // Update edge positions based on current (manual) node positions
-    algorithms::EdgeRouting::updateEdgePositions(
+    algorithms::EdgeRouting routing;
+    routing.updateEdgePositions(
         edgeLayouts,
         state_->result.nodeLayouts(),
         allEdges,

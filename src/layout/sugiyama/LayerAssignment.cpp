@@ -6,12 +6,12 @@
 namespace arborvia {
 namespace algorithms {
 
-LayerAssignment::Result LayerAssignment::assignLayers(
+LayerAssignmentResult LongestPathLayerAssignment::assignLayers(
     const Graph& graph,
     const std::unordered_set<EdgeId>& reversedEdges,
-    [[maybe_unused]] arborvia::LayerAssignment strategy) {
+    [[maybe_unused]] arborvia::LayerAssignment strategy) const {
     
-    Result result;
+    LayerAssignmentResult result;
     
     std::vector<NodeId> nodes = graph.nodes();
     if (nodes.empty()) {
@@ -24,12 +24,12 @@ LayerAssignment::Result LayerAssignment::assignLayers(
     return result;
 }
 
-LayerAssignment::Result LayerAssignment::assignLayersWithRoots(
+LayerAssignmentResult LongestPathLayerAssignment::assignLayersWithRoots(
     const Graph& graph,
     const std::vector<NodeId>& roots,
-    const std::unordered_set<EdgeId>& reversedEdges) {
+    const std::unordered_set<EdgeId>& reversedEdges) const {
     
-    Result result;
+    LayerAssignmentResult result;
     
     if (roots.empty()) {
         return assignLayers(graph, reversedEdges);
@@ -79,10 +79,10 @@ LayerAssignment::Result LayerAssignment::assignLayersWithRoots(
     return result;
 }
 
-void LayerAssignment::longestPathAssignment(
+void LongestPathLayerAssignment::longestPathAssignment(
     const Graph& graph,
     const std::unordered_set<EdgeId>& reversedEdges,
-    Result& result) {
+    LayerAssignmentResult& result) const {
     
     std::vector<NodeId> nodes = graph.nodes();
     std::unordered_map<NodeId, int> memo;
@@ -138,11 +138,11 @@ void LayerAssignment::longestPathAssignment(
     }
 }
 
-int LayerAssignment::computeLayerDFS(
+int LongestPathLayerAssignment::computeLayerDFS(
     NodeId node,
     const Graph& graph,
     const std::unordered_set<EdgeId>& reversedEdges,
-    std::unordered_map<NodeId, int>& memo) {
+    std::unordered_map<NodeId, int>& memo) const {
     
     // Already computed
     auto it = memo.find(node);

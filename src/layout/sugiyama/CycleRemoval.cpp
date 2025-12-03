@@ -3,8 +3,8 @@
 namespace arborvia {
 namespace algorithms {
 
-CycleRemoval::Result CycleRemoval::findEdgesToReverse(const Graph& graph) {
-    Result result;
+CycleRemovalResult CycleRemoval::findEdgesToReverse(const Graph& graph) const {
+    CycleRemovalResult result;
     result.isAcyclic = true;
     
     std::vector<NodeId> nodes = graph.nodes();
@@ -38,14 +38,14 @@ CycleRemoval::Result CycleRemoval::findEdgesToReverse(const Graph& graph) {
     return result;
 }
 
-bool CycleRemoval::hasCycles(const Graph& graph) {
+bool CycleRemoval::hasCycles(const Graph& graph) const {
     return !findEdgesToReverse(graph).isAcyclic;
 }
 
 void CycleRemoval::dfs(NodeId node, const Graph& graph,
                        const std::unordered_map<NodeId, size_t>& nodeIndex,
                        std::vector<NodeState>& state,
-                       std::unordered_set<EdgeId>& backEdges) {
+                       std::unordered_set<EdgeId>& backEdges) const {
     size_t nodeIdx = nodeIndex.at(node);
     state[nodeIdx] = NodeState::Gray;  // Currently being processed
     

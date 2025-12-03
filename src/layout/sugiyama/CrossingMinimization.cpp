@@ -6,14 +6,14 @@
 namespace arborvia {
 namespace algorithms {
 
-CrossingMinimization::Result CrossingMinimization::minimize(
+CrossingMinimizationResult BarycenterCrossingMinimization::minimize(
     const Graph& graph,
     std::vector<std::vector<NodeId>> layers,
     const std::unordered_set<EdgeId>& reversedEdges,
     arborvia::CrossingMinimization strategy,
-    int passes) {
+    int passes) const {
     
-    Result result;
+    CrossingMinimizationResult result;
     result.layers = std::move(layers);
     
     if (result.layers.size() < 2) {
@@ -47,11 +47,11 @@ CrossingMinimization::Result CrossingMinimization::minimize(
     return result;
 }
 
-int CrossingMinimization::countCrossings(
+int BarycenterCrossingMinimization::countCrossings(
     const Graph& graph,
     const std::vector<NodeId>& upperLayer,
     const std::vector<NodeId>& lowerLayer,
-    const std::unordered_set<EdgeId>& reversedEdges) {
+    const std::unordered_set<EdgeId>& reversedEdges) const {
     
     // Build position maps
     std::unordered_map<NodeId, int> upperPos, lowerPos;
@@ -98,10 +98,10 @@ int CrossingMinimization::countCrossings(
     return crossings;
 }
 
-int CrossingMinimization::countTotalCrossings(
+int BarycenterCrossingMinimization::countTotalCrossings(
     const Graph& graph,
     const std::vector<std::vector<NodeId>>& layers,
-    const std::unordered_set<EdgeId>& reversedEdges) {
+    const std::unordered_set<EdgeId>& reversedEdges) const {
     
     int total = 0;
     for (size_t i = 0; i + 1 < layers.size(); ++i) {
@@ -110,11 +110,11 @@ int CrossingMinimization::countTotalCrossings(
     return total;
 }
 
-void CrossingMinimization::barycenterSweep(
+void BarycenterCrossingMinimization::barycenterSweep(
     const Graph& graph,
     std::vector<std::vector<NodeId>>& layers,
     const std::unordered_set<EdgeId>& reversedEdges,
-    bool downward) {
+    bool downward) const {
     
     if (downward) {
         // Process layers from top to bottom
@@ -156,23 +156,23 @@ void CrossingMinimization::barycenterSweep(
     }
 }
 
-void CrossingMinimization::medianSweep(
+void BarycenterCrossingMinimization::medianSweep(
     const Graph& graph,
     std::vector<std::vector<NodeId>>& layers,
     const std::unordered_set<EdgeId>& reversedEdges,
-    bool downward) {
+    bool downward) const {
     
     // Similar to barycenter but use median instead of mean
     // For simplicity, reuse barycenter for now (median is similar for small graphs)
     barycenterSweep(graph, layers, reversedEdges, downward);
 }
 
-float CrossingMinimization::computeBarycenter(
+float BarycenterCrossingMinimization::computeBarycenter(
     NodeId node,
     const Graph& graph,
     const std::vector<NodeId>& adjacentLayer,
     const std::unordered_set<EdgeId>& reversedEdges,
-    bool useSuccessors) {
+    bool useSuccessors) const {
     
     // Build position map for adjacent layer
     std::unordered_map<NodeId, int> pos;

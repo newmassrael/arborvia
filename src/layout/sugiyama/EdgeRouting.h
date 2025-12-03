@@ -8,12 +8,14 @@
 #include <unordered_set>
 #include <vector>
 #include <map>
+#include <memory>
 
 namespace arborvia {
 namespace algorithms {
 
-// Forward declaration
+// Forward declarations
 class SnapIndexManager;
+class IPathFinder;
 
 /// Channel assignment info for an edge
 struct ChannelAssignment {
@@ -36,6 +38,10 @@ struct ChannelRegion {
 /// Routes edges with appropriate bend points
 class EdgeRouting {
 public:
+    /// Constructor with dependency injection for pathfinder
+    /// @param pathFinder Pathfinder to use for routing (uses AStarPathFinder by default)
+    explicit EdgeRouting(std::shared_ptr<IPathFinder> pathFinder = nullptr);
+
     /// Result of edge routing operation
     struct Result {
         std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
@@ -49,6 +55,9 @@ public:
         }
     };
     
+    /// Get the pathfinder instance
+    const IPathFinder& pathFinder() const { return *pathFinder_; }
+
     /// Route edges based on node positions
     Result route(const Graph& graph,
                 const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -56,7 +65,7 @@ public:
                 const LayoutOptions& options);
     
     /// Distribute snap points evenly for edges connecting to same node edge (Auto mode)
-    static void distributeAutoSnapPoints(
+    void distributeAutoSnapPoints(
         Result& result,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         SnapDistribution distribution = SnapDistribution::Separated,
@@ -71,7 +80,7 @@ public:
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
-    static void updateEdgePositions(
+    void updateEdgePositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
@@ -139,7 +148,7 @@ private:
     /// @param layout The edge layout to recalculate bend points for
     /// @param nodeLayouts All node layouts for intersection checking
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
-    static void recalculateBendPoints(
+    void recalculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize = 0.0f);
@@ -230,6 +239,8 @@ private:
         int loopIndex,
         const LayoutOptions& options);
 
+    /// Pathfinder instance (injected via constructor)
+    std::shared_ptr<IPathFinder> pathFinder_;
 };
 
 }  // namespace algorithms

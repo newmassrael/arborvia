@@ -46,7 +46,8 @@ ConstraintResult EdgeValidityConstraint::check(const ConstraintContext& ctx) con
 
     // Update affected edge positions
     std::unordered_set<NodeId> movedNodes = {ctx.nodeId};
-    algorithms::EdgeRouting::updateEdgePositions(
+    algorithms::EdgeRouting routing;
+    routing.updateEdgePositions(
         tempEdgeLayouts, tempNodeLayouts, affectedEdges,
         SnapDistribution::Separated, movedNodes, ctx.gridSize);
 

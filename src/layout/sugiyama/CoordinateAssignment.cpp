@@ -5,10 +5,10 @@
 namespace arborvia {
 namespace algorithms {
 
-CoordinateAssignment::Result CoordinateAssignment::assign(
+CoordinateAssignmentResult SimpleCoordinateAssignment::assign(
     const Graph& graph,
     const std::vector<std::vector<NodeId>>& layers,
-    const LayoutOptions& options) {
+    const LayoutOptions& options) const {
     
     // Build default node sizes
     std::unordered_map<NodeId, Size> nodeSizes;
@@ -25,13 +25,13 @@ CoordinateAssignment::Result CoordinateAssignment::assign(
     return assignWithSizes(graph, layers, nodeSizes, options);
 }
 
-CoordinateAssignment::Result CoordinateAssignment::assignWithSizes(
+CoordinateAssignmentResult SimpleCoordinateAssignment::assignWithSizes(
     const Graph& graph,
     const std::vector<std::vector<NodeId>>& layers,
     const std::unordered_map<NodeId, Size>& nodeSizes,
-    const LayoutOptions& options) {
+    const LayoutOptions& options) const {
     
-    Result result;
+    CoordinateAssignmentResult result;
     
     if (layers.empty()) {
         return result;
@@ -42,12 +42,12 @@ CoordinateAssignment::Result CoordinateAssignment::assignWithSizes(
     return result;
 }
 
-void CoordinateAssignment::simpleAssignment(
+void SimpleCoordinateAssignment::simpleAssignment(
     [[maybe_unused]] const Graph& graph,
     const std::vector<std::vector<NodeId>>& layers,
     const std::unordered_map<NodeId, Size>& nodeSizes,
     const LayoutOptions& options,
-    Result& result) {
+    CoordinateAssignmentResult& result) const {
     
     // Compute positions based on direction
     bool horizontal = (options.direction == Direction::LeftToRight || 
@@ -128,22 +128,22 @@ void CoordinateAssignment::simpleAssignment(
     }
 }
 
-void CoordinateAssignment::brandesKopfAssignment(
+void SimpleCoordinateAssignment::brandesKopfAssignment(
     const Graph& graph,
     const std::vector<std::vector<NodeId>>& layers,
     const std::unordered_map<NodeId, Size>& nodeSizes,
     const LayoutOptions& options,
-    Result& result) {
+    CoordinateAssignmentResult& result) const {
     
     // Brandes-Köpf is more complex - fall back to simple for MVP
     simpleAssignment(graph, layers, nodeSizes, options, result);
 }
 
-float CoordinateAssignment::computeLayerY(
+float SimpleCoordinateAssignment::computeLayerY(
     int layer,
     const std::vector<std::vector<NodeId>>& layers,
     const std::unordered_map<NodeId, Size>& nodeSizes,
-    const LayoutOptions& options) {
+    const LayoutOptions& options) const {
     
     float y = 0.0f;
     

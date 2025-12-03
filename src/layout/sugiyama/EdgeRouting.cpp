@@ -1,7 +1,7 @@
 #include "EdgeRouting.h"
 #include "SnapIndexManager.h"
 #include "ObstacleMap.h"
-#include "PathFinder.h"
+#include "AStarPathFinder.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
 
@@ -470,6 +470,15 @@ namespace {
 }
 
 // =============================================================================
+// Constructor
+// =============================================================================
+
+EdgeRouting::EdgeRouting(std::shared_ptr<IPathFinder> pathFinder)
+    : pathFinder_(pathFinder ? std::move(pathFinder) 
+                             : std::make_shared<AStarPathFinder>()) {
+}
+
+// =============================================================================
 // Static Helper Function Implementations
 // =============================================================================
 
@@ -580,11 +589,10 @@ void EdgeRouting::recalculateBendPoints(
     // - targetEdge constrains arrival direction
     // - sourceNode (layout.from) + extraStartExcludes excluded only at start cell
     // - targetNode (layout.to) + extraGoalExcludes excluded only at goal cell
-    PathFinder pathFinder;
-    PathResult pathResult = pathFinder.findPath(startGrid, goalGrid, obstacles, 
-                                                 layout.from, layout.to,
-                                                 layout.sourceEdge, layout.targetEdge,
-                                                 extraStartExcludes, extraGoalExcludes);
+    PathResult pathResult = pathFinder_->findPath(startGrid, goalGrid, obstacles, 
+                                                  layout.from, layout.to,
+                                                  layout.sourceEdge, layout.targetEdge,
+                                                  extraStartExcludes, extraGoalExcludes);
 
     if (pathResult.found && pathResult.path.size() >= 2) {
         // Convert grid path to pixel bend points
