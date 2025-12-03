@@ -4,10 +4,12 @@
 set(ARBORVIA_CORE_SOURCES
     src/core/Graph.cpp
     src/core/CompoundGraph.cpp
+    src/core/GeometryUtils.cpp
 )
 
 set(ARBORVIA_CORE_HEADERS
     include/arborvia/core/Types.h
     include/arborvia/core/Graph.h
     include/arborvia/core/CompoundGraph.h
+    include/arborvia/core/GeometryUtils.h
 )

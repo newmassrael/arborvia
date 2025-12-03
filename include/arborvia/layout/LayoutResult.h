@@ -52,14 +52,50 @@ struct EdgeLayout {
     Point labelPosition;                      // Pre-computed label position (path midpoint)
     
     /// Get all points in order (source -> bends -> target)
+    /// Note: Creates a new vector on each call. For performance-critical code,
+    /// use forEachPoint() or forEachSegment() instead.
     std::vector<Point> allPoints() const {
         std::vector<Point> result;
+        result.reserve(bendPoints.size() + 2);
         result.push_back(sourcePoint);
         for (const auto& bp : bendPoints) {
             result.push_back(bp.position);
         }
         result.push_back(targetPoint);
         return result;
+    }
+
+    /// Iterate over all points without allocation (source -> bends -> target)
+    /// @param callback Function called for each point in order
+    template<typename Func>
+    void forEachPoint(Func&& callback) const {
+        callback(sourcePoint);
+        for (const auto& bp : bendPoints) {
+            callback(bp.position);
+        }
+        callback(targetPoint);
+    }
+
+    /// Iterate over all segments without allocation
+    /// @param callback Function called for each segment (p1, p2) in order
+    template<typename Func>
+    void forEachSegment(Func&& callback) const {
+        Point prev = sourcePoint;
+        for (const auto& bp : bendPoints) {
+            callback(prev, bp.position);
+            prev = bp.position;
+        }
+        callback(prev, targetPoint);
+    }
+
+    /// Get total number of points (source + bends + target)
+    size_t pointCount() const {
+        return bendPoints.size() + 2;
+    }
+
+    /// Get total number of segments
+    size_t segmentCount() const {
+        return bendPoints.size() + 1;
     }
 };
 
@@ -108,10 +144,25 @@ public:
     std::string toJson() const;
     static LayoutResult fromJson(const std::string& json);
 
+    /// Get edges connected to a node (O(1) lookup using internal index)
+    /// @param nodeId The node to query
+    /// @return Vector of connected edge IDs (both incoming and outgoing)
+    const std::vector<EdgeId>& getConnectedEdges(NodeId nodeId) const;
+
+    /// Rebuild the node-to-edge index (called automatically on setEdgeLayout)
+    /// Use this after bulk modifications via edgeLayouts() reference
+    void rebuildEdgeIndex();
+
 private:
+    void updateEdgeIndex(EdgeId edgeId, const EdgeLayout& layout);
+    void removeFromEdgeIndex(EdgeId edgeId);
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts_;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
+    std::unordered_map<NodeId, std::vector<EdgeId>> nodeToEdges_;  ///< Index: node -> connected edges
     int layerCount_ = 0;
+    
+    static const std::vector<EdgeId> emptyEdgeList_;  ///< Empty list for nodes with no edges
 };
 
 }  // namespace arborvia

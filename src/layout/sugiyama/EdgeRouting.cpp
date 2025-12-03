@@ -6,11 +6,7 @@
 #include "arborvia/layout/LayoutUtils.h"
 
 #include <algorithm>
-#include <array>
-#include <climits>
 #include <cmath>
-#include <optional>
-#include <iostream>
 #include <set>
 #include <unordered_map>
 
@@ -60,11 +56,6 @@ namespace {
     // =========================================================================
     // These constants define offsets in GRID UNITS (integers).
     // All routing calculations use these directly without conversion.
-
-    constexpr int GRID_PERPENDICULAR_OFFSET = 1;  // 1 grid cell for directional constraints
-    constexpr int GRID_AVOIDANCE_MARGIN = 1;      // 1 grid cell for node avoidance
-    constexpr int GRID_REROUTE_MARGIN = 2;        // 2 grid cells for routing around
-    constexpr int GRID_SELF_LOOP_SPACING = 1;     // 1 grid cell for self-loops
 
     // Default grid size when grid is disabled (used for minimum clearance)
     constexpr float DEFAULT_GRID_SIZE = 20.0f;
@@ -359,9 +350,6 @@ namespace {
     // =========================================================================
     // These functions perform all calculations in grid units (integers).
     // Conversion to pixel coordinates happens only at the final BendPoint creation.
-
-
-
 
 
 
@@ -1998,7 +1986,7 @@ EdgeLayout EdgeRouting::routeSelfLoop(
             break;
 
         case SelfLoopDirection::Auto:
-            // Already handled above, but keep for completeness
+            // Auto is converted to Right above, this case should never be reached
             break;
     }
 
@@ -2006,77 +1994,6 @@ EdgeLayout EdgeRouting::routeSelfLoop(
     layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
 
     return layout;
-}
-
-SelfLoopDirection EdgeRouting::analyzeSelfLoopDirection(
-    const NodeLayout& node,
-    const std::unordered_map<EdgeId, EdgeLayout>& existingLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& allNodes) {
-
-    // Cost analysis for each direction
-    std::map<SelfLoopDirection, float> costs;
-    costs[SelfLoopDirection::Right] = 0.0f;
-    costs[SelfLoopDirection::Left] = 0.0f;
-    costs[SelfLoopDirection::Top] = 0.0f;
-    costs[SelfLoopDirection::Bottom] = 0.0f;
-
-    // Check for edges using each direction
-    for (const auto& [edgeId, layout] : existingLayouts) {
-        if (layout.from == node.id || layout.to == node.id) {
-            // Penalize directions with existing connections
-            if (layout.sourceEdge == NodeEdge::Right || layout.targetEdge == NodeEdge::Right) {
-                costs[SelfLoopDirection::Right] += 10.0f;
-            }
-            if (layout.sourceEdge == NodeEdge::Left || layout.targetEdge == NodeEdge::Left) {
-                costs[SelfLoopDirection::Left] += 10.0f;
-            }
-            if (layout.sourceEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Top) {
-                costs[SelfLoopDirection::Top] += 10.0f;
-            }
-            if (layout.sourceEdge == NodeEdge::Bottom || layout.targetEdge == NodeEdge::Bottom) {
-                costs[SelfLoopDirection::Bottom] += 10.0f;
-            }
-        }
-    }
-
-    // Check for nearby nodes in each direction
-    Point center = node.center();
-    for (const auto& [otherId, otherNode] : allNodes) {
-        if (otherId == node.id) continue;
-
-        Point otherCenter = otherNode.center();
-        float dx = otherCenter.x - center.x;
-        float dy = otherCenter.y - center.y;
-
-        // Proximity penalty based on direction
-        float proximity = 100.0f / (std::abs(dx) + std::abs(dy) + 1.0f);
-
-        if (dx > 0 && std::abs(dx) > std::abs(dy)) {
-            costs[SelfLoopDirection::Right] += proximity;
-        }
-        if (dx < 0 && std::abs(dx) > std::abs(dy)) {
-            costs[SelfLoopDirection::Left] += proximity;
-        }
-        if (dy < 0 && std::abs(dy) > std::abs(dx)) {
-            costs[SelfLoopDirection::Top] += proximity;
-        }
-        if (dy > 0 && std::abs(dy) > std::abs(dx)) {
-            costs[SelfLoopDirection::Bottom] += proximity;
-        }
-    }
-
-    // Find minimum cost direction
-    SelfLoopDirection bestDir = SelfLoopDirection::Right;
-    float minCost = costs[SelfLoopDirection::Right];
-
-    for (const auto& [dir, cost] : costs) {
-        if (cost < minCost) {
-            minCost = cost;
-            bestDir = dir;
-        }
-    }
-
-    return bestDir;
 }
 
 }  // namespace algorithms

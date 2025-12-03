@@ -3,6 +3,7 @@
 #include "arborvia/core/Types.h"
 #include "arborvia/layout/LayoutResult.h"
 #include "arborvia/layout/LayoutOptions.h"
+#include "arborvia/layout/ConstraintManager.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -104,6 +105,38 @@ public:
         Point newPosition,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        float gridSize = 20.0f);
+
+    /// Check if a node can be moved to a specific position with custom constraints
+    /// @param nodeId Node being moved
+    /// @param newPosition Proposed new position
+    /// @param nodeLayouts Current node layouts
+    /// @param edgeLayouts Current edge layouts
+    /// @param constraintManager Custom constraint manager to use
+    /// @param gridSize Grid size for routing calculations
+    /// @return DragValidation indicating if move is valid
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const ConstraintManager& constraintManager,
+        float gridSize = 20.0f);
+
+    /// Check if a node can be moved to a specific position using ConstraintConfig
+    /// @param nodeId Node being moved
+    /// @param newPosition Proposed new position
+    /// @param nodeLayouts Current node layouts
+    /// @param edgeLayouts Current edge layouts
+    /// @param config Constraint configuration
+    /// @param gridSize Grid size for routing calculations
+    /// @return DragValidation indicating if move is valid
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const ConstraintConfig& config,
         float gridSize = 20.0f);
 
     /// Get edges connected to a node

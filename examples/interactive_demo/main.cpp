@@ -424,17 +424,17 @@ public:
             layout.position.y = newY;
             
             if (validation.valid) {
-                // Valid position - save as last valid
+                // Valid position - save as last valid and re-route edges
                 isInvalidDragPosition_ = false;
                 lastValidPosition_ = proposedPosition;
                 manualManager_->setNodePosition(draggedNode_, layout.position);
+                
+                // Re-route connected edges only for valid positions
+                rerouteAffectedEdges();
             } else {
-                // Invalid position - show red but still follow mouse
+                // Invalid position - show red, no edge re-routing
                 isInvalidDragPosition_ = true;
             }
-            
-            // Re-route connected edges for visual feedback
-            rerouteAffectedEdges();
         }
         
         // Handle Delete key for bend point removal
@@ -546,6 +546,12 @@ public:
         for (const auto& [id, layout] : edgeLayouts_) {
             bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id) 
                              != affectedEdges_.end();
+            
+            // Hide edges connected to dragged node when in invalid position
+            if (isAffected && isInvalidDragPosition_) {
+                continue;
+            }
+            
             bool isSelected = (id == selectedEdge_);
             bool isHovered = (id == hoveredEdge_);
             
@@ -715,6 +721,13 @@ public:
         ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
 
         for (const auto& [edgeId, edgeLayout] : edgeLayouts_) {
+            // Skip snap points for affected edges when in invalid drag position
+            bool isAffectedEdge = std::find(affectedEdges_.begin(), affectedEdges_.end(), edgeId)
+                                  != affectedEdges_.end();
+            if (isAffectedEdge && isInvalidDragPosition_) {
+                continue;
+            }
+            
             // Source point on this node (outgoing - green)
             if (edgeLayout.from == nodeLayout.id) {
                 ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x,

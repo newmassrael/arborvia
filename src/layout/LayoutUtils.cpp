@@ -1,4 +1,7 @@
 #include "arborvia/layout/LayoutUtils.h"
+#include "arborvia/core/GeometryUtils.h"
+#include "arborvia/layout/ConstraintManager.h"
+#include "arborvia/layout/ConstraintConfig.h"
 #include "sugiyama/EdgeRouting.h"
 #include <cmath>
 #include <algorithm>
@@ -7,79 +10,6 @@ namespace arborvia {
 
 namespace {
     constexpr float EPSILON_LEN2 = 0.0001f;  // Minimum squared length for valid segment
-    
-    /// Check if a line segment intersects an axis-aligned bounding box
-    /// Uses separating axis theorem for orthogonal segments
-    bool segmentIntersectsAABB(
-        const Point& p1,
-        const Point& p2,
-        const Point& boxPos,
-        const Size& boxSize) {
-        
-        float boxRight = boxPos.x + boxSize.width;
-        float boxBottom = boxPos.y + boxSize.height;
-        
-        // Get segment bounding box
-        float segMinX = std::min(p1.x, p2.x);
-        float segMaxX = std::max(p1.x, p2.x);
-        float segMinY = std::min(p1.y, p2.y);
-        float segMaxY = std::max(p1.y, p2.y);
-        
-        // Quick rejection: bounding boxes don't overlap
-        if (segMaxX < boxPos.x || segMinX > boxRight ||
-            segMaxY < boxPos.y || segMinY > boxBottom) {
-            return false;
-        }
-        
-        // For orthogonal segments (which edge paths typically are),
-        // if bounding boxes overlap, segment intersects the box
-        bool isVertical = std::abs(p1.x - p2.x) < 0.001f;
-        bool isHorizontal = std::abs(p1.y - p2.y) < 0.001f;
-        
-        if (isVertical || isHorizontal) {
-            // Bounding box overlap already confirmed above
-            return true;
-        }
-        
-        // For diagonal segments, do more precise check
-        // Check if any corner of the box is on opposite sides of the line
-        auto sign = [](float v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); };
-        
-        float dx = p2.x - p1.x;
-        float dy = p2.y - p1.y;
-        
-        // Cross product signs for each corner
-        auto crossSign = [&](float cx, float cy) {
-            return sign((cx - p1.x) * dy - (cy - p1.y) * dx);
-        };
-        
-        int s1 = crossSign(boxPos.x, boxPos.y);
-        int s2 = crossSign(boxRight, boxPos.y);
-        int s3 = crossSign(boxRight, boxBottom);
-        int s4 = crossSign(boxPos.x, boxBottom);
-        
-        // If all corners are on the same side, no intersection
-        if (s1 == s2 && s2 == s3 && s3 == s4 && s1 != 0) {
-            return false;
-        }
-        
-        return true;
-    }
-    
-    /// Check if any segment of an edge path intersects the given AABB
-    bool edgePathIntersectsAABB(
-        const EdgeLayout& layout,
-        const Point& boxPos,
-        const Size& boxSize) {
-        
-        auto points = layout.allPoints();
-        for (size_t i = 1; i < points.size(); ++i) {
-            if (segmentIntersectsAABB(points[i-1], points[i], boxPos, boxSize)) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
 
 void LayoutUtils::updateEdgePositions(
@@ -123,21 +53,22 @@ LayoutUtils::EdgeHitResult LayoutUtils::hitTestEdge(
     float threshold)
 {
     EdgeHitResult result;
-    auto points = edge.allPoints();
-
     float minDist = threshold;
-    for (size_t i = 1; i < points.size(); ++i) {
+    int segmentIndex = 0;
+
+    edge.forEachSegment([&](const Point& p1, const Point& p2) {
         Point closest;
-        float dist = pointToSegmentDistance(point, points[i-1], points[i], closest);
+        float dist = pointToSegmentDistance(point, p1, p2, closest);
 
         if (dist < minDist) {
             minDist = dist;
             result.hit = true;
-            result.segmentIndex = static_cast<int>(i) - 1;
+            result.segmentIndex = segmentIndex;
             result.closestPoint = closest;
             result.distance = dist;
         }
-    }
+        ++segmentIndex;
+    });
 
     return result;
 }
@@ -246,80 +177,46 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     float gridSize) {
     
+    // Use ConstraintManager with default constraints
+    // Default constraints: MinDistanceConstraint (5 grid units), EdgeValidityConstraint
+    static auto constraintManager = ConstraintManager::createDefault(constants::MIN_NODE_GRID_DISTANCE);
+    
+    return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, constraintManager, gridSize);
+}
+
+LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
+    NodeId nodeId,
+    Point newPosition,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const ConstraintManager& constraintManager,
+    float gridSize) {
+    
+    ConstraintContext ctx{nodeId, newPosition, nodeLayouts, edgeLayouts, gridSize};
+    auto validationResult = constraintManager.validate(ctx);
+    
+    // Convert DragValidationResult to DragValidation for API compatibility
     DragValidation result;
-    result.valid = true;
-    
-    auto nodeIt = nodeLayouts.find(nodeId);
-    if (nodeIt == nodeLayouts.end()) {
-        return result;  // Node not found, allow move
-    }
-    
-    // === Early return: Distance check (O(N), very fast) ===
-    // Forbid move if within 5 grid units of any other node
-    constexpr float MIN_GRID_DISTANCE = 5.0f;
-    float minDist = MIN_GRID_DISTANCE * gridSize;
-    const Size& nodeSize = nodeIt->second.size;
-    
-    for (const auto& [otherId, other] : nodeLayouts) {
-        if (otherId == nodeId) continue;
-        
-        // Calculate AABB distance (gap between bounding boxes)
-        float dx = std::max(0.0f, std::max(other.position.x - (newPosition.x + nodeSize.width),
-                                           newPosition.x - (other.position.x + other.size.width)));
-        float dy = std::max(0.0f, std::max(other.position.y - (newPosition.y + nodeSize.height),
-                                           newPosition.y - (other.position.y + other.size.height)));
-        
-        if (dx < minDist && dy < minDist) {
-            result.valid = false;
-            return result;  // Too close to another node - early return
-        }
-    }
-    
-    // === Full validation (expensive, but node is far enough from others) ===
-    
-    // Create temporary node layouts with the proposed move
-    auto tempNodeLayouts = nodeLayouts;
-    auto tempNodeIt = tempNodeLayouts.find(nodeId);
-    tempNodeIt->second.position = newPosition;
-    
-    // Collect only AFFECTED edges for validation (performance optimization)
-    // Affected edges are:
-    // 1. Edges directly connected to the moved node
-    // 2. Edges whose current path intersects the node's new position
-    std::vector<EdgeId> affectedEdges;
-    affectedEdges.reserve(edgeLayouts.size() / 10);  // Typically ~10% of edges affected
-    
-    for (const auto& [edgeId, layout] : edgeLayouts) {
-        // Type 1: Connected to moved node
-        if (layout.from == nodeId || layout.to == nodeId) {
-            affectedEdges.push_back(edgeId);
-            continue;
-        }
-        // Type 2: Path intersects new node position
-        if (edgePathIntersectsAABB(layout, newPosition, nodeSize)) {
-            affectedEdges.push_back(edgeId);
-        }
-    }
-    
-    // Create temp edge layouts for validation
-    auto tempEdgeLayouts = edgeLayouts;
-    
-    // Update only affected edge positions after the node move
-    std::unordered_set<NodeId> movedNodes = {nodeId};
-    algorithms::EdgeRouting::updateEdgePositions(tempEdgeLayouts, tempNodeLayouts, affectedEdges,
-                                                  SnapDistribution::Separated, movedNodes, gridSize);
-    
-    // Check only affected edges for valid routing
-    for (EdgeId edgeId : affectedEdges) {
-        const auto& layout = tempEdgeLayouts.at(edgeId);
-        auto validation = algorithms::EdgeRouting::validateEdgeLayout(layout, tempNodeLayouts);
-        if (!validation.valid) {
-            result.valid = false;
-            result.invalidEdges.push_back(edgeId);
-        }
-    }
+    result.valid = validationResult.valid;
+    result.invalidEdges = std::move(validationResult.invalidEdges);
     
     return result;
+}
+
+LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
+    NodeId nodeId,
+    Point newPosition,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const ConstraintConfig& config,
+    float gridSize) {
+    
+    // Create manager from config (or use default if config is empty)
+    auto manager = config.empty() 
+        ? ConstraintFactory::create(ConstraintConfig::createDefault())
+        : ConstraintFactory::create(config);
+    
+    return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, *manager, gridSize);
 }
 
 bool LayoutUtils::canMoveNodeToFast(

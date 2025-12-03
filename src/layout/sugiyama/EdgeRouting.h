@@ -230,11 +230,6 @@ private:
         int loopIndex,
         const LayoutOptions& options);
 
-    /// Analyze best direction for self-loop
-    SelfLoopDirection analyzeSelfLoopDirection(
-        const NodeLayout& node,
-        const std::unordered_map<EdgeId, EdgeLayout>& existingLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& allNodes);
 };
 
 }  // namespace algorithms

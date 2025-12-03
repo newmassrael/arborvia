@@ -8,6 +8,10 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/LayoutUtils.cpp
     src/layout/LayoutSerializer.cpp
     src/layout/OrthogonalRouter.cpp
+    src/layout/ConstraintManager.cpp
+    src/layout/ConstraintConfig.cpp
+    src/layout/constraints/MinDistanceConstraint.cpp
+    src/layout/constraints/EdgeValidityConstraint.cpp
     src/layout/sugiyama/CycleRemoval.cpp
     src/layout/sugiyama/LayerAssignment.cpp
     src/layout/sugiyama/CrossingMinimization.cpp
@@ -31,4 +35,9 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/LayoutUtils.h
     include/arborvia/layout/LayoutSerializer.h
     include/arborvia/layout/OrthogonalRouter.h
+    include/arborvia/layout/IDragConstraint.h
+    include/arborvia/layout/ConstraintManager.h
+    include/arborvia/layout/ConstraintConfig.h
+    include/arborvia/layout/MinDistanceConstraint.h
+    include/arborvia/layout/EdgeValidityConstraint.h
 )

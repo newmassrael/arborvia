@@ -2,6 +2,7 @@
 
 #include "../core/Types.h"
 #include "LayoutTypes.h"
+#include "ConstraintConfig.h"
 
 namespace arborvia {
 
@@ -145,6 +146,10 @@ struct LayoutOptions {
     // Grid configuration (all coordinates snap to grid)
     GridConfig gridConfig;
 
+    // Drag constraint configuration
+    // If empty, default constraints (MinDistance + EdgeValidity) are used
+    ConstraintConfig constraintConfig;
+
     // Builder pattern for convenient configuration
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
     LayoutOptions& setNodeSpacing(float h, float v) { 
@@ -174,6 +179,11 @@ struct LayoutOptions {
     LayoutOptions& setDefaultSnapPointCount(int count) { defaultSnapPointCount = count; return *this; }
     LayoutOptions& setSnapDistribution(SnapDistribution sd) { snapDistribution = sd; return *this; }
     LayoutOptions& setGridCellSize(float size) { gridConfig.cellSize = size; return *this; }
+    LayoutOptions& setConstraintConfig(const ConstraintConfig& config) { constraintConfig = config; return *this; }
+    LayoutOptions& setMinNodeDistance(float gridUnits) {
+        constraintConfig = ConstraintConfig::createEmpty().addMinDistance(gridUnits).addEdgeValidity();
+        return *this;
+    }
 };
 
 }  // namespace arborvia

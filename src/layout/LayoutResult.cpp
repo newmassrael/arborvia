@@ -25,7 +25,17 @@ bool LayoutResult::hasNodeLayout(NodeId id) const {
 }
 
 void LayoutResult::setEdgeLayout(EdgeId id, const EdgeLayout& layout) {
+    // Remove from old index if edge already exists
+    auto it = edgeLayouts_.find(id);
+    if (it != edgeLayouts_.end()) {
+        removeFromEdgeIndex(id);
+    }
+    
+    // Store the layout
     edgeLayouts_[id] = layout;
+    
+    // Update the index
+    updateEdgeIndex(id, layout);
 }
 
 const EdgeLayout* LayoutResult::getEdgeLayout(EdgeId id) const {
@@ -116,6 +126,7 @@ void LayoutResult::translate(float dx, float dy) {
 void LayoutResult::clear() {
     nodeLayouts_.clear();
     edgeLayouts_.clear();
+    nodeToEdges_.clear();
     layerCount_ = 0;
 }
 
@@ -125,6 +136,51 @@ std::string LayoutResult::toJson() const {
 
 LayoutResult LayoutResult::fromJson(const std::string& json) {
     return LayoutSerializer::layoutResultFromJson(json);
+}
+
+// Static empty list for nodes with no connected edges
+const std::vector<EdgeId> LayoutResult::emptyEdgeList_;
+
+const std::vector<EdgeId>& LayoutResult::getConnectedEdges(NodeId nodeId) const {
+    auto it = nodeToEdges_.find(nodeId);
+    if (it != nodeToEdges_.end()) {
+        return it->second;
+    }
+    return emptyEdgeList_;
+}
+
+void LayoutResult::rebuildEdgeIndex() {
+    nodeToEdges_.clear();
+    for (const auto& [edgeId, layout] : edgeLayouts_) {
+        updateEdgeIndex(edgeId, layout);
+    }
+}
+
+void LayoutResult::updateEdgeIndex(EdgeId edgeId, const EdgeLayout& layout) {
+    // Add to source node's list
+    nodeToEdges_[layout.from].push_back(edgeId);
+    
+    // Add to target node's list (if different from source)
+    if (layout.to != layout.from) {
+        nodeToEdges_[layout.to].push_back(edgeId);
+    }
+}
+
+void LayoutResult::removeFromEdgeIndex(EdgeId edgeId) {
+    auto it = edgeLayouts_.find(edgeId);
+    if (it == edgeLayouts_.end()) return;
+    
+    const EdgeLayout& layout = it->second;
+    
+    // Remove from source node's list
+    auto& fromEdges = nodeToEdges_[layout.from];
+    fromEdges.erase(std::remove(fromEdges.begin(), fromEdges.end(), edgeId), fromEdges.end());
+    
+    // Remove from target node's list
+    if (layout.to != layout.from) {
+        auto& toEdges = nodeToEdges_[layout.to];
+        toEdges.erase(std::remove(toEdges.begin(), toEdges.end(), edgeId), toEdges.end());
+    }
 }
 
 }  // namespace arborvia
