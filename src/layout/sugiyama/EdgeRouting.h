@@ -47,14 +47,14 @@ public:
         std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
         // Optional: channel assignments for debugging/visualization
         std::unordered_map<EdgeId, ChannelAssignment> channelAssignments;
-        
+
         /// Get edge layout by ID, returns nullptr if not found
         const EdgeLayout* getEdgeLayout(EdgeId id) const {
             auto it = edgeLayouts.find(id);
             return it != edgeLayouts.end() ? &it->second : nullptr;
         }
     };
-    
+
     /// Get the pathfinder instance
     const IPathFinder& pathFinder() const { return *pathFinder_; }
 
@@ -63,20 +63,18 @@ public:
                 const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
                 const std::unordered_set<EdgeId>& reversedEdges,
                 const LayoutOptions& options);
-    
+
     /// Distribute snap points evenly for edges connecting to same node edge (Auto mode)
     void distributeAutoSnapPoints(
         Result& result,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        SnapDistribution distribution = SnapDistribution::Separated,
         float gridSize = 0.0f);
-    
+
     /// Update edge positions when nodes move (for interactive drag)
     /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
     /// @param edgeLayouts The edge layouts to update (modified in place)
     /// @param nodeLayouts Current node positions
     /// @param affectedEdges Edges that need updating (connected to moved nodes)
-    /// @param distribution Snap distribution mode
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
@@ -84,12 +82,11 @@ public:
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
-        SnapDistribution distribution = SnapDistribution::Separated,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
 
     // === Edge Layout Validation ===
-    
+
     /// Validation result for an edge layout
     struct ValidationResult {
         bool valid = true;
@@ -97,11 +94,11 @@ public:
         bool noNodeIntersection = true;   ///< No segments pass through nodes
         bool sourceDirectionOk = true;    ///< First segment matches sourceEdge direction
         bool targetDirectionOk = true;    ///< Last segment matches targetEdge direction
-        
+
         /// Get human-readable error description
         std::string getErrorDescription() const;
     };
-    
+
     /// Validate an edge layout against all routing constraints
     /// Checks: orthogonality, node intersection, direction constraints
     /// @param layout The edge layout to validate
@@ -112,7 +109,7 @@ public:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
     // === Utility functions for edge routing (public for internal helper use) ===
-    
+
     /// Check if an orthogonal segment intersects a node's interior or margin zone
     /// @param p1 Start point of segment
     /// @param p2 End point of segment
@@ -127,16 +124,15 @@ public:
 
 private:
     // === Helper functions for snap point calculation ===
-    
+
     /// Calculate snap point position on a node edge
     /// @param node The node layout
     /// @param edge Which edge of the node (Top, Bottom, Left, Right)
     /// @param position Relative position along the edge (0.0 to 1.0)
     /// @return Absolute point coordinates
     static Point calculateSnapPosition(const NodeLayout& node, NodeEdge edge, float position);
-    
+
     /// Convert unified snap index to local index within a group
-    /// In Separated mode, indices are unified: incoming [0, inCount), outgoing [inCount, total)
     /// This function converts to local index [0, count) for position calculation
     /// @param unifiedIdx The unified snap index from EdgeLayout
     /// @param offset The offset for this group (0 for incoming, inCount for outgoing)
@@ -200,7 +196,7 @@ private:
         }
         return edgeMap;
     }
-    
+
     /// Build edge lookup map for bidirectional detection from EdgeLayouts
     /// Returns map: (from, to) -> edgeId (skips self-loops)
     template<typename Hash>

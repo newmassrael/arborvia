@@ -19,14 +19,13 @@ public:
     /// @param edgeLayouts The edge layouts to update (modified in place)
     /// @param nodeLayouts Current node positions
     /// @param affectedEdges Edges that need updating (connected to moved nodes)
-    /// @param distribution Snap distribution mode
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
+    /// @param gridSize Grid size for snapping (0 = no snapping)
     static void updateEdgePositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
-        SnapDistribution distribution = SnapDistribution::Separated,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
 

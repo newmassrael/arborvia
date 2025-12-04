@@ -26,17 +26,17 @@ namespace {
 struct SugiyamaLayout::LayoutState {
     const Graph* graph = nullptr;
     const CompoundGraph* compoundGraph = nullptr;
-    
+
     std::unordered_set<EdgeId> reversedEdges;
     std::vector<std::vector<NodeId>> layers;
     std::unordered_map<NodeId, int> nodeLayer;
     std::unordered_map<NodeId, Size> nodeSizes;
     std::unordered_map<NodeId, Point> nodePositions;
-    
+
     LayoutResult result;
 };
 
-SugiyamaLayout::SugiyamaLayout() 
+SugiyamaLayout::SugiyamaLayout()
     : SugiyamaLayout(LayoutOptions{}) {}
 
 SugiyamaLayout::SugiyamaLayout(const LayoutOptions& options)
@@ -82,39 +82,41 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
     state_->graph = &graph;
     state_->result.clear();
     stats_ = LayoutStats{};
-    
+
     if (graph.nodeCount() == 0) {
         return state_->result;
     }
-    
+
     // Build node sizes map
     for (NodeId id : graph.nodes()) {
         state_->nodeSizes[id] = graph.getNode(id).size;
     }
-    
+
     // Phase 1: Cycle Removal
     removeCycles();
-    
+
     // Phase 2: Layer Assignment
     assignLayers();
-    
+
     // Phase 3: Crossing Minimization
     minimizeCrossings();
-    
+
     // Phase 4: Coordinate Assignment
     assignCoordinates();
-    
+
+    // Apply manual node positions BEFORE edge routing (so edges route to correct positions)
+    if (manualManager_) {
+        manualManager_->applyManualNodePositions(state_->result);
+    }
+
     // Phase 5: Edge Routing
     routeEdges();
-    
-    // Apply manual layout state if in manual mode
-    if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
-        manualManager_->applyManualState(state_->result, graph);
-        
-        // Update edge positions to match manual node positions
-        updateEdgePositionsAfterManualState();
+
+    // Apply manual edge routings (to override auto-routing if set)
+    if (manualManager_) {
+        manualManager_->applyManualEdgeRoutings(state_->result);
     }
-    
+
     return state_->result;
 }
 
@@ -124,29 +126,29 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
     state_->compoundGraph = &graph;
     state_->result.clear();
     stats_ = LayoutStats{};
-    
+
     if (graph.nodeCount() == 0) {
         return state_->result;
     }
-    
+
     // Build node sizes map
     for (NodeId id : graph.nodes()) {
         state_->nodeSizes[id] = graph.getNode(id).size;
     }
-    
+
     // For compound graphs, we need to layout bottom-up
     // 1. First, find all root nodes
     std::vector<NodeId> roots = graph.rootNodes();
-    
+
     // 2. Layout each root's subtree
     for (NodeId root : roots) {
         layoutCompoundNode(root, graph);
     }
-    
+
     // 3. Layout the roots as a flat graph
     // Build a subgraph of just root-level nodes
     // For now, treat visible nodes at root level as a flat graph
-    
+
     // Collect root-level visible nodes and their edges
     std::vector<NodeId> rootLevel;
     for (NodeId id : graph.nodes()) {
@@ -154,24 +156,27 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
             rootLevel.push_back(id);
         }
     }
-    
+
     if (!rootLevel.empty()) {
         // Simple layout for root nodes
         removeCycles();
         assignLayers();
         minimizeCrossings();
         assignCoordinates();
+
+        // Apply manual node positions BEFORE edge routing
+        if (manualManager_) {
+            manualManager_->applyManualNodePositions(state_->result);
+        }
+
         routeEdges();
     }
-    
-    // Apply manual layout state if in manual mode
-    if (manualManager_ && manualManager_->getMode() == LayoutMode::Manual) {
-        manualManager_->applyManualState(state_->result, graph);
-        
-        // Update edge positions to match manual node positions
-        updateEdgePositionsAfterManualState();
+
+    // Apply manual edge routings (to override auto-routing if set)
+    if (manualManager_) {
+        manualManager_->applyManualEdgeRoutings(state_->result);
     }
-    
+
     return state_->result;
 }
 
@@ -222,7 +227,7 @@ void SugiyamaLayout::removeCycles() {
 
 void SugiyamaLayout::assignLayers() {
     auto result = layerAssignment_->assignLayers(
-        *state_->graph, state_->reversedEdges, options_.layerAssignment);
+        *state_->graph, state_->reversedEdges);
 
     state_->layers = std::move(result.layers);
     state_->nodeLayer = std::move(result.nodeLayer);
@@ -240,10 +245,10 @@ void SugiyamaLayout::minimizeCrossings() {
 
     state_->layers = std::move(result.layers);
     stats_.edgeCrossings = result.crossingCount;
-    
+
     // Update max layer width
     for (const auto& layer : state_->layers) {
-        stats_.maxLayerWidth = std::max(stats_.maxLayerWidth, 
+        stats_.maxLayerWidth = std::max(stats_.maxLayerWidth,
                                         static_cast<int>(layer.size()));
     }
 }
@@ -255,13 +260,13 @@ void SugiyamaLayout::assignCoordinates() {
                                         options_);
 
     state_->nodePositions = std::move(result.positions);
-    
+
     // Build node layouts
     for (size_t layerIdx = 0; layerIdx < state_->layers.size(); ++layerIdx) {
         const auto& layer = state_->layers[layerIdx];
         for (size_t order = 0; order < layer.size(); ++order) {
             NodeId id = layer[order];
-            
+
             NodeLayout layout;
             layout.id = id;
             // Apply grid snap to node position
@@ -284,17 +289,17 @@ void SugiyamaLayout::routeEdges() {
                                state_->result.nodeLayouts(),
                                state_->reversedEdges,
                                options_);
-    
+
     // Apply auto snap point distribution if enabled
-    if (options_.autoSnapPoints && options_.mode == LayoutMode::Auto) {
+    if (options_.autoSnapPoints) {
         routing.distributeAutoSnapPoints(
-            result, state_->result.nodeLayouts(), options_.snapDistribution,
+            result, state_->result.nodeLayouts(),
             options_.gridConfig.cellSize);
     }
-    
+
     for (auto& [id, layout] : result.edgeLayouts) {
         state_->result.setEdgeLayout(id, layout);
-        
+
         // Calculate edge length for stats
         auto points = layout.allPoints();
         for (size_t i = 1; i < points.size(); ++i) {
@@ -303,39 +308,13 @@ void SugiyamaLayout::routeEdges() {
     }
 }
 
-void SugiyamaLayout::updateEdgePositionsAfterManualState() {
-    // Get all edge IDs
-    std::vector<EdgeId> allEdges;
-    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    for (const auto& [id, layout] : state_->result.edgeLayouts()) {
-        allEdges.push_back(id);
-        edgeLayouts[id] = layout;
-    }
-    
-    // Update edge positions based on current (manual) node positions
-    algorithms::EdgeRouting routing;
-    routing.updateEdgePositions(
-        edgeLayouts,
-        state_->result.nodeLayouts(),
-        allEdges,
-        options_.snapDistribution,
-        {},  // Empty set = update all nodes
-        options_.gridConfig.cellSize
-    );
-    
-    // Apply updated edge layouts back to result
-    for (const auto& [id, layout] : edgeLayouts) {
-        state_->result.setEdgeLayout(id, layout);
-    }
-}
-
 void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
     // Skip if not visible or atomic
     if (!graph.isVisible(id)) return;
-    
+
     std::vector<NodeId> children = graph.getChildren(id);
     if (children.empty()) return;
-    
+
     // Check if this is a parallel node
     if (graph.isParallel(id)) {
         layoutParallelRegions(id, graph);
@@ -347,13 +326,13 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
                 layoutCompoundNode(child, graph);
             }
         }
-        
+
         // Now layout children of this compound node
         // (This would require creating a subgraph and running layout on it)
         // For MVP, just stack them vertically
         float currentY = options_.compoundPadding;
         float maxWidth = 0.0f;
-        
+
         for (NodeId child : children) {
             const float gridSize = options_.gridConfig.cellSize;
             Point pos = {snapToGrid(options_.compoundPadding, gridSize),
@@ -370,7 +349,7 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
             currentY += size.height + options_.nodeSpacingVertical;
             maxWidth = std::max(maxWidth, size.width);
         }
-        
+
         // Update compound node size
         state_->nodeSizes[id] = {
             maxWidth + 2 * options_.compoundPadding,
@@ -382,17 +361,17 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
 void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph) {
     std::vector<NodeId> children = graph.getChildren(id);
     if (children.empty()) return;
-    
+
     // Layout children side by side (horizontally)
     float currentX = options_.compoundPadding;
     float maxHeight = 0.0f;
-    
+
     for (NodeId child : children) {
         // Recursively layout child if it has children
         if (graph.hasChildren(child)) {
             layoutCompoundNode(child, graph);
         }
-        
+
         Size size = state_->nodeSizes[child];
         const float gridSize = options_.gridConfig.cellSize;
         Point pos = {snapToGrid(currentX, gridSize),
@@ -408,7 +387,7 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
         currentX += size.width + options_.parallelSpacing;
         maxHeight = std::max(maxHeight, size.height);
     }
-    
+
     // Update parallel node size
     state_->nodeSizes[id] = {
         currentX - options_.parallelSpacing + options_.compoundPadding,
@@ -419,10 +398,10 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
 void SugiyamaLayout::updateCompoundBounds(NodeId id, const CompoundGraph& graph) {
     std::vector<NodeId> children = graph.getChildren(id);
     if (children.empty()) return;
-    
+
     Rect bounds{0, 0, 0, 0};
     bool first = true;
-    
+
     for (NodeId child : children) {
         const NodeLayout* childLayout = state_->result.getNodeLayout(child);
         if (childLayout) {
@@ -435,10 +414,10 @@ void SugiyamaLayout::updateCompoundBounds(NodeId id, const CompoundGraph& graph)
             }
         }
     }
-    
+
     // Add padding
     bounds = bounds.expanded(options_.compoundPadding);
-    
+
     state_->nodeSizes[id] = bounds.size();
 }
 

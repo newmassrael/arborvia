@@ -102,53 +102,6 @@ TEST_F(SnapIndexManagerTest, Clamp_ExceedsMax_ReturnsMaxMinusOne) {
 // Range Calculation Tests
 // =============================================================================
 
-TEST_F(SnapIndexManagerTest, GetSeparatedRanges_BothExist_SplitsRange) {
-    NodeEdgeConnections conn;
-    conn.incoming = {EdgeId{1}};
-    conn.outgoing = {EdgeId{2}};
-    
-    auto [inRange, outRange] = SnapIndexManager::getSeparatedRanges(conn);
-    
-    EXPECT_FLOAT_EQ(inRange.start, 0.0f);
-    EXPECT_FLOAT_EQ(inRange.end, 0.5f);
-    EXPECT_FLOAT_EQ(outRange.start, 0.5f);
-    EXPECT_FLOAT_EQ(outRange.end, 1.0f);
-}
-
-TEST_F(SnapIndexManagerTest, GetSeparatedRanges_OnlyIncoming_UsesFullRange) {
-    NodeEdgeConnections conn;
-    conn.incoming = {EdgeId{1}, EdgeId{2}};
-    
-    auto [inRange, outRange] = SnapIndexManager::getSeparatedRanges(conn);
-    
-    // Incoming should use full range [0, 1]
-    EXPECT_FLOAT_EQ(inRange.start, 0.0f);
-    EXPECT_FLOAT_EQ(inRange.end, 1.0f);
-    EXPECT_TRUE(inRange.isFullRange());
-    
-    // Outgoing should be empty range {0, 0}
-    EXPECT_FLOAT_EQ(outRange.start, 0.0f);
-    EXPECT_FLOAT_EQ(outRange.end, 0.0f);
-    EXPECT_FLOAT_EQ(outRange.width(), 0.0f);
-}
-
-TEST_F(SnapIndexManagerTest, GetSeparatedRanges_OnlyOutgoing_UsesFullRange) {
-    NodeEdgeConnections conn;
-    conn.outgoing = {EdgeId{1}, EdgeId{2}};
-    
-    auto [inRange, outRange] = SnapIndexManager::getSeparatedRanges(conn);
-    
-    // Incoming should be empty range {0, 0}
-    EXPECT_FLOAT_EQ(inRange.start, 0.0f);
-    EXPECT_FLOAT_EQ(inRange.end, 0.0f);
-    EXPECT_FLOAT_EQ(inRange.width(), 0.0f);
-    
-    // Outgoing should use full range [0, 1]
-    EXPECT_FLOAT_EQ(outRange.start, 0.0f);
-    EXPECT_FLOAT_EQ(outRange.end, 1.0f);
-    EXPECT_TRUE(outRange.isFullRange());
-}
-
 TEST_F(SnapIndexManagerTest, CalculatePosition_SingleItem_ReturnsMidpoint) {
     SnapRange range{0.0f, 1.0f};
     float pos = SnapIndexManager::calculatePosition(0, 1, range);
@@ -159,7 +112,7 @@ TEST_F(SnapIndexManagerTest, CalculatePosition_TwoItems_DistributesEvenly) {
     SnapRange range{0.0f, 1.0f};
     float pos0 = SnapIndexManager::calculatePosition(0, 2, range);
     float pos1 = SnapIndexManager::calculatePosition(1, 2, range);
-    
+
     EXPECT_FLOAT_EQ(pos0, 1.0f/3.0f);   // (0+1)/(2+1) = 1/3
     EXPECT_FLOAT_EQ(pos1, 2.0f/3.0f);   // (1+1)/(2+1) = 2/3
 }
@@ -183,14 +136,14 @@ TEST_F(SnapIndexManagerTest, CalculatePosition_ZeroCount_ReturnsMidpoint) {
 TEST_F(SnapIndexManagerTest, GetConnections_EmptyLayouts_ReturnsEmpty) {
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
     auto conn = SnapIndexManager::getConnections(edgeLayouts, NodeId{1}, NodeEdge::Bottom);
-    
+
     EXPECT_EQ(conn.incomingCount(), 0);
     EXPECT_EQ(conn.outgoingCount(), 0);
 }
 
 TEST_F(SnapIndexManagerTest, GetConnections_WithEdges_CountsCorrectly) {
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     // Edge 1: from node 1 (source) to node 2
     EdgeLayout e1;
     e1.id = EdgeId{1};
@@ -199,7 +152,7 @@ TEST_F(SnapIndexManagerTest, GetConnections_WithEdges_CountsCorrectly) {
     e1.sourceEdge = NodeEdge::Bottom;
     e1.targetEdge = NodeEdge::Top;
     edgeLayouts[EdgeId{1}] = e1;
-    
+
     // Edge 2: from node 1 (source) to node 3
     EdgeLayout e2;
     e2.id = EdgeId{2};
@@ -208,7 +161,7 @@ TEST_F(SnapIndexManagerTest, GetConnections_WithEdges_CountsCorrectly) {
     e2.sourceEdge = NodeEdge::Bottom;
     e2.targetEdge = NodeEdge::Top;
     edgeLayouts[EdgeId{2}] = e2;
-    
+
     // Edge 3: from node 4 to node 1 (target)
     EdgeLayout e3;
     e3.id = EdgeId{3};
@@ -217,9 +170,9 @@ TEST_F(SnapIndexManagerTest, GetConnections_WithEdges_CountsCorrectly) {
     e3.sourceEdge = NodeEdge::Bottom;
     e3.targetEdge = NodeEdge::Bottom;
     edgeLayouts[EdgeId{3}] = e3;
-    
+
     auto conn = SnapIndexManager::getConnections(edgeLayouts, NodeId{1}, NodeEdge::Bottom);
-    
+
     EXPECT_EQ(conn.outgoingCount(), 2);  // Edges 1 and 2
     EXPECT_EQ(conn.incomingCount(), 1);  // Edge 3
     EXPECT_EQ(conn.totalCount(), 3);
@@ -227,24 +180,24 @@ TEST_F(SnapIndexManagerTest, GetConnections_WithEdges_CountsCorrectly) {
 
 TEST_F(SnapIndexManagerTest, NodeEdgeConnections_Helpers) {
     NodeEdgeConnections conn;
-    
+
     // Empty
     EXPECT_FALSE(conn.hasOnlyIncoming());
     EXPECT_FALSE(conn.hasOnlyOutgoing());
     EXPECT_FALSE(conn.hasBoth());
-    
+
     // Only incoming
     conn.incoming = {EdgeId{1}};
     EXPECT_TRUE(conn.hasOnlyIncoming());
     EXPECT_FALSE(conn.hasOnlyOutgoing());
     EXPECT_FALSE(conn.hasBoth());
-    
+
     // Both
     conn.outgoing = {EdgeId{2}};
     EXPECT_FALSE(conn.hasOnlyIncoming());
     EXPECT_FALSE(conn.hasOnlyOutgoing());
     EXPECT_TRUE(conn.hasBoth());
-    
+
     // Only outgoing
     conn.incoming.clear();
     EXPECT_FALSE(conn.hasOnlyIncoming());
@@ -254,7 +207,7 @@ TEST_F(SnapIndexManagerTest, NodeEdgeConnections_Helpers) {
 
 TEST_F(SnapIndexManagerTest, BuildConnectionMap_CreatesCorrectKeys) {
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     EdgeLayout e1;
     e1.id = EdgeId{1};
     e1.from = NodeId{1};
@@ -262,18 +215,18 @@ TEST_F(SnapIndexManagerTest, BuildConnectionMap_CreatesCorrectKeys) {
     e1.sourceEdge = NodeEdge::Bottom;
     e1.targetEdge = NodeEdge::Top;
     edgeLayouts[EdgeId{1}] = e1;
-    
+
     auto map = SnapIndexManager::buildConnectionMap(edgeLayouts);
-    
+
     // Should have 2 entries: (node 1, Bottom) and (node 2, Top)
     EXPECT_EQ(map.size(), 2u);
-    
+
     auto key1 = std::make_pair(NodeId{1}, NodeEdge::Bottom);
     auto key2 = std::make_pair(NodeId{2}, NodeEdge::Top);
-    
+
     EXPECT_TRUE(map.count(key1) > 0);
     EXPECT_TRUE(map.count(key2) > 0);
-    
+
     // Check contents
     EXPECT_EQ(map[key1].outgoingCount(), 1);
     EXPECT_EQ(map[key2].incomingCount(), 1);
@@ -283,14 +236,9 @@ TEST_F(SnapIndexManagerTest, BuildConnectionMap_CreatesCorrectKeys) {
 // Debug Helper Tests
 // =============================================================================
 
-TEST_F(SnapIndexManagerTest, ModeName_ReturnsCorrectStrings) {
-    EXPECT_STREQ(SnapIndexManager::modeName(SnapDistribution::Unified), "Unified");
-    EXPECT_STREQ(SnapIndexManager::modeName(SnapDistribution::Separated), "Separated");
-}
-
 TEST_F(SnapIndexManagerTest, FormatIndexInfo_ContainsAllFields) {
     std::string info = SnapIndexManager::formatIndexInfo(3, 1, 2, 4);
-    
+
     EXPECT_NE(info.find("unified=3"), std::string::npos);
     EXPECT_NE(info.find("local=1"), std::string::npos);
     EXPECT_NE(info.find("offset=2"), std::string::npos);
@@ -301,43 +249,40 @@ TEST_F(SnapIndexManagerTest, FormatIndexInfo_ContainsAllFields) {
 // Integration Tests - Simulating Real Scenarios
 // =============================================================================
 
-TEST_F(SnapIndexManagerTest, Integration_DemoGraphScenario) {
-    // Simulates the demo graph from the bug: node "Running" with 2 incoming, 3 outgoing
+TEST_F(SnapIndexManagerTest, Integration_UnifiedModeDistribution) {
+    // Simulates the demo graph: node "Running" with 5 connections total
     NodeEdgeConnections conn;
     conn.incoming = {EdgeId{2}, EdgeId{4}};  // 2 incoming
     conn.outgoing = {EdgeId{1}, EdgeId{3}, EdgeId{5}};  // 3 outgoing
-    
-    auto [inRange, outRange] = SnapIndexManager::getSeparatedRanges(conn);
-    
-    // Both exist, so ranges should be split
+
+    // In unified mode, all connections share the full range [0, 1]
+    SnapRange fullRange{0.0f, 1.0f};
+    int totalCount = conn.totalCount();  // 5
+
+    EXPECT_EQ(totalCount, 5);
     EXPECT_TRUE(conn.hasBoth());
-    
-    // Calculate positions for incoming (unified indices 0, 1)
-    float inPos0 = SnapIndexManager::calculatePosition(
-        SnapIndexManager::unifiedToLocal(0, 0, 2), 2, inRange);
-    float inPos1 = SnapIndexManager::calculatePosition(
-        SnapIndexManager::unifiedToLocal(1, 0, 2), 2, inRange);
-    
-    // Calculate positions for outgoing (unified indices 2, 3, 4)
-    float outPos0 = SnapIndexManager::calculatePosition(
-        SnapIndexManager::unifiedToLocal(2, 2, 3), 3, outRange);
-    float outPos1 = SnapIndexManager::calculatePosition(
-        SnapIndexManager::unifiedToLocal(3, 2, 3), 3, outRange);
-    float outPos2 = SnapIndexManager::calculatePosition(
-        SnapIndexManager::unifiedToLocal(4, 2, 3), 3, outRange);
-    
-    // All positions should be distinct
-    EXPECT_NE(inPos0, inPos1);
-    EXPECT_NE(outPos0, outPos1);
-    EXPECT_NE(outPos1, outPos2);
-    EXPECT_NE(outPos0, outPos2);
-    
-    // Incoming positions should be in first half [0, 0.5)
-    EXPECT_LT(inPos0, 0.5f);
-    EXPECT_LT(inPos1, 0.5f);
-    
-    // Outgoing positions should be in second half (0.5, 1.0]
-    EXPECT_GT(outPos0, 0.5f);
-    EXPECT_GT(outPos1, 0.5f);
-    EXPECT_GT(outPos2, 0.5f);
+
+    // Calculate positions for all 5 connections (indices 0-4)
+    std::vector<float> positions;
+    for (int i = 0; i < totalCount; ++i) {
+        positions.push_back(SnapIndexManager::calculatePosition(i, totalCount, fullRange));
+    }
+
+    // All positions should be distinct and evenly distributed
+    for (size_t i = 0; i < positions.size(); ++i) {
+        for (size_t j = i + 1; j < positions.size(); ++j) {
+            EXPECT_NE(positions[i], positions[j]);
+        }
+    }
+
+    // Positions should be in increasing order
+    for (size_t i = 0; i + 1 < positions.size(); ++i) {
+        EXPECT_LT(positions[i], positions[i + 1]);
+    }
+
+    // All positions should be within range
+    for (float pos : positions) {
+        EXPECT_GT(pos, 0.0f);
+        EXPECT_LT(pos, 1.0f);
+    }
 }

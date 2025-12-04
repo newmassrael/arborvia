@@ -30,7 +30,6 @@ NodeEdge LayoutSerializer::stringToNodeEdge(const std::string& str) {
 std::string LayoutSerializer::toJson(const ManualLayoutManager& manager) {
     json j;
     j["version"] = 1;
-    j["mode"] = (manager.getMode() == LayoutMode::Auto) ? "auto" : "manual";
 
     const auto& state = manager.getManualState();
 
@@ -89,12 +88,6 @@ bool LayoutSerializer::fromJson(ManualLayoutManager& manager, const std::string&
         // Clear existing state
         manager.clearManualState();
 
-        // Parse mode
-        if (j.contains("mode")) {
-            std::string mode = j["mode"].get<std::string>();
-            manager.setMode(mode == "auto" ? LayoutMode::Auto : LayoutMode::Manual);
-        }
-
         // Parse nodePositions
         if (j.contains("nodePositions")) {
             for (auto& [key, value] : j["nodePositions"].items()) {
@@ -123,7 +116,7 @@ bool LayoutSerializer::fromJson(ManualLayoutManager& manager, const std::string&
             for (auto& [key, value] : j["edgeRoutings"].items()) {
                 EdgeId id = static_cast<EdgeId>(std::stoul(key));
                 EdgeRoutingConfig routing;
-                
+
                 routing.sourceEdge = stringToNodeEdge(value.value("sourceEdge", "bottom"));
                 routing.targetEdge = stringToNodeEdge(value.value("targetEdge", "top"));
                 routing.sourceSnapIndex = value.value("sourceSnapIndex", 0);
@@ -189,12 +182,12 @@ std::string LayoutSerializer::toJson(const LayoutResult& result) {
         edgeJson["id"] = id;
         edgeJson["from"] = layout.from;
         edgeJson["to"] = layout.to;
-        
+
         // Source snap point info
         edgeJson["sourcePoint"] = {{"x", layout.sourcePoint.x}, {"y", layout.sourcePoint.y}};
         edgeJson["sourceEdge"] = nodeEdgeToString(layout.sourceEdge);
         edgeJson["sourceSnapIndex"] = layout.sourceSnapIndex;
-        
+
         // Target snap point info
         edgeJson["targetPoint"] = {{"x", layout.targetPoint.x}, {"y", layout.targetPoint.y}};
         edgeJson["targetEdge"] = nodeEdgeToString(layout.targetEdge);
@@ -202,7 +195,7 @@ std::string LayoutSerializer::toJson(const LayoutResult& result) {
 
         // Label position
         edgeJson["labelPosition"] = {{"x", layout.labelPosition.x}, {"y", layout.labelPosition.y}};
-        
+
         // Channel routing information
         edgeJson["channelY"] = layout.channelY;
 
@@ -264,7 +257,7 @@ LayoutResult LayoutSerializer::layoutResultFromJson(const std::string& jsonStr) 
                     layout.labelPosition.x = edgeJson["labelPosition"]["x"].get<float>();
                     layout.labelPosition.y = edgeJson["labelPosition"]["y"].get<float>();
                 }
-                
+
                 // Channel routing information (optional for backward compatibility)
                 if (edgeJson.contains("channelY")) {
                     layout.channelY = edgeJson["channelY"].get<float>();

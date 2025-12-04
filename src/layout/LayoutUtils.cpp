@@ -16,13 +16,12 @@ void LayoutUtils::updateEdgePositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
-    SnapDistribution distribution,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
     algorithms::EdgeRouting routing;
     routing.updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges, distribution, movedNodes, gridSize);
+        edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }
 
 float LayoutUtils::pointToSegmentDistance(
@@ -135,11 +134,11 @@ Point LayoutUtils::calculateEdgeLabelPosition(const EdgeLayout& edge)
         float len1 = edge.sourcePoint.distanceTo(bends[0].position);
         float len2 = bends[0].position.distanceTo(edge.targetPoint);
         float total = len1 + len2;
-        
+
         if (total < 0.001f) {
             return bends[0].position;
         }
-        
+
         float half = total / 2.0f;
 
         if (half <= len1) {
@@ -161,7 +160,7 @@ Point LayoutUtils::calculateEdgeLabelPosition(const EdgeLayout& edge)
 std::vector<EdgeId> LayoutUtils::getConnectedEdges(
     NodeId nodeId,
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
-    
+
     std::vector<EdgeId> result;
     for (const auto& [edgeId, layout] : edgeLayouts) {
         if (layout.from == nodeId || layout.to == nodeId) {
@@ -177,11 +176,11 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     float gridSize) {
-    
+
     // Use ConstraintManager with default constraints
     // Default constraints: MinDistanceConstraint (5 grid units), EdgeValidityConstraint
     static auto constraintManager = ConstraintManager::createDefault(constants::MIN_NODE_GRID_DISTANCE);
-    
+
     return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, constraintManager, gridSize);
 }
 
@@ -192,15 +191,15 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const ConstraintManager& constraintManager,
     float gridSize) {
-    
+
     ConstraintContext ctx{nodeId, newPosition, nodeLayouts, edgeLayouts, gridSize};
     auto validationResult = constraintManager.validate(ctx);
-    
+
     // Convert DragValidationResult to DragValidation for API compatibility
     DragValidation result;
     result.valid = validationResult.valid;
     result.invalidEdges = std::move(validationResult.invalidEdges);
-    
+
     return result;
 }
 
@@ -211,12 +210,12 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const ConstraintConfig& config,
     float gridSize) {
-    
+
     // Create manager from config (or use default if config is empty)
-    auto manager = config.empty() 
+    auto manager = config.empty()
         ? ConstraintFactory::create(ConstraintConfig::createDefault())
         : ConstraintFactory::create(config);
-    
+
     return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, *manager, gridSize);
 }
 
@@ -225,35 +224,35 @@ bool LayoutUtils::canMoveNodeToFast(
     Point newPosition,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float margin) {
-    
+
     auto it = nodeLayouts.find(nodeId);
     if (it == nodeLayouts.end()) {
         return true;  // Node not found, allow move
     }
-    
+
     // Get moved node's new bounds
     const Size& size = it->second.size;
     float x1 = newPosition.x - margin;
     float y1 = newPosition.y - margin;
     float x2 = newPosition.x + size.width + margin;
     float y2 = newPosition.y + size.height + margin;
-    
+
     // Check overlap with all other nodes
     for (const auto& [otherId, otherNode] : nodeLayouts) {
         if (otherId == nodeId) continue;
-        
+
         float ox1 = otherNode.position.x;
         float oy1 = otherNode.position.y;
         float ox2 = ox1 + otherNode.size.width;
         float oy2 = oy1 + otherNode.size.height;
-        
+
         // Check for overlap (AABB intersection)
         bool overlaps = (x1 < ox2 && x2 > ox1 && y1 < oy2 && y2 > oy1);
         if (overlaps) {
             return false;
         }
     }
-    
+
     return true;
 }
 

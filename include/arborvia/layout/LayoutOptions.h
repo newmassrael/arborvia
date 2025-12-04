@@ -86,62 +86,43 @@ enum class NodeAlignment {
 
 /// Crossing minimization strategy
 enum class CrossingMinimization {
-    None,          // No optimization
-    BarycenterHeuristic,  // Fast, good results
-    MedianHeuristic       // Alternative heuristic
+    None,               // No optimization
+    BarycenterHeuristic // Fast, good results
 };
 
 /// Layer assignment strategy
-enum class LayerAssignment {
-    LongestPath,   // Minimize total edge length
-    NetworkSimplex // Better layer balance (future)
-};
-
-/// Snap point distribution mode for Auto layout
-enum class SnapDistribution {
-    Unified,       // All connections (incoming + outgoing) distributed evenly together
-    Separated      // Incoming on left half, outgoing on right half of each edge
-};
-
 /// Options for controlling layout behavior
 struct LayoutOptions {
     // General layout direction
     Direction direction = Direction::TopToBottom;
-    
+
     // Spacing
     float nodeSpacingHorizontal = 100.0f;  // Space between nodes in same layer (5 grid units @ 20px)
     float nodeSpacingVertical = 100.0f;    // Space between layers (5 grid units @ 20px)
-    
+
     // Compound node settings
     float compoundPadding = 20.0f;        // Padding inside compound nodes
     float parallelSpacing = 30.0f;        // Space between parallel regions
-    
+
     // Edge routing (channel-based orthogonal routing)
     float edgeBendRadius = 5.0f;          // Radius for rounded bends
     ChannelRoutingOptions channelRouting; // Channel routing options
-    
+
     // Algorithm settings
     NodeAlignment nodeAlignment = NodeAlignment::Center;
     CrossingMinimization crossingMinimization = CrossingMinimization::BarycenterHeuristic;
-    LayerAssignment layerAssignment = LayerAssignment::LongestPath;
-    
+
     // Crossing minimization iterations
     int crossingMinimizationPasses = 4;
-    
+
     // Default node size when not specified
     Size defaultNodeSize = {100.0f, 50.0f};
-    
-    // Layout mode (Auto or Manual)
-    LayoutMode mode = LayoutMode::Auto;
-    
+
     // Auto mode: dynamically generate snap points based on connection count
     bool autoSnapPoints = true;
-    
+
     // Default snap point count per edge (used in auto mode)
     int defaultSnapPointCount = 2;
-    
-    // Snap distribution mode (how incoming/outgoing edges share node edges)
-    SnapDistribution snapDistribution = SnapDistribution::Separated;
 
     // Grid configuration (all coordinates snap to grid)
     GridConfig gridConfig;
@@ -152,10 +133,10 @@ struct LayoutOptions {
 
     // Builder pattern for convenient configuration
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
-    LayoutOptions& setNodeSpacing(float h, float v) { 
-        nodeSpacingHorizontal = h; 
-        nodeSpacingVertical = v; 
-        return *this; 
+    LayoutOptions& setNodeSpacing(float h, float v) {
+        nodeSpacingHorizontal = h;
+        nodeSpacingVertical = v;
+        return *this;
     }
     LayoutOptions& setCompoundPadding(float p) { compoundPadding = p; return *this; }
     LayoutOptions& setChannelSpacing(float spacing) {
@@ -170,14 +151,12 @@ struct LayoutOptions {
         channelRouting.selfLoop.preferredDirection = dir;
         return *this;
     }
-    LayoutOptions& setCrossingMinimization(CrossingMinimization c) { 
-        crossingMinimization = c; 
-        return *this; 
+    LayoutOptions& setCrossingMinimization(CrossingMinimization c) {
+        crossingMinimization = c;
+        return *this;
     }
-    LayoutOptions& setLayoutMode(LayoutMode m) { mode = m; return *this; }
     LayoutOptions& setAutoSnapPoints(bool enabled) { autoSnapPoints = enabled; return *this; }
     LayoutOptions& setDefaultSnapPointCount(int count) { defaultSnapPointCount = count; return *this; }
-    LayoutOptions& setSnapDistribution(SnapDistribution sd) { snapDistribution = sd; return *this; }
     LayoutOptions& setGridCellSize(float size) { gridConfig.cellSize = size; return *this; }
     LayoutOptions& setConstraintConfig(const ConstraintConfig& config) { constraintConfig = config; return *this; }
     LayoutOptions& setMinNodeDistance(float gridUnits) {

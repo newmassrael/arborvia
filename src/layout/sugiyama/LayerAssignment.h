@@ -10,7 +10,7 @@ namespace arborvia {
 namespace algorithms {
 
 /// Longest-path based layer assignment algorithm
-/// 
+///
 /// This is the default implementation of ILayerAssignment using the
 /// longest path algorithm to minimize the height of the layout.
 class LongestPathLayerAssignment : public ILayerAssignment {
@@ -26,8 +26,7 @@ public:
     /// Assign layers using longest path algorithm
     LayerAssignmentResult assignLayers(
         const Graph& graph,
-        const std::unordered_set<EdgeId>& reversedEdges,
-        arborvia::LayerAssignment strategy = arborvia::LayerAssignment::LongestPath) const override;
+        const std::unordered_set<EdgeId>& reversedEdges) const override;
 
     /// Assign layers with specified root nodes (they become layer 0)
     LayerAssignmentResult assignLayersWithRoots(

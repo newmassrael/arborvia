@@ -13,12 +13,12 @@ protected:
         n1_ = graph_.addNode(Size{100, 50}, "Node1");
         n2_ = graph_.addNode(Size{100, 50}, "Node2");
         n3_ = graph_.addNode(Size{100, 50}, "Node3");
-        
+
         e1_ = graph_.addEdge(n1_, n2_, "edge1");
         e2_ = graph_.addEdge(n1_, n3_, "edge2");
         e3_ = graph_.addEdge(n2_, n3_, "edge3");
     }
-    
+
     Graph graph_;
     NodeId n1_, n2_, n3_;
     EdgeId e1_, e2_, e3_;
@@ -63,56 +63,56 @@ std::vector<Point> buildPath(const EdgeLayout& layout) {
 
 TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
-    
+
+
     // Set up nodes
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
-    
+
     manager.setEdgeSourceEdge(e1_, NodeEdge::Right);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
-    
+
     // Create orthogonal path: source(100,25) → bp1(150,25) → bp2(150,225) → target(200,225)
     // Horizontal from source, then vertical, then horizontal to target
     manager.appendBendPoint(e1_, Point{150.0f, 25.0f});   // bp1: horizontal from source
     manager.appendBendPoint(e1_, Point{150.0f, 225.0f});  // bp2: vertical from bp1
-    
+
     // Verify initial path is orthogonal
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
     manager.applyManualState(result, graph_);
-    
+
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
-    
+
     auto initialPath = buildPath(*edgeLayout);
     ASSERT_TRUE(isPathOrthogonal(initialPath)) << "Initial path should be orthogonal";
-    
+
     // Now simulate dragging bp1 (index 0)
     // Source point is the prev for bp1
     Point source = edgeLayout->sourcePoint;
     Point bp1 = manager.getBendPoints(e1_)[0].position;
     Point bp2 = manager.getBendPoints(e1_)[1].position;
-    
+
     // Try to drag bp1 to a diagonal position
     Point dragTarget = {180.0f, 50.0f};  // Would create diagonal if unconstrained
-    
+
     // Calculate what the orthogonal-constrained position should be
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
-    
+
     // Apply the constrained move
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
     if (dragResult.nextAdjusted) {
         manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
     }
-    
+
     // Re-apply and check
     result = layout.layout(graph_);
     manager.applyManualState(result, graph_);
-    
+
     edgeLayout = result.getEdgeLayout(e1_);
     auto afterDragPath = buildPath(*edgeLayout);
-    
+
     EXPECT_TRUE(isPathOrthogonal(afterDragPath))
         << "Path after drag should remain orthogonal. Points: "
         << "src(" << afterDragPath[0].x << "," << afterDragPath[0].y << ") -> "
@@ -123,77 +123,77 @@ TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
 
 TEST_F(OrthogonalDragTest, Drag_VerticalIncoming_HorizontalConstraint) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
-    
+
+
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
-    
+
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
-    
+
     // Path: source(50,50) → bp1(50,125) → bp2(250,125) → target(250,200)
     // Vertical from source, then horizontal, then vertical to target
     manager.appendBendPoint(e1_, Point{50.0f, 125.0f});   // bp1: vertical from source
     manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp2: horizontal from bp1
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
     manager.applyManualState(result, graph_);
-    
+
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
-    
+
     Point source = edgeLayout->sourcePoint;
     Point bp1 = manager.getBendPoints(e1_)[0].position;
     Point bp2 = manager.getBendPoints(e1_)[1].position;
-    
+
     // Drag bp1 - incoming is vertical, so should constrain to vertical movement only
     // (keep X same as source.x)
     Point dragTarget = {80.0f, 100.0f};  // Would create diagonal if X changes
-    
+
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
-    
+
     // The constrained position should have X = source.x (since incoming is vertical)
     EXPECT_FLOAT_EQ(dragResult.newCurrentPos.x, source.x)
         << "With vertical incoming, X should be constrained to source.x";
-    
+
     // Apply and verify
     manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
     if (dragResult.nextAdjusted) {
         manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
     }
-    
+
     result = layout.layout(graph_);
     manager.applyManualState(result, graph_);
-    
+
     edgeLayout = result.getEdgeLayout(e1_);
     auto path = buildPath(*edgeLayout);
-    
+
     EXPECT_TRUE(isPathOrthogonal(path))
         << "Path should remain orthogonal after constrained drag";
 }
 
 TEST_F(OrthogonalDragTest, Drag_HorizontalIncoming_VerticalConstraint) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
-    
+
+
     manager.setNodePosition(n1_, {0.0f, 100.0f});
     manager.setNodePosition(n2_, {300.0f, 100.0f});
-    
+
     manager.setEdgeSourceEdge(e1_, NodeEdge::Right);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
-    
+
     // Horizontal source and target at same Y level
     // Path with a vertical detour
     manager.appendBendPoint(e1_, Point{150.0f, 125.0f});  // bp1
     manager.appendBendPoint(e1_, Point{150.0f, 50.0f});   // bp2: vertical from bp1
     manager.appendBendPoint(e1_, Point{250.0f, 50.0f});   // bp3: horizontal from bp2
     manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp4: vertical to target level
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
     manager.applyManualState(result, graph_);
-    
+
     auto path = buildPath(*result.getEdgeLayout(e1_));
     ASSERT_TRUE(isPathOrthogonal(path)) << "Initial 4-bend path should be orthogonal";
 }
@@ -208,10 +208,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_HorizontalIncoming_Constrains
     Point current{50, 100};  // horizontal from prev (same Y=100)
     Point next{50, 200};
     Point drag{80, 150};     // diagonal drag attempt
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
-    
+
     // Y should be constrained to prev.y (horizontal constraint)
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 100.0f);
     // X should follow drag target
@@ -228,10 +228,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_VerticalIncoming_ConstrainsX)
     Point current{100, 50};  // vertical from prev (same X=100)
     Point next{200, 50};
     Point drag{150, 80};     // diagonal drag attempt
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
-    
+
     // X should be constrained to prev.x (vertical constraint)
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 100.0f);
     // Y should follow drag target
@@ -248,10 +248,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_LastBend_HorizontalVertical) 
     Point current{50, 100};   // horizontal from prev
     Point target{50, 200};    // vertical to target
     Point drag{80, 150};      // try to drag diagonally
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
-    
+
     // Position should be constrained to intersection: X=target.x, Y=prev.y
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 50.0f);   // target.x
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 100.0f);  // prev.y
@@ -264,10 +264,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_LastBend_VerticalHorizontal) 
     Point current{100, 50};   // vertical from prev
     Point target{200, 50};    // horizontal to target
     Point drag{150, 80};      // try to drag diagonally
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
-    
+
     // Position should be constrained to intersection: X=prev.x, Y=target.y
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 100.0f);  // prev.x
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 50.0f);   // target.y
@@ -279,10 +279,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_NoNextBend_NoAdjustment) {
     Point current{50, 100};
     Point next{100, 100};  // doesn't matter, hasNextBend=false
     Point drag{80, 150};
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, false, false);
-    
+
     // Should still constrain position
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 100.0f);
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 80.0f);
@@ -297,10 +297,10 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHori
     Point current{50, 50};    // exactly 45 degrees
     Point next{50, 100};
     Point drag{80, 80};
-    
+
     auto result = OrthogonalRouter::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
-    
+
     // Treated as horizontal: Y should be constrained to prev.y
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 0.0f);
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 80.0f);
@@ -309,7 +309,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHori
 TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
     // Verify struct is properly initialized
     OrthogonalRouter::OrthogonalDragResult result;
-    
+
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 0.0f);
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 0.0f);
     EXPECT_FLOAT_EQ(result.adjustedNextPos.x, 0.0f);
@@ -323,7 +323,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
 // TDD Test 1: Drag first bend point - should maintain orthogonality with source
 TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     // Setup: source at (0,0), target at (200,200)
     manager.setNodePosition(n1_, {0.0f, 0.0f});
@@ -381,7 +381,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
 // TDD Test 2: Drag middle bend point in 4-point path - cascade adjustment needed
 TEST_F(OrthogonalDragTest, TDD_Drag_MiddlePoint_CascadeAdjustment) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 100.0f});
     manager.setNodePosition(n2_, {400.0f, 100.0f});
@@ -438,7 +438,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_MiddlePoint_CascadeAdjustment) {
 // TDD Test 3: Verify segment orthogonality individually
 TEST_F(OrthogonalDragTest, TDD_Drag_VerifyEachSegment) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -488,7 +488,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_VerifyEachSegment) {
 // TDD Test 4: Rapid consecutive drags
 TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -539,7 +539,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
 // When source/target positions don't align with bend points, orthogonality is already broken
 TEST_F(OrthogonalDragTest, TDD_SourceMismatch_DetectsNonOrthogonal) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -581,7 +581,7 @@ TEST_F(OrthogonalDragTest, TDD_SourceMismatch_DetectsNonOrthogonal) {
 // TDD Test 6: Simulate exact demo scenario - add bend points then drag
 TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -661,7 +661,7 @@ TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
 // This tests if source/target points change unexpectedly between layout calls
 TEST_F(OrthogonalDragTest, TDD_SourceConsistency_BetweenLayouts) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -715,7 +715,7 @@ TEST_F(OrthogonalDragTest, TDD_SourceConsistency_BetweenLayouts) {
 // When updating visual feedback, old bps position is used instead of new
 TEST_F(OrthogonalDragTest, TDD_VisualFeedbackBug) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
@@ -782,7 +782,7 @@ TEST_F(OrthogonalDragTest, TDD_VisualFeedbackBug) {
 // Current demo logic only adjusts NEXT bend, but last bend has no next!
 TEST_F(OrthogonalDragTest, TDD_Drag_LastPoint_NoNextToAdjust) {
     ManualLayoutManager manager;
-    manager.setMode(LayoutMode::Manual);
+
 
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});

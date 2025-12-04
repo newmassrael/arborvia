@@ -29,13 +29,13 @@ struct PathResult {
 };
 
 /// Abstract interface for pathfinding algorithms
-/// 
+///
 /// Implementations can provide different pathfinding strategies:
 /// - A* (default, optimal with heuristic)
 /// - Dijkstra (optimal without heuristic)
 /// - Jump Point Search (faster for uniform cost grids)
 /// - BFS (simpler, unweighted)
-/// 
+///
 /// Use this interface to swap pathfinding algorithms without
 /// modifying EdgeRouting or other dependent code.
 class IPathFinder {
@@ -76,28 +76,6 @@ public:
         NodeEdge targetEdge,
         const std::unordered_set<NodeId>& extraStartExcludes = {},
         const std::unordered_set<NodeId>& extraGoalExcludes = {}) const = 0;
-
-    /// Simple direct path if start and goal are aligned
-    /// Returns empty path if direct connection not possible
-    virtual PathResult tryDirectPath(
-        const GridPoint& start,
-        const GridPoint& goal,
-        const IObstacleProvider& obstacles,
-        NodeId sourceNode,
-        NodeId targetNode,
-        const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const = 0;
-
-    /// Simple L-shaped path (one bend)
-    /// Tries both horizontal-first and vertical-first
-    virtual PathResult tryLShapedPath(
-        const GridPoint& start,
-        const GridPoint& goal,
-        const IObstacleProvider& obstacles,
-        NodeId sourceNode,
-        NodeId targetNode,
-        const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const = 0;
 
     /// Get algorithm name for debugging/logging
     virtual const char* algorithmName() const = 0;

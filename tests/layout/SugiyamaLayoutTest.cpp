@@ -12,9 +12,9 @@ using namespace arborvia;
 TEST(SugiyamaLayoutTest, EmptyGraph_ReturnsEmptyResult) {
     Graph graph;
     SugiyamaLayout layout;
-    
+
     LayoutResult result = layout.layout(graph);
-    
+
     EXPECT_EQ(result.nodeCount(), 0);
     EXPECT_EQ(result.edgeCount(), 0);
 }
@@ -22,10 +22,10 @@ TEST(SugiyamaLayoutTest, EmptyGraph_ReturnsEmptyResult) {
 TEST(SugiyamaLayoutTest, SingleNode_ProducesValidLayout) {
     Graph graph;
     NodeId n1 = graph.addNode("Node1");
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     EXPECT_EQ(result.nodeCount(), 1);
     EXPECT_TRUE(result.hasNodeLayout(n1));
 }
@@ -37,24 +37,24 @@ TEST(SugiyamaLayoutTest, ChainGraph_AssignsSequentialLayers) {
     NodeId n1 = graph.addNode("Node1");
     NodeId n2 = graph.addNode("Node2");
     NodeId n3 = graph.addNode("Node3");
-    
+
     graph.addEdge(n1, n2);
     graph.addEdge(n2, n3);
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     EXPECT_EQ(result.nodeCount(), 3);
     EXPECT_EQ(result.layerCount(), 3);
-    
+
     const NodeLayout* l1 = result.getNodeLayout(n1);
     const NodeLayout* l2 = result.getNodeLayout(n2);
     const NodeLayout* l3 = result.getNodeLayout(n3);
-    
+
     ASSERT_NE(l1, nullptr);
     ASSERT_NE(l2, nullptr);
     ASSERT_NE(l3, nullptr);
-    
+
     EXPECT_EQ(l1->layer, 0);
     EXPECT_EQ(l2->layer, 1);
     EXPECT_EQ(l3->layer, 2);
@@ -145,7 +145,7 @@ TEST(SugiyamaLayoutTest, LeftToRightDirection_NodesOrderedHorizontally) {
     const NodeLayout* l2 = result.getNodeLayout(n2);
     ASSERT_NE(l1, nullptr);
     ASSERT_NE(l2, nullptr);
-    
+
     EXPECT_LT(l1->position.x, l2->position.x);
 }
 
@@ -156,14 +156,14 @@ TEST(SugiyamaLayoutTest, CyclicGraph_BreaksCycleAndLayouts) {
     NodeId n1 = graph.addNode("Node1");
     NodeId n2 = graph.addNode("Node2");
     NodeId n3 = graph.addNode("Node3");
-    
+
     graph.addEdge(n1, n2);
     graph.addEdge(n2, n3);
     graph.addEdge(n3, n1);  // Creates cycle
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     EXPECT_EQ(result.nodeCount(), 3);
     EXPECT_GE(layout.lastStats().reversedEdges, 1);
 }
@@ -228,7 +228,7 @@ TEST(SugiyamaLayoutTest, ComputeBounds_WithPadding_ExpandsBounds) {
 
     Rect bounds = result.computeBounds();
     Rect paddedBounds = result.computeBounds(20.0f);
-    
+
     EXPECT_GT(paddedBounds.width, bounds.width);
     EXPECT_GT(paddedBounds.height, bounds.height);
     EXPECT_FLOAT_EQ(paddedBounds.width, bounds.width + 40.0f);
@@ -277,7 +277,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_ProducesValidRouting) {
     EdgeId e = graph.addEdge(n1, n2);
 
     LayoutOptions options;
-    
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -306,7 +306,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleEdges_DifferentChannels) {
     EdgeId e2 = graph.addEdge(n1, n3);
 
     LayoutOptions options;
-    
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -328,7 +328,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_SelfLoop_RoutesCorrectly) {
     EdgeId selfLoop = graph.addEdge(n1, n1);  // Self-loop
 
     LayoutOptions options;
-    
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -358,7 +358,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleSelfLoops_Stacked) {
     EdgeId loop2 = graph.addEdge(n1, n1);
 
     LayoutOptions options;
-    
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -401,7 +401,7 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_ChainGraph_BendPointsAligned) {
     EdgeId e2 = graph.addEdge(n2, n3);
 
     LayoutOptions options;
-    
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -426,17 +426,17 @@ static bool isPointOnNodeBoundary(const Point& point, const NodeLayout& node, fl
     float right = node.position.x + node.size.width;
     float top = node.position.y;
     float bottom = node.position.y + node.size.height;
-    
+
     // Check if point is on any edge of the node
-    bool onLeft = std::abs(point.x - left) < tolerance && 
+    bool onLeft = std::abs(point.x - left) < tolerance &&
                   point.y >= top - tolerance && point.y <= bottom + tolerance;
-    bool onRight = std::abs(point.x - right) < tolerance && 
+    bool onRight = std::abs(point.x - right) < tolerance &&
                    point.y >= top - tolerance && point.y <= bottom + tolerance;
-    bool onTop = std::abs(point.y - top) < tolerance && 
+    bool onTop = std::abs(point.y - top) < tolerance &&
                  point.x >= left - tolerance && point.x <= right + tolerance;
-    bool onBottom = std::abs(point.y - bottom) < tolerance && 
+    bool onBottom = std::abs(point.y - bottom) < tolerance &&
                     point.x >= left - tolerance && point.x <= right + tolerance;
-    
+
     return onLeft || onRight || onTop || onBottom;
 }
 
@@ -447,10 +447,10 @@ TEST(SugiyamaLayoutTest, SelfLoop_LoopOffsetChange_SnapPointsRemainOnNode) {
 
     // Test with different loop offsets
     std::vector<float> loopOffsets = {15.0f, 30.0f, 50.0f};
-    
+
     for (float loopOffset : loopOffsets) {
         LayoutOptions options;
-        
+
         options.channelRouting.selfLoop.loopOffset = loopOffset;
 
         SugiyamaLayout layout(options);
@@ -458,21 +458,21 @@ TEST(SugiyamaLayoutTest, SelfLoop_LoopOffsetChange_SnapPointsRemainOnNode) {
 
         const NodeLayout* nodeLayout = result.getNodeLayout(n1);
         const EdgeLayout* edgeLayout = result.getEdgeLayout(selfLoop);
-        
+
         ASSERT_NE(nodeLayout, nullptr);
         ASSERT_NE(edgeLayout, nullptr);
 
         // Source and target points should be ON the node boundary, not offset
         EXPECT_TRUE(isPointOnNodeBoundary(edgeLayout->sourcePoint, *nodeLayout, 1.0f))
-            << "Source point (" << edgeLayout->sourcePoint.x << ", " << edgeLayout->sourcePoint.y 
+            << "Source point (" << edgeLayout->sourcePoint.x << ", " << edgeLayout->sourcePoint.y
             << ") should be on node boundary with loopOffset=" << loopOffset
-            << ". Node: pos=(" << nodeLayout->position.x << ", " << nodeLayout->position.y 
+            << ". Node: pos=(" << nodeLayout->position.x << ", " << nodeLayout->position.y
             << "), size=(" << nodeLayout->size.width << ", " << nodeLayout->size.height << ")";
-            
+
         EXPECT_TRUE(isPointOnNodeBoundary(edgeLayout->targetPoint, *nodeLayout, 1.0f))
-            << "Target point (" << edgeLayout->targetPoint.x << ", " << edgeLayout->targetPoint.y 
+            << "Target point (" << edgeLayout->targetPoint.x << ", " << edgeLayout->targetPoint.y
             << ") should be on node boundary with loopOffset=" << loopOffset
-            << ". Node: pos=(" << nodeLayout->position.x << ", " << nodeLayout->position.y 
+            << ". Node: pos=(" << nodeLayout->position.x << ", " << nodeLayout->position.y
             << "), size=(" << nodeLayout->size.width << ", " << nodeLayout->size.height << ")";
 
         // The loop offset should affect bend points, not snap points
@@ -486,7 +486,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
     // 2. Node is DRAGGED to a DIFFERENT position
     // 3. Options are changed (e.g., loop offset)
     // 4. Re-layout should have snap points on the NEW node position
-    
+
     Graph graph;
     NodeId n1 = graph.addNode("State");
     graph.setNodeSize(n1, {100, 50});
@@ -494,11 +494,11 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
 
     // Initial layout
     LayoutOptions options;
-    
+
     options.channelRouting.selfLoop.loopOffset = 20.0f;
 
     ManualLayoutManager manualManager;
-    
+
     SugiyamaLayout layout1(options);
     layout1.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result1 = layout1.layout(graph);
@@ -510,11 +510,10 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
     Point draggedPos = {nodeLayout1->position.x + 200.0f, nodeLayout1->position.y + 150.0f};
     manualManager.setNodePosition(n1, draggedPos);
     manualManager.clearAllEdgeRoutings();
-    manualManager.setMode(LayoutMode::Manual);
 
     // Change loop offset (like adjusting the slider after drag)
     options.channelRouting.selfLoop.loopOffset = 50.0f;
-    
+
     SugiyamaLayout layout2(options);
     layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result2 = layout2.layout(graph);
@@ -530,13 +529,13 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
 
     // Snap points should be on the NEW node boundary (not the old position)
     EXPECT_TRUE(isPointOnNodeBoundary(edgeLayout2->sourcePoint, *nodeLayout2, 1.0f))
-        << "Source point (" << edgeLayout2->sourcePoint.x << ", " << edgeLayout2->sourcePoint.y 
+        << "Source point (" << edgeLayout2->sourcePoint.x << ", " << edgeLayout2->sourcePoint.y
         << ") should be on NEW node boundary at (" << nodeLayout2->position.x << ", " << nodeLayout2->position.y << ")"
-        << ". Node: pos=(" << nodeLayout2->position.x << ", " << nodeLayout2->position.y 
+        << ". Node: pos=(" << nodeLayout2->position.x << ", " << nodeLayout2->position.y
         << "), size=(" << nodeLayout2->size.width << ", " << nodeLayout2->size.height << ")";
-        
+
     EXPECT_TRUE(isPointOnNodeBoundary(edgeLayout2->targetPoint, *nodeLayout2, 1.0f))
-        << "Target point (" << edgeLayout2->targetPoint.x << ", " << edgeLayout2->targetPoint.y 
+        << "Target point (" << edgeLayout2->targetPoint.x << ", " << edgeLayout2->targetPoint.y
         << ") should be on node boundary after manual mode re-layout";
 }
 
@@ -549,21 +548,21 @@ static bool arePointsEqual(const Point& p1, const Point& p2, float tolerance = 0
 TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     // This test detects the bug where snap points merge to same coordinates
     // after dragging a node and re-routing edges.
-    // 
+    //
     // Bug scenario:
     // 1. Node has multiple edges (self-loops + incoming/outgoing)
     // 2. Node is dragged to new position
     // 3. Re-layout causes snap points to merge to same coordinates
-    
+
     Graph graph;
     NodeId n1 = graph.addNode("Start");
     NodeId n2 = graph.addNode("Running");  // This node will have multiple edges
     NodeId n3 = graph.addNode("End");
-    
+
     graph.setNodeSize(n1, {200, 100});
     graph.setNodeSize(n2, {200, 100});
     graph.setNodeSize(n3, {200, 100});
-    
+
     // Create multiple edges connected to n2
     EdgeId e1 = graph.addEdge(n1, n2);  // incoming
     EdgeId selfLoop1 = graph.addEdge(n2, n2);  // self-loop 1
@@ -572,12 +571,12 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
 
     // Initial layout
     LayoutOptions options;
-    
+
     options.channelRouting.selfLoop.loopOffset = 30.0f;
-    options.snapDistribution = SnapDistribution::Unified;
+
 
     ManualLayoutManager manualManager;
-    
+
     SugiyamaLayout layout1(options);
     layout1.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result1 = layout1.layout(graph);
@@ -616,11 +615,10 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     Point draggedPos = {nodeLayout1->position.x + 150.0f, nodeLayout1->position.y + 100.0f};
     manualManager.setNodePosition(n2, draggedPos);
     manualManager.clearAllEdgeRoutings();
-    manualManager.setMode(LayoutMode::Manual);
 
     // Re-layout with different loop offset
     options.channelRouting.selfLoop.loopOffset = 50.0f;
-    
+
     SugiyamaLayout layout2(options);
     layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
     LayoutResult result2 = layout2.layout(graph);
@@ -635,7 +633,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     // Collect all snap points after drag
     std::vector<Point> snapPointsAfter;
     std::vector<std::string> snapPointLabels;
-    
+
     for (EdgeId edgeId : {e1, selfLoop1, selfLoop2, e2}) {
         const EdgeLayout* el = result2.getEdgeLayout(edgeId);
         ASSERT_NE(el, nullptr);
@@ -655,8 +653,8 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     for (size_t i = 0; i < snapPointsAfter.size(); ++i) {
         for (size_t j = i + 1; j < snapPointsAfter.size(); ++j) {
             EXPECT_FALSE(arePointsEqual(snapPointsAfter[i], snapPointsAfter[j]))
-                << "AFTER DRAG: Snap points merged! " << snapPointLabels[i] 
-                << " and " << snapPointLabels[j] 
+                << "AFTER DRAG: Snap points merged! " << snapPointLabels[i]
+                << " and " << snapPointLabels[j]
                 << " are both at (" << snapPointsAfter[i].x << ", " << snapPointsAfter[i].y << ")"
                 << "\nThis indicates a bug in snap point distribution after node drag.";
         }
@@ -694,9 +692,9 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
 
     // Initial layout
     LayoutOptions options;
-    
+
     options.channelRouting.selfLoop.loopOffset = 30.0f;
-    options.snapDistribution = SnapDistribution::Unified;
+
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -752,7 +750,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
     std::unordered_set<NodeId> movedNodes = {n2};
     LayoutUtils::updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges,
-        options.snapDistribution, movedNodes);
+        movedNodes);
 
     // Debug: Print after snap indices and positions
     std::cout << "\n=== After updateEdgePositions ===" << std::endl;
@@ -830,11 +828,11 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
     EdgeId e6 = graph.addEdge(error, idle);        // reset
     EdgeId e7 = graph.addEdge(error, error);       // retry (self-loop)
 
-    // Initial layout - use Separated (default) like the demo
+    // Initial layout
     LayoutOptions options;
-    
+
     options.channelRouting.selfLoop.loopOffset = 50.0f;
-    options.snapDistribution = SnapDistribution::Separated;  // Default mode
+      // Default mode
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -889,7 +887,7 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
     std::unordered_set<NodeId> movedNodes = {running};
     LayoutUtils::updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges,
-        options.snapDistribution, movedNodes);
+        movedNodes);
 
     // Print after state
     std::cout << "\n=== Demo Graph Test: After Drag ===" << std::endl;
@@ -938,7 +936,7 @@ namespace {
         float remainder = std::fmod(std::abs(value), gridSize);
         return remainder < 0.001f || (gridSize - remainder) < 0.001f;
     }
-    
+
     bool isPointOnGrid(const Point& p, float gridSize) {
         return isOnGrid(p.x, gridSize) && isOnGrid(p.y, gridSize);
     }
@@ -952,26 +950,26 @@ TEST(SugiyamaLayoutTest, GridAlignment_NodePositionsOnGrid) {
     NodeId n2 = graph.addNode(Size{100, 50}, "End");
     graph.addEdge(n0, n1, "next");
     graph.addEdge(n1, n2, "next");
-    
+
     // Enable grid with 20px cell size
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
-    
+
     SugiyamaLayout layout;
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
-    
+
     // Verify all node positions are on grid
     float gridSize = options.gridConfig.cellSize;
     for (NodeId nodeId : {n0, n1, n2}) {
         const NodeLayout* nl = result.getNodeLayout(nodeId);
         ASSERT_NE(nl, nullptr);
-        
+
         EXPECT_TRUE(isOnGrid(nl->position.x, gridSize))
-            << "Node " << nodeId << " X position " << nl->position.x 
+            << "Node " << nodeId << " X position " << nl->position.x
             << " is not on grid (gridSize=" << gridSize << ")";
         EXPECT_TRUE(isOnGrid(nl->position.y, gridSize))
-            << "Node " << nodeId << " Y position " << nl->position.y 
+            << "Node " << nodeId << " Y position " << nl->position.y
             << " is not on grid (gridSize=" << gridSize << ")";
     }
 }
@@ -984,33 +982,33 @@ TEST(SugiyamaLayoutTest, GridAlignment_SnapPointsOnGrid) {
     NodeId n2 = graph.addNode(Size{100, 50}, "Target");
     EdgeId e0 = graph.addEdge(n0, n2, "edge1");
     EdgeId e1 = graph.addEdge(n1, n2, "edge2");
-    
+
     // Enable grid with 20px cell size
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
-    
+
     SugiyamaLayout layout;
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
-    
+
     // Verify all snap points are on grid
     float gridSize = options.gridConfig.cellSize;
     for (EdgeId edgeId : {e0, e1}) {
         const EdgeLayout* el = result.getEdgeLayout(edgeId);
         ASSERT_NE(el, nullptr);
-        
+
         EXPECT_TRUE(isPointOnGrid(el->sourcePoint, gridSize))
-            << "Edge " << edgeId << " sourcePoint (" << el->sourcePoint.x << ", " 
+            << "Edge " << edgeId << " sourcePoint (" << el->sourcePoint.x << ", "
             << el->sourcePoint.y << ") is not on grid";
         EXPECT_TRUE(isPointOnGrid(el->targetPoint, gridSize))
-            << "Edge " << edgeId << " targetPoint (" << el->targetPoint.x << ", " 
+            << "Edge " << edgeId << " targetPoint (" << el->targetPoint.x << ", "
             << el->targetPoint.y << ") is not on grid";
-        
+
         // Verify bend points are on grid
         for (size_t i = 0; i < el->bendPoints.size(); ++i) {
             EXPECT_TRUE(isPointOnGrid(el->bendPoints[i].position, gridSize))
-                << "Edge " << edgeId << " bendPoint[" << i << "] (" 
-                << el->bendPoints[i].position.x << ", " 
+                << "Edge " << edgeId << " bendPoint[" << i << "] ("
+                << el->bendPoints[i].position.x << ", "
                 << el->bendPoints[i].position.y << ") is not on grid";
         }
     }
@@ -1023,55 +1021,55 @@ TEST(SugiyamaLayoutTest, GridAlignment_AllCoordinatesOnGrid) {
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
-    
+
     graph.addEdge(idle, running, "start");
     graph.addEdge(running, paused, "pause");
     graph.addEdge(paused, running, "resume");  // backward
     graph.addEdge(running, stopped, "stop");
     graph.addEdge(paused, stopped, "stop");
-    
+
     // Enable grid with 10px cell size
     LayoutOptions options;
     options.gridConfig.cellSize = 10.0f;
-    
+
     SugiyamaLayout layout;
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
-    
+
     float gridSize = options.gridConfig.cellSize;
     int failures = 0;
-    
+
     // Check all nodes
     for (const auto& [nodeId, nl] : result.nodeLayouts()) {
         if (!isOnGrid(nl.position.x, gridSize) || !isOnGrid(nl.position.y, gridSize)) {
-            std::cout << "Node " << nodeId << " position (" << nl.position.x << ", " 
+            std::cout << "Node " << nodeId << " position (" << nl.position.x << ", "
                       << nl.position.y << ") NOT on grid\n";
             failures++;
         }
     }
-    
+
     // Check all edges
     for (const auto& [edgeId, el] : result.edgeLayouts()) {
         if (!isPointOnGrid(el.sourcePoint, gridSize)) {
-            std::cout << "Edge " << edgeId << " sourcePoint (" << el.sourcePoint.x << ", " 
+            std::cout << "Edge " << edgeId << " sourcePoint (" << el.sourcePoint.x << ", "
                       << el.sourcePoint.y << ") NOT on grid\n";
             failures++;
         }
         if (!isPointOnGrid(el.targetPoint, gridSize)) {
-            std::cout << "Edge " << edgeId << " targetPoint (" << el.targetPoint.x << ", " 
+            std::cout << "Edge " << edgeId << " targetPoint (" << el.targetPoint.x << ", "
                       << el.targetPoint.y << ") NOT on grid\n";
             failures++;
         }
         for (size_t i = 0; i < el.bendPoints.size(); ++i) {
             if (!isPointOnGrid(el.bendPoints[i].position, gridSize)) {
-                std::cout << "Edge " << edgeId << " bendPoint[" << i << "] (" 
-                          << el.bendPoints[i].position.x << ", " 
+                std::cout << "Edge " << edgeId << " bendPoint[" << i << "] ("
+                          << el.bendPoints[i].position.x << ", "
                           << el.bendPoints[i].position.y << ") NOT on grid\n";
                 failures++;
             }
         }
     }
-    
+
     EXPECT_EQ(failures, 0) << "Found " << failures << " coordinates not on grid";
 }
 
@@ -1081,74 +1079,74 @@ TEST(SugiyamaLayoutTest, GridAlignment_AfterDrag_StillOnGrid) {
     NodeId n0 = graph.addNode(Size{100, 50}, "Node0");
     NodeId n1 = graph.addNode(Size{100, 50}, "Node1");
     EdgeId e0 = graph.addEdge(n0, n1, "edge");
-    
+
     // Enable grid
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
     float gridSize = options.gridConfig.cellSize;
-    
+
     SugiyamaLayout layout;
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
-    
+
     // Get mutable copies
     auto nodeLayouts = result.nodeLayouts();
     auto edgeLayouts = result.edgeLayouts();
-    
+
     // Simulate drag: move node to non-grid position
     nodeLayouts[n0].position.x += 7.0f;  // 7 is not a multiple of 20
     nodeLayouts[n0].position.y += 13.0f; // 13 is not a multiple of 20
-    
+
     // Node position should be snapped back to grid by updateEdgePositions
     // But updateEdgePositions doesn't modify node positions!
     // So we need to snap node positions before calling updateEdgePositions
-    
+
     // This test verifies the expectation that nodes should be snapped
     // Currently this will FAIL because node snap is not implemented in updateEdgePositions
-    
+
     std::vector<EdgeId> affectedEdges = {e0};
     LayoutUtils::updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges,
-        options.snapDistribution, {}, gridSize);
-    
+        {}, gridSize);
+
     // Verify snap points are on grid
     const EdgeLayout& el = edgeLayouts[e0];
     EXPECT_TRUE(isPointOnGrid(el.sourcePoint, gridSize))
-        << "After drag, sourcePoint (" << el.sourcePoint.x << ", " 
+        << "After drag, sourcePoint (" << el.sourcePoint.x << ", "
         << el.sourcePoint.y << ") should be on grid";
     EXPECT_TRUE(isPointOnGrid(el.targetPoint, gridSize))
-        << "After drag, targetPoint (" << el.targetPoint.x << ", " 
+        << "After drag, targetPoint (" << el.targetPoint.x << ", "
         << el.targetPoint.y << ") should be on grid";
 }
 
 TEST(SugiyamaLayoutTest, GridAlignment_NodePosition_MustBeOnGrid) {
     // This test documents the requirement that node positions
     // should be snapped to grid during drag in interactive mode
-    
+
     Graph graph;
     NodeId n0 = graph.addNode(Size{100, 50}, "Node0");
-    
+
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
     float gridSize = options.gridConfig.cellSize;
-    
+
     SugiyamaLayout layout;
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
-    
+
     // Initial position should be on grid
     const NodeLayout* nl = result.getNodeLayout(n0);
     ASSERT_NE(nl, nullptr);
-    
+
     EXPECT_TRUE(isOnGrid(nl->position.x, gridSize))
         << "Initial X=" << nl->position.x << " should be on grid";
     EXPECT_TRUE(isOnGrid(nl->position.y, gridSize))
         << "Initial Y=" << nl->position.y << " should be on grid";
-    
+
     // After layout, position should be multiples of gridSize
     float expectedX = std::round(nl->position.x / gridSize) * gridSize;
     float expectedY = std::round(nl->position.y / gridSize) * gridSize;
-    
+
     EXPECT_FLOAT_EQ(nl->position.x, expectedX);
     EXPECT_FLOAT_EQ(nl->position.y, expectedY);
 }

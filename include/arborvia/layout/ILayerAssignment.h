@@ -19,12 +19,12 @@ struct LayerAssignmentResult {
 };
 
 /// Abstract interface for layer assignment algorithms
-/// 
+///
 /// Implementations can provide different strategies:
 /// - Longest Path (default, minimizes height)
 /// - Network Simplex (optimal layer assignment)
 /// - Coffman-Graham (bounded width)
-/// 
+///
 /// Use this interface to swap layer assignment algorithms without
 /// modifying SugiyamaLayout or other dependent code.
 class ILayerAssignment {
@@ -34,12 +34,10 @@ public:
     /// Assign layers using the implemented algorithm
     /// @param graph The input graph
     /// @param reversedEdges Edges that should be treated as reversed for layer calculation
-    /// @param strategy Strategy hint (implementation may ignore if not supported)
     /// @return Result containing layer assignments
     virtual LayerAssignmentResult assignLayers(
         const Graph& graph,
-        const std::unordered_set<EdgeId>& reversedEdges,
-        arborvia::LayerAssignment strategy) const = 0;
+        const std::unordered_set<EdgeId>& reversedEdges) const = 0;
 
     /// Assign layers with specified root nodes (they become layer 0)
     /// @param graph The input graph

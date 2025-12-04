@@ -12,10 +12,6 @@ class ManualLayoutManager {
 public:
     ManualLayoutManager() = default;
 
-    // Mode management
-    LayoutMode getMode() const { return mode_; }
-    void setMode(LayoutMode mode) { mode_ = mode; }
-
     // Manual state access
     ManualLayoutState& getManualState() { return manualState_; }
     const ManualLayoutState& getManualState() const { return manualState_; }
@@ -47,13 +43,19 @@ public:
     bool hasManualBendPoints(EdgeId edgeId) const;
     void clearBendPoints(EdgeId edgeId);
     void setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points);
-    
+
     /// Clear all edge routing configurations (snap edges and indices).
     /// Use this before re-routing to allow fresh routing from algorithm.
     void clearAllEdgeRoutings();
 
-    // Apply manual state to layout result
+    // Apply manual state to layout result (node positions + edge routings)
     void applyManualState(LayoutResult& result, const Graph& graph) const;
+
+    // Apply only manual node positions (call before edge routing)
+    void applyManualNodePositions(LayoutResult& result) const;
+
+    // Apply only manual edge routings (call after edge routing)
+    void applyManualEdgeRoutings(LayoutResult& result) const;
 
     // Capture current layout as manual state
     void captureFromResult(const LayoutResult& result);
@@ -74,7 +76,6 @@ public:
     void clearManualState();
 
 private:
-    LayoutMode mode_ = LayoutMode::Auto;
     ManualLayoutState manualState_;
 
     // Helper: get default snap config

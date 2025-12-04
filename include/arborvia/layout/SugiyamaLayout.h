@@ -40,13 +40,13 @@ public:
     SugiyamaLayout();
     explicit SugiyamaLayout(const LayoutOptions& options);
     ~SugiyamaLayout();
-    
+
     // Non-copyable, movable
     SugiyamaLayout(const SugiyamaLayout&) = delete;
     SugiyamaLayout& operator=(const SugiyamaLayout&) = delete;
     SugiyamaLayout(SugiyamaLayout&&) noexcept;
     SugiyamaLayout& operator=(SugiyamaLayout&&) noexcept;
-    
+
     /// Set layout options
     void setOptions(const LayoutOptions& options) override;
     const LayoutOptions& options() const override { return options_; }
@@ -68,7 +68,7 @@ public:
 
     /// Check if cached result is valid for the given graph version
     bool hasCachedResult(uint64_t graphVersion) const { return cachedVersion_ == graphVersion && cachedVersion_ > 0; }
-    
+
     /// Get statistics from last layout
     struct LayoutStats {
         int layerCount = 0;
@@ -102,19 +102,18 @@ private:
     // Incremental layout caching
     uint64_t cachedVersion_ = 0;
     LayoutResult cachedResult_;
-    
+
     // Internal layout state
     struct LayoutState;
     std::unique_ptr<LayoutState> state_;
-    
+
     // Layout phases for simple graphs
     void removeCycles();
     void assignLayers();
     void minimizeCrossings();
     void assignCoordinates();
     void routeEdges();
-    void updateEdgePositionsAfterManualState();
-    
+
     // Compound graph specific
     void layoutCompoundNode(NodeId id, const CompoundGraph& graph);
     void layoutParallelRegions(NodeId id, const CompoundGraph& graph);

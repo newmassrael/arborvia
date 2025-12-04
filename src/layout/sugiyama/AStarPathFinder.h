@@ -7,7 +7,7 @@ namespace algorithms {
 
 /// A* based orthogonal pathfinder for edge routing
 /// Finds paths that avoid obstacles and minimize bend points
-/// 
+///
 /// This is the default implementation of IPathFinder using the A* algorithm
 /// with Manhattan distance heuristic and bend penalties.
 class AStarPathFinder : public IPathFinder {
@@ -67,28 +67,6 @@ public:
         const std::unordered_set<NodeId>& extraStartExcludes = {},
         const std::unordered_set<NodeId>& extraGoalExcludes = {}) const override;
 
-    /// Simple direct path if start and goal are aligned
-    /// Returns empty path if direct connection not possible
-    PathResult tryDirectPath(
-        const GridPoint& start,
-        const GridPoint& goal,
-        const IObstacleProvider& obstacles,
-        NodeId sourceNode,
-        NodeId targetNode,
-        const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const override;
-
-    /// Simple L-shaped path (one bend)
-    /// Tries both horizontal-first and vertical-first
-    PathResult tryLShapedPath(
-        const GridPoint& start,
-        const GridPoint& goal,
-        const IObstacleProvider& obstacles,
-        NodeId sourceNode,
-        NodeId targetNode,
-        const std::unordered_set<NodeId>& extraStartExcludes,
-        const std::unordered_set<NodeId>& extraGoalExcludes) const override;
-
 private:
     /// Internal node for A* search
     struct SearchNode {
@@ -97,7 +75,7 @@ private:
         int g = 0;  // Cost from start
         int h = 0;  // Heuristic to goal
         int f() const { return g + h; }
-        
+
         // For priority queue comparison
         bool operator>(const SearchNode& other) const {
             return f() > other.f();
@@ -116,7 +94,7 @@ private:
         const GridPoint& from,
         const GridPoint& to,
         const IObstacleProvider& obstacles) const;
-    
+
     /// Validate segment with per-endpoint exclusion logic
     /// @param isFirstSegment If true, exclude sourceNode + extraStartExcludes from 'from' cell
     /// @param isLastSegment If true, exclude targetNode + extraGoalExcludes from 'to' cell

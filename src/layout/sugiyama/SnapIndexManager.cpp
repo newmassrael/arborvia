@@ -14,16 +14,16 @@ int SnapIndexManager::unifiedToLocal(int unifiedIdx, int offset, int count) {
     if (count <= 0) {
         return 0;
     }
-    
+
     int localIdx = unifiedIdx - offset;
-    
+
     // Clamp to valid range
     if (localIdx < 0) {
         localIdx = 0;
     } else if (localIdx >= count) {
         localIdx = count - 1;
     }
-    
+
     return localIdx;
 }
 
@@ -43,7 +43,7 @@ SnapIndexValidation SnapIndexManager::validate(int index, int count, const char*
             0
         );
     }
-    
+
     if (index < 0) {
         return SnapIndexValidation::fail(
             SnapIndexError::InvalidIndex,
@@ -51,16 +51,16 @@ SnapIndexValidation SnapIndexManager::validate(int index, int count, const char*
             0
         );
     }
-    
+
     if (index >= count) {
         return SnapIndexValidation::fail(
             SnapIndexError::IndexOutOfRange,
-            std::string(context) + ": index " + std::to_string(index) + 
+            std::string(context) + ": index " + std::to_string(index) +
                 " out of range [0, " + std::to_string(count) + ")",
             count - 1
         );
     }
-    
+
     return SnapIndexValidation::ok(index);
 }
 
@@ -75,37 +75,16 @@ int SnapIndexManager::clamp(int index, int count) {
 // Range Calculation
 // =============================================================================
 
-std::pair<SnapRange, SnapRange> SnapIndexManager::getSeparatedRanges(
-    const NodeEdgeConnections& connections) {
-    
-    SnapRange inRange{0.0f, 0.5f};
-    SnapRange outRange{0.5f, 1.0f};
-    
-    // Adjust ranges based on what exists
-    if (connections.hasOnlyIncoming()) {
-        // Incoming uses full range
-        inRange = {0.0f, 1.0f};
-        outRange = {0.0f, 0.0f};  // Empty range
-    } else if (connections.hasOnlyOutgoing()) {
-        // Outgoing uses full range
-        inRange = {0.0f, 0.0f};  // Empty range
-        outRange = {0.0f, 1.0f};
-    }
-    // else: both exist, use default split
-    
-    return {inRange, outRange};
-}
-
 float SnapIndexManager::calculatePosition(int localIdx, int count, const SnapRange& range) {
     if (count <= 0) {
         return range.midpoint();
     }
-    
+
     // Distribute evenly within range: position = start + (idx + 1) / (count + 1) * width
     float rangeWidth = range.width();
-    float position = range.start + 
+    float position = range.start +
         static_cast<float>(localIdx + 1) / static_cast<float>(count + 1) * rangeWidth;
-    
+
     return position;
 }
 
@@ -113,19 +92,19 @@ float SnapIndexManager::calculatePosition(int localIdx, int count, const SnapRan
 // Connection Analysis
 // =============================================================================
 
-std::map<std::pair<NodeId, NodeEdge>, NodeEdgeConnections> 
+std::map<std::pair<NodeId, NodeEdge>, NodeEdgeConnections>
 SnapIndexManager::buildConnectionMap(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
-    
+
     std::map<std::pair<NodeId, NodeEdge>, NodeEdgeConnections> result;
-    
+
     for (const auto& [edgeId, layout] : edgeLayouts) {
         // Outgoing from source node
         result[{layout.from, layout.sourceEdge}].outgoing.push_back(edgeId);
         // Incoming to target node
         result[{layout.to, layout.targetEdge}].incoming.push_back(edgeId);
     }
-    
+
     return result;
 }
 
@@ -133,9 +112,9 @@ NodeEdgeConnections SnapIndexManager::getConnections(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     NodeId nodeId,
     NodeEdge nodeEdge) {
-    
+
     NodeEdgeConnections result;
-    
+
     for (const auto& [edgeId, layout] : edgeLayouts) {
         // Outgoing from this node on this edge
         if (layout.from == nodeId && layout.sourceEdge == nodeEdge) {
@@ -146,7 +125,7 @@ NodeEdgeConnections SnapIndexManager::getConnections(
             result.incoming.push_back(edgeId);
         }
     }
-    
+
     return result;
 }
 
@@ -154,19 +133,11 @@ NodeEdgeConnections SnapIndexManager::getConnections(
 // Debug Helpers
 // =============================================================================
 
-const char* SnapIndexManager::modeName(SnapDistribution mode) {
-    switch (mode) {
-        case SnapDistribution::Unified: return "Unified";
-        case SnapDistribution::Separated: return "Separated";
-        default: return "Unknown";
-    }
-}
-
 std::string SnapIndexManager::formatIndexInfo(int unifiedIdx, int localIdx, int offset, int count) {
     std::ostringstream oss;
-    oss << "unified=" << unifiedIdx 
-        << " local=" << localIdx 
-        << " offset=" << offset 
+    oss << "unified=" << unifiedIdx
+        << " local=" << localIdx
+        << " offset=" << offset
         << " count=" << count;
     return oss.str();
 }

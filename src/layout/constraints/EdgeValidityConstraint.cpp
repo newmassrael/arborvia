@@ -49,7 +49,7 @@ ConstraintResult EdgeValidityConstraint::check(const ConstraintContext& ctx) con
     algorithms::EdgeRouting routing;
     routing.updateEdgePositions(
         tempEdgeLayouts, tempNodeLayouts, affectedEdges,
-        SnapDistribution::Separated, movedNodes, ctx.gridSize);
+        movedNodes, ctx.gridSize);
 
     // Validate affected edges
     std::vector<EdgeId> invalidEdges;

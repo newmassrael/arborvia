@@ -11,12 +11,6 @@ struct BendPoint {
     bool isControlPoint = false;  ///< For spline curves
 };
 
-/// Layout mode selection
-enum class LayoutMode {
-    Auto,    ///< Algorithm determines all positions and snap points
-    Manual   ///< User controls node positions and edge routing
-};
-
 /// Which edge of a node to use for connections
 enum class NodeEdge {
     Top,
@@ -58,10 +52,10 @@ struct EdgeRoutingConfig {
     NodeEdge targetEdge = NodeEdge::Top;     ///< Which edge of target node
     int sourceSnapIndex = 0;                  ///< Which snap point on source edge
     int targetSnapIndex = 0;                  ///< Which snap point on target edge
-    
+
     /// Manual bend points (empty = use auto routing)
     std::vector<BendPoint> manualBendPoints;
-    
+
     bool hasManualBendPoints() const {
         return !manualBendPoints.empty();
     }

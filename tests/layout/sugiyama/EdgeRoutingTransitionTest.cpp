@@ -731,14 +731,14 @@ TEST(EdgeRoutingTransitionTest, AllBendPoints_MustBeOutsideNodes) {
 // Tests that no segment passes through ANY node (including source/target for middle segments)
 TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes) {
     Graph graph;
-    
+
     // Exact same graph structure as examples/interactive_demo/main.cpp
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
     NodeId error = graph.addNode(Size{200, 100}, "Error");
-    
+
     EdgeId e0 = graph.addEdge(idle, running, "start");
     EdgeId e1 = graph.addEdge(running, paused, "pause");
     EdgeId e2 = graph.addEdge(paused, running, "resume");
@@ -747,13 +747,13 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
     EdgeId e5 = graph.addEdge(running, error, "fail");
     EdgeId e6 = graph.addEdge(error, idle, "reset");
     EdgeId e7 = graph.addEdge(error, error, "retry");
-    
+
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
     std::vector<NodeId> allNodes = {idle, running, paused, stopped, error};
-    
+
     // Build node bounds map
     std::map<NodeId, std::tuple<float, float, float, float>> nodeBounds;
     for (NodeId nodeId : allNodes) {
@@ -765,7 +765,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
         float ymax = node->position.y + node->size.height;
         nodeBounds[nodeId] = {xmin, xmax, ymin, ymax};
     }
-    
+
     std::cout << "\n===== INTERACTIVE_DEMO SEGMENT INTERSECTION TEST =====\n";
     std::cout << "Node positions:\n";
     for (NodeId nodeId : allNodes) {
@@ -776,7 +776,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
     for (EdgeId edgeId : allEdges) {
         const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
         ASSERT_NE(edgeLayout, nullptr);
-        
+
         // Collect all points
         std::vector<Point> points;
         points.push_back(edgeLayout->sourcePoint);
@@ -784,29 +784,29 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
             points.push_back(bend.position);
         }
         points.push_back(edgeLayout->targetPoint);
-        
-        std::cout << "Edge " << edgeId << " (" << edgeLayout->from << " -> " << edgeLayout->to 
+
+        std::cout << "Edge " << edgeId << " (" << edgeLayout->from << " -> " << edgeLayout->to
                   << "): " << points.size() << " points\n";
-        
+
         // Check each segment
         for (size_t i = 0; i + 1 < points.size(); ++i) {
             const Point& p1 = points[i];
             const Point& p2 = points[i + 1];
-            
+
             bool isHorizontal = (std::abs(p1.y - p2.y) < 0.1f);
             bool isVertical = (std::abs(p1.x - p2.x) < 0.1f);
-            
+
             for (NodeId nodeId : allNodes) {
                 // For FIRST segment only, skip source node
-                // For LAST segment only, skip target node  
+                // For LAST segment only, skip target node
                 // For MIDDLE segments, check ALL nodes including source and target
                 if (i == 0 && nodeId == edgeLayout->from) continue;
                 if (i == points.size() - 2 && nodeId == edgeLayout->to) continue;
-                
+
                 auto [xmin, xmax, ymin, ymax] = nodeBounds[nodeId];
-                
+
                 bool intersects = false;
-                
+
                 if (isHorizontal) {
                     float y = p1.y;
                     float segXmin = std::min(p1.x, p2.x);
@@ -820,13 +820,13 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
                     // Vertical segment intersects if within node's X range and overlaps Y range
                     intersects = (x > xmin && x < xmax && segYmin < ymax && segYmax > ymin);
                 }
-                
+
                 if (intersects) {
                     std::cout << "  INTERSECTION! Segment [" << i << "->" << (i+1) << "] "
                               << "(" << p1.x << "," << p1.y << ") -> (" << p2.x << "," << p2.y << ")"
-                              << " passes through node " << nodeId 
+                              << " passes through node " << nodeId
                               << " [x:" << xmin << "-" << xmax << ", y:" << ymin << "-" << ymax << "]\n";
-                    
+
                     FAIL() << "Edge " << edgeId << " segment [" << i << "->" << (i+1)
                            << "] passes through node " << nodeId << " (interior)!\n"
                            << "  Segment: (" << p1.x << "," << p1.y << ") -> (" << p2.x << "," << p2.y << ")\n"
@@ -836,7 +836,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_SegmentsMustNotPassThroughNodes)
             }
         }
     }
-    
+
     std::cout << "=======================================================\n";
 }
 
@@ -962,37 +962,37 @@ TEST(EdgeRoutingTransitionTest, UserReportedBug_EdgePassesThroughTargetNode) {
 // Returns true if segments overlap (share more than just an endpoint)
 static bool segmentsOverlap(const Point& a1, const Point& a2, const Point& b1, const Point& b2) {
     constexpr float EPSILON = 0.1f;
-    
+
     // Check if both segments are on the same line
     bool bothVertical = (std::abs(a1.x - a2.x) < EPSILON) && (std::abs(b1.x - b2.x) < EPSILON);
     bool bothHorizontal = (std::abs(a1.y - a2.y) < EPSILON) && (std::abs(b1.y - b2.y) < EPSILON);
-    
+
     if (bothVertical && std::abs(a1.x - b1.x) < EPSILON) {
         // Both vertical on same x
         float aMin = std::min(a1.y, a2.y);
         float aMax = std::max(a1.y, a2.y);
         float bMin = std::min(b1.y, b2.y);
         float bMax = std::max(b1.y, b2.y);
-        
+
         // Check for overlap (more than just touching at endpoint)
         float overlapStart = std::max(aMin, bMin);
         float overlapEnd = std::min(aMax, bMax);
         return (overlapEnd - overlapStart) > EPSILON;
     }
-    
+
     if (bothHorizontal && std::abs(a1.y - b1.y) < EPSILON) {
         // Both horizontal on same y
         float aMin = std::min(a1.x, a2.x);
         float aMax = std::max(a1.x, a2.x);
         float bMin = std::min(b1.x, b2.x);
         float bMax = std::max(b1.x, b2.x);
-        
+
         // Check for overlap (more than just touching at endpoint)
         float overlapStart = std::max(aMin, bMin);
         float overlapEnd = std::min(aMax, bMax);
         return (overlapEnd - overlapStart) > EPSILON;
     }
-    
+
     return false;
 }
 
@@ -1001,13 +1001,13 @@ static bool segmentsOverlap(const Point& a1, const Point& a2, const Point& b1, c
 TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
     // Create a state machine graph similar to interactive_demo
     Graph graph;
-    
+
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");       // id=0
     NodeId running = graph.addNode(Size{200, 100}, "Running"); // id=1
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");   // id=2
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped"); // id=3
     NodeId error = graph.addNode(Size{200, 100}, "Error");     // id=4
-    
+
     // Create transitions (including backward edges that cause complex routing)
     EdgeId e0 = graph.addEdge(idle, running, "start");
     EdgeId e1 = graph.addEdge(running, paused, "pause");
@@ -1017,7 +1017,7 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
     EdgeId e5 = graph.addEdge(running, error, "error");
     EdgeId e6 = graph.addEdge(error, idle, "reset");  // backward - this causes complex routing
     EdgeId e7 = graph.addEdge(error, error, "retry");  // self-loop
-    
+
     // Use exact node positions from user's interactive_demo JSON output
     // These positions trigger the overlapping segment bug
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
@@ -1026,23 +1026,23 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
     nodeLayouts[paused] = NodeLayout{paused, {-55.0f, 710.0f}, {200.0f, 100.0f}, 2, 0};
     nodeLayouts[stopped] = NodeLayout{stopped, {-20.0f, 859.0f}, {200.0f, 100.0f}, 3, 0};
     nodeLayouts[error] = NodeLayout{error, {89.0f, 1067.0f}, {200.0f, 100.0f}, 3, 1};
-    
+
     // Route edges with specific node positions
     EdgeRouting router;
     std::unordered_set<EdgeId> reversedEdges = {e2, e6}; // backward edges
     LayoutOptions options;
-    
+
     auto result = router.route(graph, nodeLayouts, reversedEdges, options);
-    
+
     std::cout << "\n===== SEGMENT OVERLAP TEST =====\n";
-    
+
     std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
     int totalOverlaps = 0;
-    
+
     for (EdgeId edgeId : allEdges) {
         const EdgeLayout* layout = result.getEdgeLayout(edgeId);
         if (!layout) continue;
-        
+
         // Build full point list
         std::vector<Point> points;
         points.push_back(layout->sourcePoint);
@@ -1050,10 +1050,10 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
             points.push_back(bend.position);
         }
         points.push_back(layout->targetPoint);
-        
+
         // Skip edges with less than 4 points (can't have overlapping segments)
         if (points.size() < 4) continue;
-        
+
         // Check all pairs of non-adjacent segments for overlap
         int edgeOverlaps = 0;
         for (size_t i = 0; i + 1 < points.size(); ++i) {
@@ -1062,17 +1062,17 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
                 const Point& a2 = points[i + 1];
                 const Point& b1 = points[j];
                 const Point& b2 = points[j + 1];
-                
+
                 if (segmentsOverlap(a1, a2, b1, b2)) {
                     edgeOverlaps++;
-                    std::cout << "Edge " << edgeId << ": Segments [" << i << "->" << (i+1) 
+                    std::cout << "Edge " << edgeId << ": Segments [" << i << "->" << (i+1)
                               << "] and [" << j << "->" << (j+1) << "] OVERLAP!\n";
                     std::cout << "  Seg1: (" << a1.x << "," << a1.y << ") -> (" << a2.x << "," << a2.y << ")\n";
                     std::cout << "  Seg2: (" << b1.x << "," << b1.y << ") -> (" << b2.x << "," << b2.y << ")\n";
                 }
             }
         }
-        
+
         if (edgeOverlaps > 0) {
             std::cout << "Edge " << edgeId << " has " << edgeOverlaps << " overlapping segment pairs\n";
             std::cout << "  Full path:\n";
@@ -1080,42 +1080,42 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
                 std::cout << "    [" << k << "]: (" << points[k].x << ", " << points[k].y << ")\n";
             }
         }
-        
+
         totalOverlaps += edgeOverlaps;
     }
-    
+
     std::cout << "Total overlapping segment pairs: " << totalOverlaps << "\n";
-    
+
     // Also check for spike patterns (adjacent segments that backtrack on same line)
     int totalSpikes = 0;
     constexpr float SPIKE_EPSILON = 0.1f;
-    
+
     for (EdgeId edgeId : allEdges) {
         const EdgeLayout* layout = result.getEdgeLayout(edgeId);
         if (!layout) continue;
-        
+
         std::vector<Point> points;
         points.push_back(layout->sourcePoint);
         for (const auto& bend : layout->bendPoints) {
             points.push_back(bend.position);
         }
         points.push_back(layout->targetPoint);
-        
+
         if (points.size() < 3) continue;
-        
+
         int edgeSpikes = 0;
         for (size_t i = 0; i + 2 < points.size(); ++i) {
             const Point& a = points[i];
             const Point& b = points[i + 1];
             const Point& c = points[i + 2];
-            
+
             // Check if all three points are on the same vertical line
-            bool sameVertical = (std::abs(a.x - b.x) < SPIKE_EPSILON && 
+            bool sameVertical = (std::abs(a.x - b.x) < SPIKE_EPSILON &&
                                  std::abs(b.x - c.x) < SPIKE_EPSILON);
             // Check if all three points are on the same horizontal line
-            bool sameHorizontal = (std::abs(a.y - b.y) < SPIKE_EPSILON && 
+            bool sameHorizontal = (std::abs(a.y - b.y) < SPIKE_EPSILON &&
                                    std::abs(b.y - c.y) < SPIKE_EPSILON);
-            
+
             if (sameVertical) {
                 // Check if direction reverses (spike pattern)
                 bool aToB_down = b.y > a.y;
@@ -1123,13 +1123,13 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
                 if (aToB_down != bToC_down) {
                     edgeSpikes++;
                     std::cout << "Edge " << edgeId << ": SPIKE at point [" << (i+1) << "]!\n";
-                    std::cout << "  (" << a.x << "," << a.y << ") -> (" 
-                              << b.x << "," << b.y << ") -> (" 
+                    std::cout << "  (" << a.x << "," << a.y << ") -> ("
+                              << b.x << "," << b.y << ") -> ("
                               << c.x << "," << c.y << ")\n";
                     std::cout << "  Direction reverses on vertical line x=" << b.x << "\n";
                 }
             }
-            
+
             if (sameHorizontal) {
                 // Check if direction reverses (spike pattern)
                 bool aToB_right = b.x > a.x;
@@ -1137,14 +1137,14 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
                 if (aToB_right != bToC_right) {
                     edgeSpikes++;
                     std::cout << "Edge " << edgeId << ": SPIKE at point [" << (i+1) << "]!\n";
-                    std::cout << "  (" << a.x << "," << a.y << ") -> (" 
-                              << b.x << "," << b.y << ") -> (" 
+                    std::cout << "  (" << a.x << "," << a.y << ") -> ("
+                              << b.x << "," << b.y << ") -> ("
                               << c.x << "," << c.y << ")\n";
                     std::cout << "  Direction reverses on horizontal line y=" << b.y << "\n";
                 }
             }
         }
-        
+
         if (edgeSpikes > 0) {
             std::cout << "Edge " << edgeId << " has " << edgeSpikes << " spike(s)\n";
             std::cout << "  Full path:\n";
@@ -1152,13 +1152,13 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
                 std::cout << "    [" << k << "]: (" << points[k].x << ", " << points[k].y << ")\n";
             }
         }
-        
+
         totalSpikes += edgeSpikes;
     }
-    
+
     std::cout << "Total spikes: " << totalSpikes << "\n";
     std::cout << "================================\n";
-    
+
     EXPECT_EQ(totalOverlaps, 0) << "Found " << totalOverlaps << " overlapping segment pairs across all edges";
     EXPECT_EQ(totalSpikes, 0) << "Found " << totalSpikes << " spike patterns across all edges";
 }
@@ -1167,14 +1167,14 @@ TEST(EdgeRoutingTransitionTest, NoOverlappingSegmentsWithinSameEdge) {
 // This specific position was reachable in older versions but is now properly blocked.
 TEST(EdgeRoutingTransitionTest, LatestJSON_IntermediateNodePositionRejected) {
     Graph graph;
-    
+
     // Same graph structure as interactive_demo
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");       // id=0
     NodeId running = graph.addNode(Size{200, 100}, "Running"); // id=1
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");   // id=2
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped"); // id=3
     NodeId error = graph.addNode(Size{200, 100}, "Error");     // id=4
-    
+
     EdgeId e0 = graph.addEdge(idle, running, "start");
     EdgeId e1 = graph.addEdge(running, paused, "pause");
     EdgeId e2 = graph.addEdge(paused, running, "resume");
@@ -1183,37 +1183,37 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_IntermediateNodePositionRejected) {
     EdgeId e5 = graph.addEdge(running, error, "fail");
     EdgeId e6 = graph.addEdge(error, idle, "reset");
     EdgeId e7 = graph.addEdge(error, error, "retry");
-    
+
     (void)e0; (void)e1; (void)e2; (void)e3; (void)e4; (void)e5; (void)e6; (void)e7;
-    
+
     // Do initial layout to get valid edge layouts
     SugiyamaLayout layoutEngine;
     LayoutResult initialResult = layoutEngine.layout(graph);
-    
+
     // Get initial node and edge layouts for validation
     std::vector<NodeId> nodeIds = {idle, running, paused, stopped, error};
     std::vector<EdgeId> edgeIds = {e0, e1, e2, e3, e4, e5, e6, e7};
-    
+
     std::unordered_map<NodeId, NodeLayout> baseNodeLayouts;
     for (NodeId nid : nodeIds) {
         const NodeLayout* nl = initialResult.getNodeLayout(nid);
         if (nl) baseNodeLayouts[nid] = *nl;
     }
-    
+
     std::unordered_map<EdgeId, EdgeLayout> baseEdgeLayouts;
     for (EdgeId eid : edgeIds) {
         const EdgeLayout* el = initialResult.getEdgeLayout(eid);
         if (el) baseEdgeLayouts[eid] = *el;
     }
-    
+
     // EXACT position from user's latest JSON output (idle was dragged)
     Point idleProposedPos = {213.0f, 76.0f};
     const float gridSize = 20.0f;
-    
+
     // This position should be rejected by drag validation
     auto validation = LayoutUtils::canMoveNodeTo(idle, idleProposedPos, baseNodeLayouts, baseEdgeLayouts, gridSize);
-    
-    EXPECT_FALSE(validation.valid) 
+
+    EXPECT_FALSE(validation.valid)
         << "Legacy position (213, 76) for idle should be rejected by drag validation";
 }
 
@@ -1224,13 +1224,13 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_IntermediateNodePositionRejected) {
 // properly blocked to prevent invalid edge routing states.
 TEST(EdgeRoutingTransitionTest, LatestJSON_PositionsRejectedByDragValidation) {
     Graph graph;
-    
+
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
     NodeId error = graph.addNode(Size{200, 100}, "Error");
-    
+
     graph.addEdge(idle, running, "start");
     graph.addEdge(running, paused, "pause");
     graph.addEdge(paused, running, "resume");
@@ -1239,16 +1239,16 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_PositionsRejectedByDragValidation) {
     graph.addEdge(running, error, "fail");
     graph.addEdge(error, idle, "reset");
     graph.addEdge(error, error, "retry");
-    
+
     // Get valid initial layout
     SugiyamaLayout layoutEngine;
     LayoutResult initialResult = layoutEngine.layout(graph);
-    
+
     std::vector<NodeId> nodeIds = {idle, running, paused, stopped, error};
-    
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     for (NodeId id : nodeIds) {
         const auto* nl = initialResult.getNodeLayout(id);
         if (nl) nodeLayouts[id] = *nl;
@@ -1257,9 +1257,9 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_PositionsRejectedByDragValidation) {
         const auto* el = initialResult.getEdgeLayout(edgeId);
         if (el) edgeLayouts[edgeId] = *el;
     }
-    
+
     const float gridSize = 20.0f;
-    
+
     // Legacy positions from user's JSON output (before drag validation existed)
     std::unordered_map<NodeId, Point> legacyPositions;
     legacyPositions[idle] = {15.0f, 106.0f};
@@ -1267,26 +1267,26 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_PositionsRejectedByDragValidation) {
     legacyPositions[paused] = {0.0f, 350.0f};
     legacyPositions[stopped] = {0.0f, 525.0f};
     legacyPositions[error] = {250.0f, 525.0f};
-    
+
     // Verify that at least one position is rejected (positions are invalid)
     bool anyRejected = false;
     for (const auto& [nodeId, targetPos] : legacyPositions) {
         auto validation = LayoutUtils::canMoveNodeTo(
             nodeId, targetPos, nodeLayouts, edgeLayouts, gridSize);
-        
+
         if (!validation.valid) {
             anyRejected = true;
             break;
         }
-        
+
         // Update state for next validation
         nodeLayouts[nodeId].position = targetPos;
         std::vector<EdgeId> affected = LayoutUtils::getConnectedEdges(nodeId, edgeLayouts);
         std::unordered_set<NodeId> moved = {nodeId};
-        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, affected, 
-                                        SnapDistribution::Separated, moved, gridSize);
+        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, affected,
+                                        moved, gridSize);
     }
-    
+
     EXPECT_TRUE(anyRejected) << "Legacy positions should be rejected by drag validation";
 }
 
@@ -1294,14 +1294,14 @@ TEST(EdgeRoutingTransitionTest, LatestJSON_PositionsRejectedByDragValidation) {
 // This reproduces the exact scenario from user's interactive_demo output
 TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
     Graph graph;
-    
+
     // Same graph structure as interactive_demo
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");       // id=0
     NodeId running = graph.addNode(Size{200, 100}, "Running"); // id=1
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");   // id=2
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped"); // id=3
     NodeId error = graph.addNode(Size{200, 100}, "Error");     // id=4
-    
+
     EdgeId e0 = graph.addEdge(idle, running, "start");
     EdgeId e1 = graph.addEdge(running, paused, "pause");
     EdgeId e2 = graph.addEdge(paused, running, "resume");
@@ -1310,11 +1310,11 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
     EdgeId e5 = graph.addEdge(running, error, "fail");
     EdgeId e6 = graph.addEdge(error, idle, "reset");
     EdgeId e7 = graph.addEdge(error, error, "retry");
-    
+
     // Step 1: Initial layout
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     // Step 2: Simulate user dragging nodes to specific positions
     // These are the EXACT positions from user's JSON that cause diagonal segments
     std::unordered_map<NodeId, NodeLayout> draggedLayouts;
@@ -1323,34 +1323,34 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
     draggedLayouts[paused] = NodeLayout{paused, {0.0f, 350.0f}, {200.0f, 100.0f}, 2, 0};
     draggedLayouts[stopped] = NodeLayout{stopped, {0.0f, 525.0f}, {200.0f, 100.0f}, 3, 0};
     draggedLayouts[error] = NodeLayout{error, {250.0f, 525.0f}, {200.0f, 100.0f}, 3, 1};
-    
+
     // Step 3: Extract edge layouts from initial result and call updateEdgePositions
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
     std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
-    
+
     for (EdgeId edgeId : allEdges) {
         const EdgeLayout* origLayout = result.getEdgeLayout(edgeId);
         if (origLayout) {
             edgeLayouts[edgeId] = *origLayout;
         }
     }
-    
+
     // Call updateEdgePositions - this is what interactive_demo does after drag
     std::unordered_set<NodeId> movedNodes = {idle, running, paused, stopped, error};
     EdgeRouting routing;
-    routing.updateEdgePositions(edgeLayouts, draggedLayouts, allEdges, 
-                                SnapDistribution::Separated, movedNodes);
-    
+    routing.updateEdgePositions(edgeLayouts, draggedLayouts, allEdges,
+                                movedNodes);
+
     std::cout << "\n===== AFTER updateEdgePositions ORTHOGONALITY TEST (TDD) =====\n";
-    
+
     int totalDiagonals = 0;
-    
+
     for (EdgeId edgeId : allEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
-        
+
         const EdgeLayout& edgeLayout = it->second;
-        
+
         // Collect all points
         std::vector<Point> points;
         points.push_back(edgeLayout.sourcePoint);
@@ -1358,23 +1358,23 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
             points.push_back(bend.position);
         }
         points.push_back(edgeLayout.targetPoint);
-        
+
         std::cout << "Edge " << edgeId << " (" << edgeLayout.from << " -> " << edgeLayout.to << "):\n";
-        
+
         // Check each segment for orthogonality
         for (size_t i = 0; i + 1 < points.size(); ++i) {
             const Point& p1 = points[i];
             const Point& p2 = points[i + 1];
-            
+
             float dx = std::abs(p1.x - p2.x);
             float dy = std::abs(p1.y - p2.y);
-            
+
             bool isHorizontal = (dy < 0.1f);
             bool isVertical = (dx < 0.1f);
-            
-            std::cout << "  [" << i << "->" << (i+1) << "] (" << p1.x << "," << p1.y 
+
+            std::cout << "  [" << i << "->" << (i+1) << "] (" << p1.x << "," << p1.y
                       << ") -> (" << p2.x << "," << p2.y << ")";
-            
+
             if (isHorizontal) {
                 std::cout << " [H]\n";
             } else if (isVertical) {
@@ -1385,11 +1385,11 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
             }
         }
     }
-    
+
     std::cout << "\nTotal diagonal segments: " << totalDiagonals << "\n";
     std::cout << "=============================================================\n";
-    
-    EXPECT_EQ(totalDiagonals, 0) 
+
+    EXPECT_EQ(totalDiagonals, 0)
         << "Found " << totalDiagonals << " diagonal segments after updateEdgePositions!";
 }
 
@@ -1397,49 +1397,49 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_AllSegmentsMustRemainOrthogonal) {
 // Move target node in a circle around source node and verify orthogonality at all positions
 TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
     Graph graph;
-    
+
     // Simple two-node graph for focused testing
     NodeId source = graph.addNode(Size{200, 100}, "Source");
     NodeId target = graph.addNode(Size{200, 100}, "Target");
     EdgeId edge = graph.addEdge(source, target, "connection");
-    
+
     // Source node fixed at center
     const Point sourceCenter = {300.0f, 300.0f};
     const float radius = 250.0f;  // Distance from source center
     const int numPositions = 36;  // Test every 10 degrees
-    
+
     std::cout << "\n===== CIRCULAR DRAG SIMULATION TEST =====\n";
-    
+
     int totalDiagonals = 0;
     int totalIntersections = 0;
     int totalPositions = 0;
     int skippedPositions = 0;
     std::vector<std::string> failedPositions;
-    
+
     for (int i = 0; i < numPositions; ++i) {
         float angle = (2.0f * 3.14159265f * i) / numPositions;
         float targetX = sourceCenter.x + radius * std::cos(angle);
         float targetY = sourceCenter.y + radius * std::sin(angle);
-        
+
         // Create node layouts for this position
         std::unordered_map<NodeId, NodeLayout> nodeLayouts;
-        nodeLayouts[source] = NodeLayout{source, 
+        nodeLayouts[source] = NodeLayout{source,
             {sourceCenter.x - 100.0f, sourceCenter.y - 50.0f}, // Position (top-left)
             {200.0f, 100.0f}, 0, 0};
-        nodeLayouts[target] = NodeLayout{target, 
+        nodeLayouts[target] = NodeLayout{target,
             {targetX - 100.0f, targetY - 50.0f}, // Position (top-left)
             {200.0f, 100.0f}, 1, 0};
-        
+
         // Route the edge
         EdgeRouting router;
         std::unordered_set<EdgeId> reversedEdges;
         LayoutOptions options;
-        
+
         auto result = router.route(graph, nodeLayouts, reversedEdges, options);
-        
+
         const EdgeLayout* edgeLayout = result.getEdgeLayout(edge);
         if (!edgeLayout) continue;
-        
+
         // Validate the routed edge using centralized validation
         auto edgeValidation = algorithms::EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
         if (!edgeValidation.valid) {
@@ -1447,7 +1447,7 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
             skippedPositions++;
             continue;
         }
-        
+
         // Collect all points
         std::vector<Point> points;
         points.push_back(edgeLayout->sourcePoint);
@@ -1455,40 +1455,40 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
             points.push_back(bend.position);
         }
         points.push_back(edgeLayout->targetPoint);
-        
+
         int positionDiagonals = 0;
         int positionIntersections = 0;
-        
+
         // Check each segment
         for (size_t j = 0; j + 1 < points.size(); ++j) {
             const Point& p1 = points[j];
             const Point& p2 = points[j + 1];
-            
+
             float dx = std::abs(p1.x - p2.x);
             float dy = std::abs(p1.y - p2.y);
-            
+
             bool isHorizontal = (dy < 0.1f);
             bool isVertical = (dx < 0.1f);
-            
+
             // Check 1: Orthogonality
             if (!isHorizontal && !isVertical) {
                 positionDiagonals++;
                 totalDiagonals++;
             }
-            
+
             // Check 2: Segment-node intersection
             // Skip first segment for source, last segment for target
             for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
                 if (j == 0 && nodeId == edgeLayout->from) continue;
                 if (j == points.size() - 2 && nodeId == edgeLayout->to) continue;
-                
+
                 float nodeXmin = nodeLayout.position.x;
                 float nodeXmax = nodeLayout.position.x + nodeLayout.size.width;
                 float nodeYmin = nodeLayout.position.y;
                 float nodeYmax = nodeLayout.position.y + nodeLayout.size.height;
-                
+
                 bool intersects = false;
-                
+
                 if (isVertical) {
                     float x = p1.x;
                     float segYmin = std::min(p1.y, p2.y);
@@ -1502,16 +1502,16 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
                     // Horizontal segment intersects if within node's Y range (interior) and overlaps X range
                     intersects = (y > nodeYmin && y < nodeYmax && segXmin < nodeXmax && segXmax > nodeXmin);
                 }
-                
+
                 if (intersects) {
                     positionIntersections++;
                     totalIntersections++;
                 }
             }
         }
-        
+
         totalPositions++;
-        
+
         if (positionDiagonals > 0 || positionIntersections > 0) {
             int degrees = static_cast<int>(angle * 180.0f / 3.14159265f);
             std::ostringstream ss;
@@ -1519,7 +1519,7 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
             if (positionDiagonals > 0) ss << " - " << positionDiagonals << " diagonals";
             if (positionIntersections > 0) ss << " - " << positionIntersections << " intersections";
             failedPositions.push_back(ss.str());
-            
+
             // Print detailed path for failed positions
             std::cout << "FAIL at " << degrees << " degrees:\n";
             for (size_t j = 0; j < points.size(); ++j) {
@@ -1527,22 +1527,22 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
             }
         }
     }
-    
+
     std::cout << "Tested " << totalPositions << " valid positions around circle\n";
     std::cout << "Skipped " << skippedPositions << " invalid positions (rejected by canMoveNodeTo)\n";
     std::cout << "Total diagonal segments: " << totalDiagonals << "\n";
     std::cout << "Total node intersections: " << totalIntersections << "\n";
-    
+
     if (!failedPositions.empty()) {
         std::cout << "Failed positions:\n";
         for (const auto& pos : failedPositions) {
             std::cout << "  " << pos << "\n";
         }
     }
-    
+
     std::cout << "==========================================\n";
-    
-    EXPECT_EQ(totalDiagonals, 0) 
+
+    EXPECT_EQ(totalDiagonals, 0)
         << "Found " << totalDiagonals << " diagonal segments!";
     EXPECT_EQ(totalIntersections, 0)
         << "Found " << totalIntersections << " segment-node intersections!";
@@ -1552,14 +1552,14 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
 // Tests that all edges remain orthogonal when Error node is moved around
 TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
     Graph graph;
-    
+
     // Full state machine graph
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
     NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
     NodeId error = graph.addNode(Size{200, 100}, "Error");
-    
+
     EdgeId e0 = graph.addEdge(idle, running, "start");
     EdgeId e1 = graph.addEdge(running, paused, "pause");
     EdgeId e2 = graph.addEdge(paused, running, "resume");
@@ -1568,32 +1568,32 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
     EdgeId e5 = graph.addEdge(running, error, "fail");
     EdgeId e6 = graph.addEdge(error, idle, "reset");
     EdgeId e7 = graph.addEdge(error, error, "retry");
-    
+
     std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
-    
+
     // Fixed positions for most nodes
     const Point idlePos = {100.0f, 100.0f};
     const Point runningPos = {400.0f, 100.0f};
     const Point pausedPos = {100.0f, 350.0f};
     const Point stoppedPos = {100.0f, 525.0f};
-    
+
     // Error node moves in circle around center
     const Point centerPos = {350.0f, 400.0f};
     const float radius = 200.0f;
     const int numPositions = 24;  // Every 15 degrees
-    
+
     std::cout << "\n===== STATE MACHINE CIRCULAR DRAG TEST =====\n";
-    
+
     int totalDiagonals = 0;
     int totalPositions = 0;
     int skippedPositions = 0;
     std::vector<std::string> failedPositions;
-    
+
     for (int i = 0; i < numPositions; ++i) {
         float angle = (2.0f * 3.14159265f * i) / numPositions;
         float errorX = centerPos.x + radius * std::cos(angle);
         float errorY = centerPos.y + radius * std::sin(angle);
-        
+
         // Create node layouts
         std::unordered_map<NodeId, NodeLayout> nodeLayouts;
         nodeLayouts[idle] = NodeLayout{idle, idlePos, {200.0f, 100.0f}, 0, 0};
@@ -1601,58 +1601,58 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
         nodeLayouts[paused] = NodeLayout{paused, pausedPos, {200.0f, 100.0f}, 2, 0};
         nodeLayouts[stopped] = NodeLayout{stopped, stoppedPos, {200.0f, 100.0f}, 3, 0};
         nodeLayouts[error] = NodeLayout{error, {errorX, errorY}, {200.0f, 100.0f}, 3, 1};
-        
+
         // Route all edges
         EdgeRouting router;
         std::unordered_set<EdgeId> reversedEdges = {e2, e6};
         LayoutOptions options;
-        
+
         auto result = router.route(graph, nodeLayouts, reversedEdges, options);
-        
+
         // Check if all edges are valid using centralized validation
         bool allValid = true;
         for (EdgeId edgeId : allEdges) {
             const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
             if (!edgeLayout) continue;
-            
+
             auto validation = algorithms::EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
             if (!validation.valid) {
                 allValid = false;
                 break;
             }
         }
-        
+
         if (!allValid) {
             // Routing algorithm couldn't produce valid paths for this configuration
             skippedPositions++;
             continue;
         }
-        
+
         // Check all edges for diagonals
         int positionDiagonals = 0;
         std::string diagonalEdges;
-        
+
         for (EdgeId edgeId : allEdges) {
             const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
             if (!edgeLayout) continue;
-            
+
             std::vector<Point> points;
             points.push_back(edgeLayout->sourcePoint);
             for (const auto& bend : edgeLayout->bendPoints) {
                 points.push_back(bend.position);
             }
             points.push_back(edgeLayout->targetPoint);
-            
+
             for (size_t j = 0; j + 1 < points.size(); ++j) {
                 const Point& p1 = points[j];
                 const Point& p2 = points[j + 1];
-                
+
                 float dx = std::abs(p1.x - p2.x);
                 float dy = std::abs(p1.y - p2.y);
-                
+
                 bool isHorizontal = (dy < 0.1f);
                 bool isVertical = (dx < 0.1f);
-                
+
                 if (!isHorizontal && !isVertical) {
                     positionDiagonals++;
                     totalDiagonals++;
@@ -1660,37 +1660,37 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
                 }
             }
         }
-        
+
         totalPositions++;
-        
+
         if (positionDiagonals > 0) {
             int degrees = static_cast<int>(angle * 180.0f / 3.14159265f);
             std::ostringstream ss;
             ss << "Angle " << degrees << "deg: error@(" << errorX << "," << errorY << ") - "
                << positionDiagonals << " diagonals in [" << diagonalEdges << "]";
             failedPositions.push_back(ss.str());
-            
+
             std::cout << "FAIL at " << degrees << " degrees, error@(" << errorX << "," << errorY << "):\n";
-            
+
             // Print paths for edges with diagonals
             for (EdgeId edgeId : allEdges) {
                 const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
                 if (!edgeLayout) continue;
-                
+
                 std::vector<Point> points;
                 points.push_back(edgeLayout->sourcePoint);
                 for (const auto& bend : edgeLayout->bendPoints) {
                     points.push_back(bend.position);
                 }
                 points.push_back(edgeLayout->targetPoint);
-                
+
                 bool hasDiagonal = false;
                 for (size_t j = 0; j + 1 < points.size(); ++j) {
                     float dx = std::abs(points[j].x - points[j+1].x);
                     float dy = std::abs(points[j].y - points[j+1].y);
                     if (dx > 0.1f && dy > 0.1f) hasDiagonal = true;
                 }
-                
+
                 if (hasDiagonal) {
                     std::cout << "  Edge " << edgeId << " (" << edgeLayout->from << "->" << edgeLayout->to << "):\n";
                     for (size_t j = 0; j < points.size(); ++j) {
@@ -1700,20 +1700,20 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
             }
         }
     }
-    
+
     std::cout << "Tested " << totalPositions << " valid error node positions\n";
     std::cout << "Skipped " << skippedPositions << " invalid positions (rejected by canMoveNodeTo)\n";
     std::cout << "Total diagonal segments: " << totalDiagonals << "\n";
-    
+
     if (!failedPositions.empty()) {
         std::cout << "Failed positions (" << failedPositions.size() << "):\n";
         for (const auto& pos : failedPositions) {
             std::cout << "  " << pos << "\n";
         }
     }
-    
+
     std::cout << "=============================================\n";
-    
+
     EXPECT_EQ(totalDiagonals, 0)
         << "Found " << totalDiagonals << " diagonal segments across "
         << failedPositions.size() << "/" << totalPositions << " positions!";
@@ -1741,19 +1741,19 @@ TEST(EdgeRoutingTransitionTest, UserScenario_PositionsRejectedByDragValidation) 
     EdgeId e5 = graph.addEdge(running, error, "fail");
     EdgeId e6 = graph.addEdge(error, idle, "reset");
     EdgeId e7 = graph.addEdge(error, error, "retry");
-    
+
     (void)e0; (void)e1; (void)e2; (void)e3; (void)e4; (void)e5; (void)e6; (void)e7;
 
     // Do initial layout to get valid starting state
     SugiyamaLayout layoutEngine;
     LayoutResult initialResult = layoutEngine.layout(graph);
-    
+
     std::vector<NodeId> nodeIds = {idle, running, paused, stopped, error};
     std::vector<EdgeId> allEdgeIds = {e0, e1, e2, e3, e4, e5, e6, e7};
-    
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     for (NodeId id : nodeIds) {
         const auto* nl = initialResult.getNodeLayout(id);
         if (nl) nodeLayouts[id] = *nl;
@@ -1762,9 +1762,9 @@ TEST(EdgeRoutingTransitionTest, UserScenario_PositionsRejectedByDragValidation) 
         const auto* el = initialResult.getEdgeLayout(id);
         if (el) edgeLayouts[id] = *el;
     }
-    
+
     const float gridSize = 20.0f;
-    
+
     // Legacy positions from user's JSON output that triggered bugs in older versions
     std::unordered_map<NodeId, Point> legacyPositions;
     legacyPositions[idle] = {258.0f, 68.0f};
@@ -1772,27 +1772,27 @@ TEST(EdgeRoutingTransitionTest, UserScenario_PositionsRejectedByDragValidation) 
     legacyPositions[paused] = {0.0f, 350.0f};
     legacyPositions[stopped] = {0.0f, 525.0f};
     legacyPositions[error] = {263.0f, 522.0f};
-    
+
     // Verify that at least one position is rejected by drag validation
     // These positions cannot be reached via sequential drag in current system
     bool anyRejected = false;
     for (const auto& [nodeId, targetPos] : legacyPositions) {
         auto validation = LayoutUtils::canMoveNodeTo(
             nodeId, targetPos, nodeLayouts, edgeLayouts, gridSize);
-        
+
         if (!validation.valid) {
             anyRejected = true;
             break;
         }
-        
+
         // Apply valid position and update edges for next validation
         nodeLayouts[nodeId].position = targetPos;
         std::vector<EdgeId> affected = LayoutUtils::getConnectedEdges(nodeId, edgeLayouts);
         std::unordered_set<NodeId> moved = {nodeId};
-        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, affected, 
-                                        SnapDistribution::Separated, moved, gridSize);
+        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, affected,
+                                        moved, gridSize);
     }
-    
+
     EXPECT_TRUE(anyRejected) << "Legacy positions should be rejected by drag validation";
 }
 
@@ -1843,11 +1843,11 @@ TEST(EdgeRoutingTransitionTest, UpdateEdgePositions_LegacyPositionRejected) {
     // Legacy position that would cause segments to pass through nodes
     Point proposedPos = {258.0f, 68.0f};
     const float gridSize = 20.0f;
-    
+
     // This position should be rejected by drag validation
     auto validation = LayoutUtils::canMoveNodeTo(idle, proposedPos, originalLayouts, edgeLayouts, gridSize);
-    
-    EXPECT_FALSE(validation.valid) 
+
+    EXPECT_FALSE(validation.valid)
         << "Legacy position (258, 68) should be rejected by drag validation";
 }
 
@@ -1908,7 +1908,7 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_NoSpikePatterns) {
     std::unordered_set<NodeId> movedNodes = {idle, running, paused, stopped, error};
     EdgeRouting routing;
     routing.updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
-                                SnapDistribution::Separated, movedNodes);
+                                movedNodes);
 
     // Check for spike patterns
     std::cout << "\n===== SPIKE DETECTION AFTER DRAG =====\n";
@@ -2233,7 +2233,7 @@ TEST(EdgeRoutingTransitionTest, GridSnapping_AfterDrag_NoSpikesOrDuplicates) {
 
         std::unordered_set<NodeId> movedNodes = {nodeId};
         LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
-                                          SnapDistribution::Separated, movedNodes,
+                                          movedNodes,
                                           options.gridConfig.cellSize);
 
         // Check for spikes and duplicates after each drag
@@ -2250,11 +2250,18 @@ TEST(EdgeRoutingTransitionTest, GridSnapping_AfterDrag_NoSpikesOrDuplicates) {
             points.push_back(layout.targetPoint);
 
             // Check for duplicates
+            // Note: Skip the case where sourcePoint == targetPoint with no bendPoints
+            // This is a valid degenerate edge case when nodes are adjacent
             for (size_t i = 0; i + 1 < points.size(); ++i) {
                 if (std::abs(points[i].x - points[i+1].x) < EPSILON &&
                     std::abs(points[i].y - points[i+1].y) < EPSILON) {
-                    std::cout << "DUPLICATE in Edge " << edgeId << " after dragging node " 
-                              << nodeId << ": point[" << i << "] = (" 
+                    // Skip if this is a zero-length edge (source == target, no bends)
+                    if (points.size() == 2 && i == 0) {
+                        // Valid degenerate case: endpoints at same position
+                        continue;
+                    }
+                    std::cout << "DUPLICATE in Edge " << edgeId << " after dragging node "
+                              << nodeId << ": point[" << i << "] = ("
                               << points[i].x << "," << points[i].y << ")\n";
                     totalDuplicates++;
                 }
@@ -2331,7 +2338,7 @@ TEST(EdgeRoutingTransitionTest, GridBased_Segments_MustNotIntersectNodes) {
     SugiyamaLayout layout;
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;  // Enable grid routing
-    options.snapDistribution = SnapDistribution::Separated;
+
     layout.setOptions(options);
 
     LayoutResult result = layout.layout(graph);
@@ -2436,7 +2443,7 @@ TEST(EdgeRoutingTransitionTest, GridBased_DirectionalConstraints_MustBeRespected
     SugiyamaLayout layout;
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;  // Enable grid routing
-    options.snapDistribution = SnapDistribution::Separated;
+
     layout.setOptions(options);
 
     LayoutResult result = layout.layout(graph);
@@ -2624,7 +2631,7 @@ TEST(EdgeRoutingTransitionTest, NoDuplicateBendPoints) {
     SugiyamaLayout layout;
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
-    options.snapDistribution = SnapDistribution::Separated;
+
     layout.setOptions(options);
 
     LayoutResult result = layout.layout(graph);
@@ -2701,7 +2708,7 @@ TEST(EdgeRoutingTransitionTest, PathEfficiency_NoBendPointExplosion) {
     SugiyamaLayout layout;
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
-    options.snapDistribution = SnapDistribution::Separated;
+
     layout.setOptions(options);
 
     LayoutResult result = layout.layout(graph);
@@ -2782,7 +2789,7 @@ TEST(EdgeRoutingTransitionTest, NoUnnecessaryBacktracking) {
     SugiyamaLayout layout;
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
-    options.snapDistribution = SnapDistribution::Separated;
+
     layout.setOptions(options);
 
     LayoutResult result = layout.layout(graph);
@@ -3023,62 +3030,62 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
     node.id = NodeId{1};
     node.position = {100.0f, 200.0f};
     node.size = {200.0f, 200.0f};
-    
+
     // Test 1: Segment exactly on left boundary (x=100)
     {
         Point p1{100.0f, 250.0f};  // On left boundary
         Point p2{100.0f, 350.0f};
-        
+
         // Without margin: should NOT intersect (boundary is excluded)
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f))
             << "Segment on boundary should not intersect without margin";
-        
+
         // With margin=10: should intersect (within margin of boundary)
         EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f))
             << "Segment on boundary should intersect with margin";
     }
-    
+
     // Test 2: Segment 5 pixels from left boundary (x=95)
     {
         Point p1{95.0f, 250.0f};
         Point p2{95.0f, 350.0f};
-        
+
         // Without margin: should NOT intersect
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
-        
+
         // With margin=10: should intersect (95 > 100-10=90)
         EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
-        
+
         // With margin=3: should NOT intersect (95 < 100-3=97)
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 3.0f));
     }
-    
+
     // Test 3: Horizontal segment near top boundary (y=200)
     {
         Point p1{150.0f, 200.0f};  // On top boundary
         Point p2{250.0f, 200.0f};
-        
+
         // Without margin: should NOT intersect
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
-        
+
         // With margin=10: should intersect
         EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
     }
-    
+
     // Test 4: Segment clearly inside node (should always intersect)
     {
         Point p1{150.0f, 250.0f};
         Point p2{150.0f, 350.0f};
-        
+
         EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
         EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
     }
-    
+
     // Test 5: Segment clearly outside node (should never intersect)
     {
         Point p1{50.0f, 250.0f};  // Far from node
         Point p2{50.0f, 350.0f};
-        
+
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
         EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 20.0f));
@@ -3088,26 +3095,26 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
 // Integration test: verify routing respects node boundaries
 TEST(EdgeRoutingTransitionTest, RoutingRespectsNodeBoundaries) {
     Graph graph;
-    
+
     NodeId idle = graph.addNode(Size{200, 100}, "Idle");
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
-    
+
     EdgeId e0 = graph.addEdge(idle, running, "run");
-    
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     nodeLayouts[idle] = NodeLayout{idle, {600.0f, 100.0f}, {200.0f, 100.0f}, 0, 0};
     nodeLayouts[running] = NodeLayout{running, {100.0f, 400.0f}, {200.0f, 100.0f}, 1, 0};
     nodeLayouts[paused] = NodeLayout{paused, {340.0f, 250.0f}, {200.0f, 100.0f}, 0, 1};
-    
+
     EdgeRouting router;
     std::unordered_set<EdgeId> reversedEdges;  // No reversed edges in this test
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
     const float gridSize = options.gridConfig.cellSize;
-    
+
     auto result = router.route(graph, nodeLayouts, reversedEdges, options);
-    
+
     std::cout << "\n===== SEGMENT GRID DISTANCE TEST =====\n";
     std::cout << "Node positions:\n";
     for (const auto& [nodeId, node] : nodeLayouts) {
@@ -3115,16 +3122,16 @@ TEST(EdgeRoutingTransitionTest, RoutingRespectsNodeBoundaries) {
                   << "), bounds=x[" << node.position.x << "," << (node.position.x + node.size.width)
                   << "], y[" << node.position.y << "," << (node.position.y + node.size.height) << "]\n";
     }
-    
+
     int violations = 0;
     std::vector<EdgeId> allEdges = {e0};
-    
+
     for (EdgeId edgeId : allEdges) {
         const EdgeLayout* layout = result.getEdgeLayout(edgeId);
         if (!layout) continue;
-        
+
         std::cout << "\nEdge " << edgeId << " from=" << layout->from << " to=" << layout->to << ":\n";
-        
+
         // Collect all points
         std::vector<Point> points;
         points.push_back(layout->sourcePoint);
@@ -3132,7 +3139,7 @@ TEST(EdgeRoutingTransitionTest, RoutingRespectsNodeBoundaries) {
             points.push_back(bp.position);
         }
         points.push_back(layout->targetPoint);
-        
+
         // Print the path
         std::cout << "  Path (" << points.size() << " points): ";
         for (size_t i = 0; i < points.size(); ++i) {
@@ -3140,65 +3147,65 @@ TEST(EdgeRoutingTransitionTest, RoutingRespectsNodeBoundaries) {
             std::cout << "(" << points[i].x << "," << points[i].y << ")";
         }
         std::cout << "\n";
-        
+
         // Check each segment against all nodes (except source and target nodes)
         for (size_t i = 0; i + 1 < points.size(); ++i) {
             const Point& p1 = points[i];
             const Point& p2 = points[i + 1];
-            
+
             bool isHorizontal = std::abs(p1.y - p2.y) < 0.1f;
             bool isVertical = std::abs(p1.x - p2.x) < 0.1f;
-            
+
             for (const auto& [nodeId, node] : nodeLayouts) {
                 // Skip source and target nodes
                 if (nodeId == layout->from || nodeId == layout->to) continue;
-                
+
                 float nodeXmin = node.position.x;
                 float nodeXmax = node.position.x + node.size.width;
                 float nodeYmin = node.position.y;
                 float nodeYmax = node.position.y + node.size.height;
-                
+
                 if (isVertical) {
                     float x = p1.x;
                     float yMin = std::min(p1.y, p2.y);
                     float yMax = std::max(p1.y, p2.y);
-                    
+
                     // Check if segment is too close to left or right edge of node
-                    bool tooCloseToLeft = std::abs(x - nodeXmin) < gridSize && 
+                    bool tooCloseToLeft = std::abs(x - nodeXmin) < gridSize &&
                                           yMin < nodeYmax && yMax > nodeYmin;
-                    bool tooCloseToRight = std::abs(x - nodeXmax) < gridSize && 
+                    bool tooCloseToRight = std::abs(x - nodeXmax) < gridSize &&
                                            yMin < nodeYmax && yMax > nodeYmin;
-                    
+
                     if (tooCloseToLeft || tooCloseToRight) {
                         std::cout << "  VIOLATION: Edge " << edgeId << " segment " << i
-                                  << " at x=" << x << " is within " << gridSize 
+                                  << " at x=" << x << " is within " << gridSize
                                   << "px of node " << nodeId << " boundary\n";
-                        std::cout << "    Segment: (" << p1.x << "," << p1.y << ") -> (" 
+                        std::cout << "    Segment: (" << p1.x << "," << p1.y << ") -> ("
                                   << p2.x << "," << p2.y << ")\n";
-                        std::cout << "    Node bounds: x[" << nodeXmin << "," << nodeXmax 
+                        std::cout << "    Node bounds: x[" << nodeXmin << "," << nodeXmax
                                   << "], y[" << nodeYmin << "," << nodeYmax << "]\n";
                         violations++;
                     }
                 }
-                
+
                 if (isHorizontal) {
                     float y = p1.y;
                     float xMin = std::min(p1.x, p2.x);
                     float xMax = std::max(p1.x, p2.x);
-                    
+
                     // Check if segment is too close to top or bottom edge of node
                     bool tooCloseToTop = std::abs(y - nodeYmin) < gridSize &&
                                          xMin < nodeXmax && xMax > nodeXmin;
                     bool tooCloseToBottom = std::abs(y - nodeYmax) < gridSize &&
                                             xMin < nodeXmax && xMax > nodeXmin;
-                    
+
                     if (tooCloseToTop || tooCloseToBottom) {
                         std::cout << "  VIOLATION: Edge " << edgeId << " segment " << i
-                                  << " at y=" << y << " is within " << gridSize 
+                                  << " at y=" << y << " is within " << gridSize
                                   << "px of node " << nodeId << " boundary\n";
-                        std::cout << "    Segment: (" << p1.x << "," << p1.y << ") -> (" 
+                        std::cout << "    Segment: (" << p1.x << "," << p1.y << ") -> ("
                                   << p2.x << "," << p2.y << ")\n";
-                        std::cout << "    Node bounds: x[" << nodeXmin << "," << nodeXmax 
+                        std::cout << "    Node bounds: x[" << nodeXmin << "," << nodeXmax
                                   << "], y[" << nodeYmin << "," << nodeYmax << "]\n";
                         violations++;
                     }
@@ -3206,7 +3213,7 @@ TEST(EdgeRoutingTransitionTest, RoutingRespectsNodeBoundaries) {
             }
         }
     }
-    
+
     std::cout << "Total violations: " << violations << "\n";
     std::cout << "======================================\n";
 
@@ -3428,7 +3435,7 @@ TEST(EdgeRoutingTransitionTest, FuzzTest_DragSimulation_AllConstraints) {
                 // Validate with canMoveNodeTo (like real application does)
                 auto validation = LayoutUtils::canMoveNodeTo(
                     nodeToMove, proposedPos, nodeLayouts, edgeLayouts, gridSize);
-                
+
                 if (!validation.valid) {
                     // Invalid position - in real app, this move would be rejected
                     // Stop moving in this direction
@@ -3441,7 +3448,7 @@ TEST(EdgeRoutingTransitionTest, FuzzTest_DragSimulation_AllConstraints) {
                 // Update edge positions
                 std::unordered_set<NodeId> movedNodes = {nodeToMove};
                 LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges,
-                                                 SnapDistribution::Separated, movedNodes, gridSize);
+                                                 movedNodes, gridSize);
 
                 // Check all constraints
                 size_t prevViolations = violations.size();

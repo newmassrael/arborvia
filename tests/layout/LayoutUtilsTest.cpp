@@ -12,12 +12,12 @@ protected:
         n1_ = graph_.addNode(Size{100, 50}, "Node1");
         n2_ = graph_.addNode(Size{100, 50}, "Node2");
         n3_ = graph_.addNode(Size{100, 50}, "Node3");
-        
+
         e1_ = graph_.addEdge(n1_, n2_, "edge1");
         e2_ = graph_.addEdge(n1_, n3_, "edge2");
         e3_ = graph_.addEdge(n2_, n3_, "edge3");
     }
-    
+
     Graph graph_;
     NodeId n1_, n2_, n3_;
     EdgeId e1_, e2_, e3_;
@@ -342,49 +342,48 @@ TEST_F(LayoutUtilsTest, LabelPosition_UpdatesAfterDrag) {
     // Setup: Create initial layout with channel-based routing
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    
+
     // Get initial layouts
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     for (const auto& [id, nl] : result.nodeLayouts()) {
         nodeLayouts[id] = nl;
     }
     for (const auto& [id, el] : result.edgeLayouts()) {
         edgeLayouts[id] = el;
     }
-    
+
     // Store initial labelPosition for edge e1_
     const EdgeLayout& initialEdge = edgeLayouts[e1_];
     Point initialLabelPos = initialEdge.labelPosition;
-    
+
     // Simulate drag: move n1_ by offset
     Point dragOffset = {50.0f, 30.0f};
     nodeLayouts[n1_].position.x += dragOffset.x;
     nodeLayouts[n1_].position.y += dragOffset.y;
-    
+
     // Get affected edges
     std::vector<EdgeId> affectedEdges = {e1_, e2_};
-    
+
     // Update edge positions (this should also update labelPosition)
     LayoutUtils::updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges,
-        SnapDistribution::Unified, {n1_});
-    
+        edgeLayouts, nodeLayouts, affectedEdges, {n1_});
+
     // Verify labelPosition has changed
     const EdgeLayout& updatedEdge = edgeLayouts[e1_];
     Point updatedLabelPos = updatedEdge.labelPosition;
-    
+
     // Label position should have moved (at least in one dimension)
     // Note: With corrected directional constraints, Y may not change if the node
     // moves to a position where the channel is still valid for both endpoints
-    bool labelMoved = (initialLabelPos.x != updatedLabelPos.x) || 
+    bool labelMoved = (initialLabelPos.x != updatedLabelPos.x) ||
                       (initialLabelPos.y != updatedLabelPos.y);
     EXPECT_TRUE(labelMoved)
         << "Label position should change after drag. "
         << "Initial: (" << initialLabelPos.x << ", " << initialLabelPos.y << "), "
         << "Updated: (" << updatedLabelPos.x << ", " << updatedLabelPos.y << ")";
-    
+
     // Label position should be calculated from updated bendPoints
     Point expectedLabelPos = LayoutUtils::calculateEdgeLabelPosition(updatedEdge);
     EXPECT_FLOAT_EQ(updatedLabelPos.x, expectedLabelPos.x)
@@ -397,44 +396,44 @@ TEST_F(LayoutUtilsTest, LabelPosition_UpdatesForMultipleEdges) {
     // Setup
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     for (const auto& [id, nl] : result.nodeLayouts()) {
         nodeLayouts[id] = nl;
     }
     for (const auto& [id, el] : result.edgeLayouts()) {
         edgeLayouts[id] = el;
     }
-    
+
     // Store initial labelPositions
     std::unordered_map<EdgeId, Point> initialLabelPositions;
     for (EdgeId edgeId : {e1_, e2_, e3_}) {
         initialLabelPositions[edgeId] = edgeLayouts[edgeId].labelPosition;
     }
-    
+
     // Move n2_ (affects e1_ and e3_)
     Point dragOffset = {-30.0f, 40.0f};
     nodeLayouts[n2_].position.x += dragOffset.x;
     nodeLayouts[n2_].position.y += dragOffset.y;
-    
+
     std::vector<EdgeId> affectedEdges = {e1_, e3_};
-    
+
     LayoutUtils::updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges,
-        SnapDistribution::Separated, {n2_});
-    
+        {n2_});
+
     // Verify affected edges have updated labelPositions
     for (EdgeId edgeId : affectedEdges) {
         Point initialPos = initialLabelPositions[edgeId];
         Point updatedPos = edgeLayouts[edgeId].labelPosition;
-        
+
         // At least one coordinate should change
         bool changed = (initialPos.x != updatedPos.x) || (initialPos.y != updatedPos.y);
         EXPECT_TRUE(changed)
             << "Edge " << edgeId << " labelPosition should change after drag";
-        
+
         // Should match calculated position
         Point expectedPos = LayoutUtils::calculateEdgeLabelPosition(edgeLayouts[edgeId]);
         EXPECT_FLOAT_EQ(updatedPos.x, expectedPos.x)
@@ -442,7 +441,7 @@ TEST_F(LayoutUtilsTest, LabelPosition_UpdatesForMultipleEdges) {
         EXPECT_FLOAT_EQ(updatedPos.y, expectedPos.y)
             << "Edge " << edgeId << " labelPosition.y mismatch";
     }
-    
+
     // Unaffected edge (e2_) should remain unchanged
     Point e2InitialPos = initialLabelPositions[e2_];
     Point e2UpdatedPos = edgeLayouts[e2_].labelPosition;
@@ -459,53 +458,44 @@ TEST_F(LayoutUtilsTest, BidirectionalEdgeLabels_DoNotOverlap) {
     Graph graph;
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
-    
+
     EdgeId pauseEdge = graph.addEdge(running, paused, "pause");
     EdgeId resumeEdge = graph.addEdge(paused, running, "resume");
-    
+
     // Layout with channel-based routing
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     const EdgeLayout* pauseLayout = result.getEdgeLayout(pauseEdge);
     const EdgeLayout* resumeLayout = result.getEdgeLayout(resumeEdge);
-    
+
     ASSERT_NE(pauseLayout, nullptr);
     ASSERT_NE(resumeLayout, nullptr);
-    
+
     Point pauseLabelPos = pauseLayout->labelPosition;
     Point resumeLabelPos = resumeLayout->labelPosition;
-    
+
     // Calculate distance between label positions
     float dx = pauseLabelPos.x - resumeLabelPos.x;
     float dy = pauseLabelPos.y - resumeLabelPos.y;
     float distance = std::sqrt(dx * dx + dy * dy);
-    
+
     // Labels should be separated by at least 20 pixels (minimum readable distance)
     const float MIN_LABEL_SEPARATION = 20.0f;
-    
+
     EXPECT_GT(distance, MIN_LABEL_SEPARATION)
         << "Bidirectional edge labels should not overlap. "
         << "pause label at (" << pauseLabelPos.x << ", " << pauseLabelPos.y << "), "
         << "resume label at (" << resumeLabelPos.x << ", " << resumeLabelPos.y << "), "
         << "distance: " << distance << " pixels";
-    
-    // Also verify they use different channels (should have different bendPoints)
-    EXPECT_FALSE(pauseLayout->bendPoints.empty())
-        << "Channel routing should create bendPoints";
-    EXPECT_FALSE(resumeLayout->bendPoints.empty())
-        << "Channel routing should create bendPoints";
-    
-    if (!pauseLayout->bendPoints.empty() && !resumeLayout->bendPoints.empty()) {
-        // First bendPoint Y should differ (different channel)
-        float pauseChannelY = pauseLayout->bendPoints[0].position.y;
-        float resumeChannelY = resumeLayout->bendPoints[0].position.y;
-        
-        EXPECT_NE(pauseChannelY, resumeChannelY)
-            << "Bidirectional edges should use different channels. "
-            << "pause channel Y: " << pauseChannelY << ", "
-            << "resume channel Y: " << resumeChannelY;
-    }
+
+    // Verify different channels are assigned (channelY should differ)
+    // Note: In Unified mode, edges may be straight lines (no bendPoints) if snap points align,
+    // but channelY should still be different for bidirectional edge separation
+    EXPECT_NE(pauseLayout->channelY, resumeLayout->channelY)
+        << "Bidirectional edges should use different channels. "
+        << "pause channelY: " << pauseLayout->channelY << ", "
+        << "resume channelY: " << resumeLayout->channelY;
 }
 
 TEST_F(LayoutUtilsTest, BidirectionalEdgeLabels_SeparationMaintainedAfterDrag) {
@@ -513,51 +503,51 @@ TEST_F(LayoutUtilsTest, BidirectionalEdgeLabels_SeparationMaintainedAfterDrag) {
     Graph graph;
     NodeId running = graph.addNode(Size{200, 100}, "Running");
     NodeId paused = graph.addNode(Size{200, 100}, "Paused");
-    
+
     EdgeId pauseEdge = graph.addEdge(running, paused, "pause");
     EdgeId resumeEdge = graph.addEdge(paused, running, "resume");
-    
+
     // Initial layout
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph);
-    
+
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    
+
     for (const auto& [id, nl] : result.nodeLayouts()) {
         nodeLayouts[id] = nl;
     }
     for (const auto& [id, el] : result.edgeLayouts()) {
         edgeLayouts[id] = el;
     }
-    
+
     // Verify initial separation
     Point pauseLabelBefore = edgeLayouts[pauseEdge].labelPosition;
     Point resumeLabelBefore = edgeLayouts[resumeEdge].labelPosition;
-    
+
     float dxBefore = pauseLabelBefore.x - resumeLabelBefore.x;
     float dyBefore = pauseLabelBefore.y - resumeLabelBefore.y;
     float distanceBefore = std::sqrt(dxBefore * dxBefore + dyBefore * dyBefore);
-    
+
     // Drag running node
     Point dragOffset = {50.0f, 30.0f};
     nodeLayouts[running].position.x += dragOffset.x;
     nodeLayouts[running].position.y += dragOffset.y;
-    
+
     std::vector<EdgeId> affectedEdges = {pauseEdge, resumeEdge};
-    
+
     LayoutUtils::updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges,
-        SnapDistribution::Unified, {running});
-    
+        {running});
+
     // Verify separation is maintained after drag
     Point pauseLabelAfter = edgeLayouts[pauseEdge].labelPosition;
     Point resumeLabelAfter = edgeLayouts[resumeEdge].labelPosition;
-    
+
     float dxAfter = pauseLabelAfter.x - resumeLabelAfter.x;
     float dyAfter = pauseLabelAfter.y - resumeLabelAfter.y;
     float distanceAfter = std::sqrt(dxAfter * dxAfter + dyAfter * dyAfter);
-    
+
     const float MIN_LABEL_SEPARATION = 20.0f;
 
     EXPECT_GT(distanceAfter, MIN_LABEL_SEPARATION)
@@ -595,17 +585,15 @@ TEST_F(LayoutUtilsTest, ChannelAssignment_NoCollisionWithMixedEdges) {
     ASSERT_NE(layout3, nullptr);
     ASSERT_NE(layout4, nullptr);
 
-    // Extract channel Y positions from bendPoints
-    ASSERT_FALSE(layout1->bendPoints.empty());
-    ASSERT_FALSE(layout2->bendPoints.empty());
-    ASSERT_FALSE(layout3->bendPoints.empty());
-    ASSERT_FALSE(layout4->bendPoints.empty());
+    // Verify all edges have valid channel routing (channelY assigned)
+    // Note: In Unified mode, edges may be straight lines (no bendPoints) if snap points align,
+    // but channelY should still be different for edge separation
 
-    // Verify all edges have valid channel routing
-    EXPECT_FALSE(layout1->bendPoints.empty());
-    EXPECT_FALSE(layout2->bendPoints.empty());
-    EXPECT_FALSE(layout3->bendPoints.empty());
-    EXPECT_FALSE(layout4->bendPoints.empty());
+    // Bidirectional edges (e2 forward, e3 backward) should have different channels
+    EXPECT_NE(layout2->channelY, layout3->channelY)
+        << "Bidirectional edges should use different channels. "
+        << "forward channelY: " << layout2->channelY << ", "
+        << "backward channelY: " << layout3->channelY;
 }
 
 TEST_F(LayoutUtilsTest, BidirectionalEdges_HorizontalLayout) {
@@ -630,34 +618,21 @@ TEST_F(LayoutUtilsTest, BidirectionalEdges_HorizontalLayout) {
     ASSERT_NE(forwardLayout, nullptr);
     ASSERT_NE(backwardLayout, nullptr);
 
-    // Both edges should have bendPoints
-    ASSERT_FALSE(forwardLayout->bendPoints.empty())
-        << "Forward edge should have bend points";
-    ASSERT_FALSE(backwardLayout->bendPoints.empty())
-        << "Backward edge should have bend points";
+    // Verify channelY is different for bidirectional edges
+    // Note: In horizontal layout, channelY actually stores the channel X position
+    // In Unified mode, edges may be straight lines (no bendPoints) if snap points align
 
-    // In horizontal layout, channel separation is in X direction
-    float forwardChannelX = forwardLayout->bendPoints[0].position.x;
-    float backwardChannelX = backwardLayout->bendPoints[0].position.x;
+    std::cout << "Forward: channelY=" << forwardLayout->channelY << std::endl;
+    std::cout << "Backward: channelY=" << backwardLayout->channelY << std::endl;
 
-    std::cout << "Forward: channelY=" << forwardLayout->channelY
-              << ", bendX=" << forwardChannelX << std::endl;
-    std::cout << "Backward: channelY=" << backwardLayout->channelY
-              << ", bendX=" << backwardChannelX << std::endl;
-
-    // Bidirectional edges must use different channels (different X positions)
-    EXPECT_NE(forwardChannelX, backwardChannelX)
-        << "Bidirectional edges in horizontal layout must use different channels. "
-        << "forward X: " << forwardChannelX << ", backward X: " << backwardChannelX;
+    // Bidirectional edges must use different channels
+    EXPECT_NE(forwardLayout->channelY, backwardLayout->channelY)
+        << "Bidirectional edges must use different channels. "
+        << "forward channelY: " << forwardLayout->channelY
+        << ", backward channelY: " << backwardLayout->channelY;
 
     // Verify minimum separation
     const float MIN_CHANNEL_SEPARATION = 15.0f;
-    EXPECT_GT(std::abs(forwardChannelX - backwardChannelX), MIN_CHANNEL_SEPARATION)
-        << "Bidirectional edges need sufficient channel separation in horizontal layout";
-
-    // Verify channelY is set (even though it's channelX logically)
-    EXPECT_GE(forwardLayout->channelY, 0.0f)
-        << "Channel position should be stored for drag operations";
-    EXPECT_GE(backwardLayout->channelY, 0.0f)
-        << "Channel position should be stored for drag operations";
+    EXPECT_GT(std::abs(forwardLayout->channelY - backwardLayout->channelY), MIN_CHANNEL_SEPARATION)
+        << "Bidirectional edges need sufficient channel separation";
 }

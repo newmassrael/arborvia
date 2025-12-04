@@ -62,19 +62,7 @@ public:
         setupGraph();
         doLayout();
     }
-    
-    LayoutMode getLayoutMode() const { return manualManager_->getMode(); }
-    
-    void setLayoutMode(LayoutMode mode) {
-        if (mode == LayoutMode::Manual && manualManager_->getMode() == LayoutMode::Auto) {
-            // Switching to Manual: capture current layout
-            manualManager_->captureFromResult(layoutResult_);
-        }
-        manualManager_->setMode(mode);
-        layoutOptions_.mode = mode;
-        doLayout();
-    }
-    
+
     void saveLayout(const std::string& path) {
         // Create LayoutResult from current state (nodeLayouts_ and edgeLayouts_)
         // This ensures we save the dragged positions, not the original layoutResult_
@@ -105,13 +93,13 @@ public:
             std::cerr << "Error: Failed to save layout to " << path << std::endl;
         }
     }
-    
+
     void loadLayout(const std::string& path) {
         if (manualManager_->loadFromFile(path)) {
             doLayout();
         }
     }
-    
+
     void setupGraph() {
         // Create sample state machine graph
         auto idle = graph_.addNode(Size{200, 100}, "Idle");
@@ -119,7 +107,7 @@ public:
         auto paused = graph_.addNode(Size{200, 100}, "Paused");
         auto stopped = graph_.addNode(Size{200, 100}, "Stopped");
         auto error = graph_.addNode(Size{200, 100}, "Error");
-        
+
         graph_.addEdge(idle, running, "start");
         graph_.addEdge(running, paused, "pause");
         graph_.addEdge(paused, running, "resume");
@@ -129,50 +117,43 @@ public:
         graph_.addEdge(error, idle, "reset");
         graph_.addEdge(error, error, "retry");  // Self-loop for demo
     }
-    
+
     void doLayout() {
         SugiyamaLayout layout;
         layout.setOptions(layoutOptions_);
         layout.setManualLayoutManager(manualManager_);
         layoutResult_ = layout.layout(graph_);
-        
+
         nodeLayouts_.clear();
         edgeLayouts_.clear();
-        
+
         for (const auto& [id, layout] : layoutResult_.nodeLayouts()) {
             nodeLayouts_[id] = layout;
         }
         for (const auto& [id, layout] : layoutResult_.edgeLayouts()) {
             edgeLayouts_[id] = layout;
         }
-        
+
         // Sync snap configs from edge layouts (for Auto mode snap point visibility)
         syncSnapConfigsFromEdges();
-        
+
         // Offset for centering
         offset_ = {100.0f, 50.0f};
     }
-    
+
     // Re-route edges only, preserving current node positions
     void reRouteEdgesOnly() {
         // Save current node positions to manual manager
         for (const auto& [id, layout] : nodeLayouts_) {
             manualManager_->setNodePosition(id, layout.position);
         }
-        
+
         // Clear edge routings so fresh routing from algorithm is used
-        // This prevents applyManualState from overwriting new snap points
         manualManager_->clearAllEdgeRoutings();
-        
-        // Switch to manual mode temporarily to preserve positions
-        LayoutMode prevMode = manualManager_->getMode();
-        if (prevMode == LayoutMode::Auto) {
-            manualManager_->setMode(LayoutMode::Manual);
-        }
-        
-        // Do layout (will use manual positions, but fresh edge routing)
+
+        // Do layout with new grid size
         doLayout();
-        
+
         // Update edge positions to match current node positions
         std::vector<EdgeId> allEdges;
         for (const auto& [edgeId, _] : edgeLayouts_) {
@@ -180,32 +161,27 @@ public:
         }
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, allEdges,
-            layoutOptions_.snapDistribution, {}, layoutOptions_.gridConfig.cellSize);
-        
-        // Restore previous mode
-        if (prevMode == LayoutMode::Auto) {
-            manualManager_->setMode(prevMode);
-        }
+            {}, layoutOptions_.gridConfig.cellSize);
     }
-    
+
     void syncSnapConfigsFromEdges() {
         // Use library API for snap config synchronization
         manualManager_->syncSnapConfigsFromEdgeLayouts(edgeLayouts_);
     }
-    
+
     void update() {
         ImGuiIO& io = ImGui::GetIO();
-        
+
         // Skip graph interaction if ImGui wants mouse
         if (io.WantCaptureMouse) {
             return;
         }
-        
+
         ImVec2 mousePos = io.MousePos;
-        
+
         // Convert to graph coordinates
         Point graphMouse = {mousePos.x - offset_.x, mousePos.y - offset_.y};
-        
+
         // Find hovered node
         hoveredNode_ = INVALID_NODE;
         for (const auto& [id, layout] : nodeLayouts_) {
@@ -216,11 +192,11 @@ public:
                 break;
             }
         }
-        
-        // Find hovered bend point (only in Manual mode)
+
+        // Find hovered bend point (manual mode feature - disabled)
         hoveredBendPoint_.clear();
         bendPointPreview_.clear();
-        if (hoveredNode_ == INVALID_NODE && manualManager_->getMode() == LayoutMode::Manual) {
+        if (false && hoveredNode_ == INVALID_NODE) {
             for (const auto& [edgeId, layout] : edgeLayouts_) {
                 const auto& bps = manualManager_->getBendPoints(edgeId);
                 for (size_t i = 0; i < bps.size(); ++i) {
@@ -235,7 +211,7 @@ public:
                 if (hoveredBendPoint_.isValid()) break;
             }
         }
-        
+
         // Find hovered edge and calculate bend point insertion preview
         hoveredEdge_ = INVALID_EDGE;
         if (hoveredNode_ == INVALID_NODE && !hoveredBendPoint_.isValid()) {
@@ -243,8 +219,8 @@ public:
                 auto hitResult = LayoutUtils::hitTestEdge(graphMouse, layout, 8.0f);
                 if (hitResult.hit) {
                     hoveredEdge_ = id;
-                    // Show insert preview if edge is selected
-                    if (id == selectedEdge_ && manualManager_->getMode() == LayoutMode::Manual) {
+                    // Show insert preview if edge is selected (manual mode - disabled)
+                    if (false && id == selectedEdge_) {
                         bendPointPreview_.edgeId = id;
                         bendPointPreview_.insertIndex = hitResult.segmentIndex;
                         bendPointPreview_.position = hitResult.closestPoint;
@@ -254,7 +230,7 @@ public:
                 }
             }
         }
-        
+
         // Handle bend point interaction
         if (hoveredBendPoint_.isValid() && ImGui::IsMouseClicked(0)) {
             // Start dragging bend point
@@ -270,9 +246,9 @@ public:
             // Insert bend points to maintain orthogonal routing
             EdgeId edgeId = bendPointPreview_.edgeId;
             Point clickPos = bendPointPreview_.position;
-            
+
             const auto& edgeLayout = edgeLayouts_[edgeId];
-            
+
             // IMPORTANT: Capture current edge routing BEFORE adding bend points
             // Otherwise addBendPoint() creates a config with default values (Bottom->Top)
             // which would reset the edge routing to wrong values
@@ -284,17 +260,17 @@ public:
                 routing.targetSnapIndex = edgeLayout.targetSnapIndex;
                 manualManager_->setEdgeRouting(edgeId, routing);
             }
-            
+
             const auto& existingBps = manualManager_->getBendPoints(edgeId);
-            
+
             // Use library API to calculate bend point pair
             auto bpResult = OrthogonalRouter::calculateBendPointPair(
                 edgeLayout, existingBps, clickPos, bendPointPreview_.insertIndex);
-            
+
             // Insert both points
             manualManager_->addBendPoint(edgeId, bpResult.insertIndex, bpResult.first);
             manualManager_->addBendPoint(edgeId, bpResult.insertIndex + 1, bpResult.second);
-            
+
             selectedBendPoint_.edgeId = edgeId;
             selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
             doLayout();
@@ -305,7 +281,7 @@ public:
             selectedBendPoint_.clear();
             draggedNode_ = hoveredNode_;
             auto& layout = nodeLayouts_[draggedNode_];
-            dragOffset_ = {graphMouse.x - layout.position.x, 
+            dragOffset_ = {graphMouse.x - layout.position.x,
                           graphMouse.y - layout.position.y};
             affectedEdges_ = graph_.getConnectedEdges(draggedNode_);
             // Initialize drag constraint state
@@ -320,14 +296,14 @@ public:
             selectedEdge_ = INVALID_EDGE;
             selectedBendPoint_.clear();
         }
-        
+
         if (ImGui::IsMouseReleased(0)) {
             // Handle bend point drag release
             if (draggingBendPoint_.isValid()) {
                 doLayout();
             }
             draggingBendPoint_.clear();
-            
+
             if (draggedNode_ != INVALID_NODE) {
                 // Check if drop position is valid
                 if (isInvalidDragPosition_) {
@@ -343,12 +319,12 @@ public:
             affectedEdges_.clear();
             isInvalidDragPosition_ = false;
         }
-        
+
         // Handle bend point dragging with orthogonal constraint
         if (draggingBendPoint_.isValid() && ImGui::IsMouseDragging(0)) {
             EdgeId edgeId = draggingBendPoint_.edgeId;
             int bpIdx = draggingBendPoint_.bendPointIndex;
-            
+
             // Get current bend points from manager (source of truth)
             const auto& bps = manualManager_->getBendPoints(edgeId);
             if (bpIdx >= static_cast<int>(bps.size())) {
@@ -356,7 +332,7 @@ public:
             } else {
                 // Get the edge layout for source/target points
                 const auto& edgeLayout = edgeLayouts_[edgeId];
-                
+
                 // Determine prev point (source or previous bend)
                 Point prevPoint;
                 if (bpIdx == 0) {
@@ -364,7 +340,7 @@ public:
                 } else {
                     prevPoint = bps[bpIdx - 1].position;
                 }
-                
+
                 // Determine next point (next bend or target)
                 Point nextPoint;
                 if (bpIdx == static_cast<int>(bps.size()) - 1) {
@@ -372,24 +348,24 @@ public:
                 } else {
                     nextPoint = bps[bpIdx + 1].position;
                 }
-                
+
                 Point currentPos = bps[bpIdx].position;
                 Point dragTarget = {graphMouse.x - bendPointDragOffset_.x,
                                     graphMouse.y - bendPointDragOffset_.y};
-                
+
                 bool isLastBend = (bpIdx == static_cast<int>(bps.size()) - 1);
                 bool hasNextBend = (bpIdx < static_cast<int>(bps.size()) - 1);
-                
+
                 // Use library API for orthogonal drag constraint calculation
                 auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(
                     prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
-                
+
                 // Apply the calculated positions
                 if (dragResult.nextAdjusted) {
                     manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), dragResult.adjustedNextPos);
                 }
                 manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx), dragResult.newCurrentPos);
-                
+
                 // Update edge layout immediately for visual feedback
                 auto it = edgeLayouts_.find(edgeId);
                 if (it != edgeLayouts_.end()) {
@@ -406,29 +382,29 @@ public:
             auto& layout = nodeLayouts_[draggedNode_];
             float newX = graphMouse.x - dragOffset_.x;
             float newY = graphMouse.y - dragOffset_.y;
-            
+
             // Snap to grid if enabled
             float gridSize = layoutOptions_.gridConfig.cellSize;
             if (gridSize > 0.0f) {
                 newX = std::round(newX / gridSize) * gridSize;
                 newY = std::round(newY / gridSize) * gridSize;
             }
-            
+
             // Full validation: check if all edges can be routed properly
             Point proposedPosition = {newX, newY};
             auto validation = LayoutUtils::canMoveNodeTo(
                 draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, gridSize);
-            
+
             // Always update position during drag (visual feedback)
             layout.position.x = newX;
             layout.position.y = newY;
-            
+
             if (validation.valid) {
                 // Valid position - save as last valid and re-route edges
                 isInvalidDragPosition_ = false;
                 lastValidPosition_ = proposedPosition;
                 manualManager_->setNodePosition(draggedNode_, layout.position);
-                
+
                 // Re-route connected edges only for valid positions
                 rerouteAffectedEdges();
             } else {
@@ -436,7 +412,7 @@ public:
                 isInvalidDragPosition_ = true;
             }
         }
-        
+
         // Handle Delete key for bend point removal
         if (selectedBendPoint_.isValid() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
             manualManager_->removeBendPoint(
@@ -447,16 +423,16 @@ public:
             doLayout();
         }
     }
-    
+
     void rerouteAffectedEdges() {
         // Use library API for edge position updates
         // Only update endpoints on the dragged node, not on connected nodes
         std::unordered_set<NodeId> movedNodes = {draggedNode_};
         LayoutUtils::updateEdgePositions(
-            edgeLayouts_, nodeLayouts_, affectedEdges_, 
-            layoutOptions_.snapDistribution, movedNodes, layoutOptions_.gridConfig.cellSize);
+            edgeLayouts_, nodeLayouts_, affectedEdges_,
+            movedNodes, layoutOptions_.gridConfig.cellSize);
     }
-    
+
     void drawGrid(ImDrawList* drawList, float width, float height) {
         if (gridSize_ <= 0.0f) return;
 
@@ -533,7 +509,7 @@ public:
             }
         }
     }
-    
+
     void render(ImDrawList* drawList) {
         // Draw grid background first
         ImGuiIO& io = ImGui::GetIO();
@@ -544,17 +520,17 @@ public:
 
         // Draw edges first
         for (const auto& [id, layout] : edgeLayouts_) {
-            bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id) 
+            bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id)
                              != affectedEdges_.end();
-            
+
             // Hide edges connected to dragged node when in invalid position
             if (isAffected && isInvalidDragPosition_) {
                 continue;
             }
-            
+
             bool isSelected = (id == selectedEdge_);
             bool isHovered = (id == hoveredEdge_);
-            
+
             ImU32 color = COLOR_EDGE;
             float thickness = 2.0f;
             if (isSelected) {
@@ -566,69 +542,33 @@ public:
             } else if (isAffected) {
                 color = COLOR_EDGE_AFFECTED;
             }
-            
+
             auto points = layout.allPoints();
             for (size_t i = 1; i < points.size(); ++i) {
                 ImVec2 p1 = {points[i-1].x + offset_.x, points[i-1].y + offset_.y};
                 ImVec2 p2 = {points[i].x + offset_.x, points[i].y + offset_.y};
                 drawList->AddLine(p1, p2, color, thickness);
             }
-            
+
             // Draw arrowhead
             if (points.size() >= 2) {
                 Point last = points.back();
                 Point prev = points[points.size() - 2];
                 drawArrowhead(drawList, prev, last, color);
             }
-            
+
             // Draw edge label (using pre-computed labelPosition)
             const EdgeData& edge = graph_.getEdge(id);
             if (!edge.label.empty()) {
-                ImVec2 textPos = {layout.labelPosition.x + offset_.x - 20, 
+                ImVec2 textPos = {layout.labelPosition.x + offset_.x - 20,
                                   layout.labelPosition.y + offset_.y - 15};
                 drawList->AddText(textPos, COLOR_TEXT, edge.label.c_str());
             }
-            
-            // Draw bend points as diamonds (Manual mode only)
-            if (manualManager_->getMode() == LayoutMode::Manual) {
-                const auto& bps = layout.bendPoints;
-                for (size_t i = 0; i < bps.size(); ++i) {
-                    Point bpPos = bps[i].position;
-                    ImVec2 screenPos = {bpPos.x + offset_.x, bpPos.y + offset_.y};
-                    
-                    // Determine color based on state
-                    ImU32 bpColor = COLOR_BEND_POINT;
-                    float size = 6.0f;
-                    if (draggingBendPoint_.edgeId == id && 
-                        draggingBendPoint_.bendPointIndex == static_cast<int>(i)) {
-                        bpColor = COLOR_BEND_POINT_DRAGGING;
-                        size = 8.0f;
-                    } else if (selectedBendPoint_.edgeId == id && 
-                               selectedBendPoint_.bendPointIndex == static_cast<int>(i)) {
-                        bpColor = COLOR_BEND_POINT_SELECTED;
-                        size = 7.0f;
-                    } else if (hoveredBendPoint_.edgeId == id && 
-                               hoveredBendPoint_.bendPointIndex == static_cast<int>(i)) {
-                        bpColor = COLOR_BEND_POINT_HOVER;
-                        size = 7.0f;
-                    }
-                    
-                    // Draw diamond shape
-                    ImVec2 pts[4] = {
-                        {screenPos.x, screenPos.y - size},  // Top
-                        {screenPos.x + size, screenPos.y},  // Right
-                        {screenPos.x, screenPos.y + size},  // Bottom
-                        {screenPos.x - size, screenPos.y}   // Left
-                    };
-                    drawList->AddConvexPolyFilled(pts, 4, bpColor);
-                    drawList->AddPolyline(pts, 4, IM_COL32(50, 80, 150, 255), ImDrawFlags_Closed, 1.5f);
-                }
-            }
         }
-        
+
         // Draw bend point insertion preview
         if (bendPointPreview_.active) {
-            ImVec2 screenPos = {bendPointPreview_.position.x + offset_.x, 
+            ImVec2 screenPos = {bendPointPreview_.position.x + offset_.x,
                                bendPointPreview_.position.y + offset_.y};
             float size = 5.0f;
             ImVec2 pts[4] = {
@@ -639,7 +579,7 @@ public:
             };
             drawList->AddConvexPolyFilled(pts, 4, COLOR_BEND_POINT_PREVIEW);
             drawList->AddPolyline(pts, 4, IM_COL32(100, 200, 255, 200), ImDrawFlags_Closed, 1.0f);
-            
+
             // Draw "+" indicator
             float plusSize = 3.0f;
             drawList->AddLine(
@@ -651,7 +591,7 @@ public:
                 {screenPos.x, screenPos.y + plusSize},
                 IM_COL32(255, 255, 255, 200), 2.0f);
         }
-        
+
         // Draw nodes
         for (const auto& [id, layout] : nodeLayouts_) {
             ImU32 fillColor = COLOR_NODE;
@@ -666,13 +606,13 @@ public:
             } else if (id == hoveredNode_) {
                 fillColor = COLOR_NODE_HOVER;
             }
-            
+
             ImVec2 p1 = {layout.position.x + offset_.x, layout.position.y + offset_.y};
             ImVec2 p2 = {p1.x + layout.size.width, p1.y + layout.size.height};
-            
+
             drawList->AddRectFilled(p1, p2, fillColor, 5.0f);
             drawList->AddRect(p1, p2, COLOR_NODE_BORDER, 5.0f, 0, 2.0f);
-            
+
             // Draw label
             const NodeData& node = graph_.getNode(id);
             if (!node.label.empty()) {
@@ -681,41 +621,15 @@ public:
                                  p1.y + (layout.size.height - textSize.y) / 2};
                 drawList->AddText(textPos, COLOR_TEXT, node.label.c_str());
             }
-            
+
             // Draw snap points if show enabled
             if (showSnapPoints_) {
                 drawSnapPoints(drawList, layout);
             }
         }
     }
-    
+
     void drawSnapPoints(ImDrawList* drawList, const NodeLayout& nodeLayout) {
-        // In Manual mode, draw configured snap points with indices
-        if (manualManager_->getMode() == LayoutMode::Manual) {
-            SnapPointConfig config = manualManager_->getSnapConfig(nodeLayout.id);
-
-            auto drawEdgeSnaps = [&](NodeEdge edge, int count) {
-                for (int i = 0; i < count; ++i) {
-                    Point p = LayoutUtils::calculateSnapPoint(nodeLayout, edge, i, count);
-                    ImVec2 screenPos = {p.x + offset_.x, p.y + offset_.y};
-                    drawList->AddCircleFilled(screenPos, 4.0f, COLOR_SNAP_POINT);
-
-                    // Draw index label
-                    if (showSnapIndices_) {
-                        char label[16];
-                        snprintf(label, sizeof(label), "%d", i);
-                        ImVec2 textPos = {screenPos.x - 3, screenPos.y - 12};
-                        drawList->AddText(textPos, IM_COL32(0, 100, 200, 255), label);
-                    }
-                }
-            };
-
-            drawEdgeSnaps(NodeEdge::Top, config.topCount);
-            drawEdgeSnaps(NodeEdge::Bottom, config.bottomCount);
-            drawEdgeSnaps(NodeEdge::Left, config.leftCount);
-            drawEdgeSnaps(NodeEdge::Right, config.rightCount);
-        }
-
         // Draw actual edge connection points with snap indices (for both modes)
         // Use foreground draw list for labels to ensure they're on top
         ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
@@ -727,7 +641,7 @@ public:
             if (isAffectedEdge && isInvalidDragPosition_) {
                 continue;
             }
-            
+
             // Source point on this node (outgoing - green)
             if (edgeLayout.from == nodeLayout.id) {
                 ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x,
@@ -750,7 +664,7 @@ public:
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
-                    
+
                     // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.sourceEdge) {
                         case NodeEdge::Top:
@@ -803,7 +717,7 @@ public:
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
-                    
+
                     // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.targetEdge) {
                         case NodeEdge::Top:
@@ -836,47 +750,34 @@ public:
             }
         }
     }
-    
+
     void drawArrowhead(ImDrawList* drawList, const Point& from, const Point& to, ImU32 color) {
         float dx = to.x - from.x;
         float dy = to.y - from.y;
         float len = std::sqrt(dx * dx + dy * dy);
         if (len < 0.001f) return;
-        
+
         dx /= len;
         dy /= len;
-        
+
         float arrowSize = 10.0f;
         ImVec2 tip = {to.x + offset_.x, to.y + offset_.y};
         ImVec2 left = {tip.x - arrowSize * dx + arrowSize * 0.5f * dy,
                        tip.y - arrowSize * dy - arrowSize * 0.5f * dx};
         ImVec2 right = {tip.x - arrowSize * dx - arrowSize * 0.5f * dy,
                         tip.y - arrowSize * dy + arrowSize * 0.5f * dx};
-        
+
         drawList->AddTriangleFilled(tip, left, right, color);
     }
-    
+
     void renderUI() {
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_FirstUseEver);
-        
+
         ImGui::Begin("ArborVia Demo");
-        
-        // Mode selection
-        ImGui::Text("Layout Mode:");
-        int mode = (manualManager_->getMode() == LayoutMode::Auto) ? 0 : 1;
-        if (ImGui::RadioButton("Auto", &mode, 0)) {
-            setLayoutMode(LayoutMode::Auto);
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Manual", &mode, 1)) {
-            setLayoutMode(LayoutMode::Manual);
-        }
-        
-        // Edge Routing Options (Auto mode only)
-        if (manualManager_->getMode() == LayoutMode::Auto) {
-            // Channel routing options
-            if (ImGui::TreeNode("Edge Routing Options")) {
+
+        // Edge Routing Options
+        if (ImGui::TreeNode("Edge Routing Options")) {
                 bool changed = false;
 
                 if (ImGui::SliderFloat("Spacing", &layoutOptions_.channelRouting.channelSpacing, 5.0f, 30.0f)) {
@@ -915,29 +816,12 @@ public:
                 ImGui::TreePop();
             }
 
-            ImGui::Separator();
-            ImGui::Text("Snap Distribution:");
-            int snapDist = (layoutOptions_.snapDistribution == SnapDistribution::Unified) ? 0 : 1;
-            if (ImGui::RadioButton("Unified", &snapDist, 0)) {
-                layoutOptions_.snapDistribution = SnapDistribution::Unified;
-                doLayout();
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Separated", &snapDist, 1)) {
-                layoutOptions_.snapDistribution = SnapDistribution::Separated;
-                doLayout();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Unified: all edges evenly distributed\nSeparated: incoming left, outgoing right");
-            }
-        }
-        
         ImGui::Separator();
         ImGui::Text("Drag nodes to see edge re-routing");
         ImGui::Separator();
         ImGui::Text("Nodes: %zu", graph_.nodeCount());
         ImGui::Text("Edges: %zu", graph_.edgeCount());
-        
+
         if (draggedNode_ != INVALID_NODE) {
             if (auto node = graph_.tryGetNode(draggedNode_)) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1),
@@ -945,7 +829,7 @@ public:
             }
             ImGui::Text("Affected edges: %zu", affectedEdges_.size());
         }
-        
+
         ImGui::Separator();
         ImGui::Checkbox("Show Snap Points", &showSnapPoints_);
         if (showSnapPoints_) {
@@ -960,8 +844,8 @@ public:
             ImGui::SetTooltip("Show no-drag zones while dragging (5 grid units margin)");
         }
 
-        // Snap point configuration for selected node
-        if (selectedNode_ != INVALID_NODE && manualManager_->getMode() == LayoutMode::Manual) {
+        // Snap point configuration for selected node (manual mode feature - disabled)
+        if (false && selectedNode_ != INVALID_NODE) {
             auto selectedNode = graph_.tryGetNode(selectedNode_);
             if (!selectedNode) {
                 selectedNode_ = INVALID_NODE;
@@ -971,23 +855,23 @@ public:
 
             ImGui::Separator();
             ImGui::Text("Snap Points: %s", selectedNode->label.c_str());
-            
+
             SnapPointConfig config = manualManager_->getSnapConfig(selectedNode_);
             bool changed = false;
-            
+
             if (ImGui::SliderInt("Top", &config.topCount, 1, 5)) changed = true;
             if (ImGui::SliderInt("Bottom", &config.bottomCount, 1, 5)) changed = true;
             if (ImGui::SliderInt("Left", &config.leftCount, 1, 5)) changed = true;
             if (ImGui::SliderInt("Right", &config.rightCount, 1, 5)) changed = true;
-            
+
             if (changed) {
                 manualManager_->setSnapConfig(selectedNode_, config);
                 doLayout();
             }
         }
-        
-        // Edge routing configuration for selected edge
-        if (selectedEdge_ != INVALID_EDGE && manualManager_->getMode() == LayoutMode::Manual) {
+
+        // Edge routing configuration for selected edge (manual mode feature - disabled)
+        if (false && selectedEdge_ != INVALID_EDGE) {
             auto edgeOpt = graph_.tryGetEdge(selectedEdge_);
             if (!edgeOpt) {
                 selectedEdge_ = INVALID_EDGE;
@@ -1011,10 +895,10 @@ public:
             if (!edgeData.label.empty()) {
                 ImGui::Text("Label: %s", edgeData.label.c_str());
             }
-            
+
             EdgeRoutingConfig routing = manualManager_->getEdgeRouting(selectedEdge_);
             bool routingChanged = false;
-            
+
             // Source edge selection
             ImGui::Text("Source Edge:");
             const char* edgeNames[] = {"Top", "Bottom", "Left", "Right"};
@@ -1024,7 +908,7 @@ public:
                 routing.sourceSnapIndex = 0;  // Reset index when edge changes
                 routingChanged = true;
             }
-            
+
             // Source snap point index
             SnapPointConfig srcConfig = manualManager_->getSnapConfig(edgeData.from);
             int srcMaxSnap = srcConfig.getCount(routing.sourceEdge) - 1;
@@ -1033,7 +917,7 @@ public:
                     routingChanged = true;
                 }
             }
-            
+
             // Target edge selection
             ImGui::Text("Target Edge:");
             int tgtEdge = static_cast<int>(routing.targetEdge);
@@ -1042,7 +926,7 @@ public:
                 routing.targetSnapIndex = 0;  // Reset index when edge changes
                 routingChanged = true;
             }
-            
+
             // Target snap point index
             SnapPointConfig tgtConfig = manualManager_->getSnapConfig(edgeData.to);
             int tgtMaxSnap = tgtConfig.getCount(routing.targetEdge) - 1;
@@ -1051,16 +935,16 @@ public:
                     routingChanged = true;
                 }
             }
-            
+
             if (routingChanged) {
                 manualManager_->setEdgeRouting(selectedEdge_, routing);
                 doLayout();
             }
-            
+
             // Bend point management UI
             ImGui::Separator();
             ImGui::Text("Bend Points:");
-            
+
             const auto& bps = manualManager_->getBendPoints(selectedEdge_);
             if (bps.empty()) {
                 ImGui::TextDisabled("None (auto routing)");
@@ -1069,10 +953,10 @@ public:
                 ImGui::Text("Count: %zu", bps.size());
                 for (size_t i = 0; i < bps.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
-                    bool isSelected = (selectedBendPoint_.edgeId == selectedEdge_ && 
+                    bool isSelected = (selectedBendPoint_.edgeId == selectedEdge_ &&
                                       selectedBendPoint_.bendPointIndex == static_cast<int>(i));
                     if (isSelected) {
-                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), 
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
                             "[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
                     } else {
                         ImGui::Text("[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
@@ -1085,29 +969,29 @@ public:
                     doLayout();
                 }
             }
-            
+
             if (selectedBendPoint_.isValid() && selectedBendPoint_.edgeId == selectedEdge_) {
                 ImGui::Text("Selected: [%d]", selectedBendPoint_.bendPointIndex);
                 ImGui::TextDisabled("Press Delete to remove");
             }
         }
-        
+
         ImGui::Separator();
         if (ImGui::Button("Reset Layout")) {
             manualManager_->clearManualState();
             doLayout();
         }
-        
+
         ImGui::SameLine();
         if (ImGui::Button("Save")) {
             saveLayout("layout.json");
         }
-        
+
         ImGui::SameLine();
         if (ImGui::Button("Load")) {
             loadLayout("layout.json");
         }
-        
+
         ImGui::End();
     }
 
@@ -1118,7 +1002,7 @@ private:
     LayoutResult layoutResult_;
     std::shared_ptr<ManualLayoutManager> manualManager_;
     LayoutOptions layoutOptions_;
-    
+
     Point offset_ = {0, 0};
     float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
 
@@ -1132,11 +1016,11 @@ private:
     bool showSnapPoints_ = true;
     bool showSnapIndices_ = true;
     bool showBlockedCells_ = true;  // Show node obstacle areas in red
-    
+
     // Drag constraint state
     bool isInvalidDragPosition_ = false;      // Current drag position is invalid
     Point lastValidPosition_ = {0, 0};        // Last known valid position during drag
-    
+
     // Bend point interaction state
     HoveredBendPoint hoveredBendPoint_;
     HoveredBendPoint selectedBendPoint_;
@@ -1147,12 +1031,12 @@ private:
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
-    
+
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
-    
+
     SDL_Window* window = SDL_CreateWindow(
         "ArborVia Interactive Demo",
         1024, 768,
@@ -1162,25 +1046,25 @@ int main(int argc, char* argv[]) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return 1;
     }
-    
+
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {
         SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
         return 1;
     }
-    
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    
+
     ImGui::StyleColorsDark();
-    
+
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
-    
+
     InteractiveDemo demo;
-    
+
     bool running = true;
     while (running) {
         SDL_Event event;
@@ -1189,16 +1073,16 @@ int main(int argc, char* argv[]) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             }
-            if (event.type == SDL_EVENT_KEY_DOWN && 
+            if (event.type == SDL_EVENT_KEY_DOWN &&
                 event.key.key == SDLK_ESCAPE) {
                 running = false;
             }
         }
-        
+
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        
+
         demo.update();
 
         // Draw graph on background (must be before Render())
@@ -1215,14 +1099,14 @@ int main(int argc, char* argv[]) {
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
     }
-    
+
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    
+
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    
+
     return 0;
 }

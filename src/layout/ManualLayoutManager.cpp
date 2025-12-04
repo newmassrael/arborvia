@@ -1,4 +1,3 @@
-#include "../../include/arborvia/layout/ManualLayoutManager.h"
 #include "arborvia/layout/ManualLayoutManager.h"
 #include "arborvia/layout/LayoutSerializer.h"
 #include "arborvia/layout/LayoutUtils.h"
@@ -96,7 +95,7 @@ void ManualLayoutManager::appendBendPoint(EdgeId edgeId, const Point& position) 
 
 void ManualLayoutManager::removeBendPoint(EdgeId edgeId, size_t index) {
     auto it = manualState_.edgeRoutings.find(edgeId);
-    if (it != manualState_.edgeRoutings.end() && 
+    if (it != manualState_.edgeRoutings.end() &&
         index < it->second.manualBendPoints.size()) {
         it->second.manualBendPoints.erase(
             it->second.manualBendPoints.begin() + static_cast<std::ptrdiff_t>(index));
@@ -105,7 +104,7 @@ void ManualLayoutManager::removeBendPoint(EdgeId edgeId, size_t index) {
 
 void ManualLayoutManager::moveBendPoint(EdgeId edgeId, size_t index, const Point& position) {
     auto it = manualState_.edgeRoutings.find(edgeId);
-    if (it != manualState_.edgeRoutings.end() && 
+    if (it != manualState_.edgeRoutings.end() &&
         index < it->second.manualBendPoints.size()) {
         it->second.manualBendPoints[index].position = position;
     }
@@ -122,7 +121,7 @@ const std::vector<BendPoint>& ManualLayoutManager::getBendPoints(EdgeId edgeId) 
 
 bool ManualLayoutManager::hasManualBendPoints(EdgeId edgeId) const {
     auto it = manualState_.edgeRoutings.find(edgeId);
-    return it != manualState_.edgeRoutings.end() && 
+    return it != manualState_.edgeRoutings.end() &&
            !it->second.manualBendPoints.empty();
 }
 
@@ -168,19 +167,20 @@ void ManualLayoutManager::syncSnapConfigsFromEdgeLayouts(
 }
 
 void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]] const Graph& graph) const {
-    if (mode_ != LayoutMode::Manual) {
-        return;
-    }
+    applyManualNodePositions(result);
+    applyManualEdgeRoutings(result);
+}
 
-    // Apply node positions
+void ManualLayoutManager::applyManualNodePositions(LayoutResult& result) const {
     for (const auto& [nodeId, position] : manualState_.nodePositions) {
         NodeLayout* layout = result.getNodeLayout(nodeId);
         if (layout) {
             layout->position = position;
         }
     }
+}
 
-    // Apply edge routings with snap points
+void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result) const {
     for (const auto& [edgeId, routing] : manualState_.edgeRoutings) {
         EdgeLayout* layout = result.getEdgeLayout(edgeId);
         if (!layout) continue;

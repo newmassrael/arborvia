@@ -11,7 +11,7 @@ namespace arborvia {
 namespace algorithms {
 
 /// Simple coordinate assignment algorithm
-/// 
+///
 /// This is the default implementation of ICoordinateAssignment using
 /// simple left-to-right assignment with centering, plus optional
 /// Brandes-Köpf style assignment for better edge straightness.
@@ -45,18 +45,6 @@ private:
                          const std::unordered_map<NodeId, Size>& nodeSizes,
                          const LayoutOptions& options,
                          CoordinateAssignmentResult& result) const;
-
-    // Brandes-Köpf style coordinate assignment (better edge straightness)
-    void brandesKopfAssignment(const Graph& graph,
-                              const std::vector<std::vector<NodeId>>& layers,
-                              const std::unordered_map<NodeId, Size>& nodeSizes,
-                              const LayoutOptions& options,
-                              CoordinateAssignmentResult& result) const;
-
-    float computeLayerY(int layer,
-                       const std::vector<std::vector<NodeId>>& layers,
-                       const std::unordered_map<NodeId, Size>& nodeSizes,
-                       const LayoutOptions& options) const;
 };
 
 /// Backward compatibility alias
