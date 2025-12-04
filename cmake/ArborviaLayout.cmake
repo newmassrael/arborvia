@@ -20,6 +20,8 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/SnapIndexManager.cpp
     src/layout/sugiyama/ObstacleMap.cpp
     src/layout/sugiyama/AStarPathFinder.cpp
+    src/layout/sugiyama/LShapedPathFinder.cpp
+    src/layout/PathRoutingCoordinator.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS

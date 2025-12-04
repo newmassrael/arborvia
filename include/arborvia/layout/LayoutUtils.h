@@ -8,8 +8,13 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <memory>
 
 namespace arborvia {
+
+namespace algorithms {
+class PathRoutingCoordinator;
+}  // namespace algorithms
 
 /// Utility functions for interactive layout manipulation
 class LayoutUtils {
@@ -26,6 +31,22 @@ public:
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
+
+    /// Update edge positions using a routing coordinator for algorithm selection
+    /// The coordinator determines which pathfinder to use based on drag state
+    /// @param edgeLayouts The edge layouts to update (modified in place)
+    /// @param nodeLayouts Current node positions
+    /// @param affectedEdges Edges that need updating (connected to moved nodes)
+    /// @param coordinator Routing coordinator for pathfinder selection
+    /// @param movedNodes Optional set of nodes that actually moved
+    /// @param gridSize Grid size for snapping (0 = no snapping)
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        algorithms::PathRoutingCoordinator& coordinator,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
 

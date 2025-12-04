@@ -16,6 +16,7 @@ namespace algorithms {
 // Forward declarations
 class SnapIndexManager;
 class IPathFinder;
+class PathRoutingCoordinator;
 
 /// Channel assignment info for an edge
 struct ChannelAssignment {
@@ -42,6 +43,10 @@ public:
     /// @param pathFinder Pathfinder to use for routing (uses AStarPathFinder by default)
     explicit EdgeRouting(std::shared_ptr<IPathFinder> pathFinder = nullptr);
 
+    /// Constructor with routing coordinator for dual-algorithm support
+    /// @param coordinator Routing coordinator managing drag/drop pathfinders (not owned)
+    explicit EdgeRouting(PathRoutingCoordinator* coordinator);
+
     /// Result of edge routing operation
     struct Result {
         std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
@@ -55,8 +60,15 @@ public:
         }
     };
 
-    /// Get the pathfinder instance
-    const IPathFinder& pathFinder() const { return *pathFinder_; }
+    /// Get the pathfinder instance (returns current pathfinder from coordinator if set)
+    const IPathFinder& pathFinder() const;
+
+    /// Set routing coordinator for dual-algorithm support
+    /// @param coordinator Routing coordinator (not owned, can be null to disable)
+    void setRoutingCoordinator(PathRoutingCoordinator* coordinator);
+
+    /// Get routing coordinator (may be null)
+    PathRoutingCoordinator* routingCoordinator() const;
 
     /// Route edges based on node positions
     Result route(const Graph& graph,
@@ -235,8 +247,14 @@ private:
         int loopIndex,
         const LayoutOptions& options);
 
-    /// Pathfinder instance (injected via constructor)
+    /// Pathfinder instance (injected via constructor, used when no coordinator)
     std::shared_ptr<IPathFinder> pathFinder_;
+
+    /// Routing coordinator for dual-algorithm support (optional, not owned)
+    PathRoutingCoordinator* coordinator_ = nullptr;
+
+    /// Get the active pathfinder (from coordinator if set, otherwise pathFinder_)
+    IPathFinder& activePathFinder() const;
 };
 
 }  // namespace algorithms

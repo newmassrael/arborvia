@@ -2,6 +2,7 @@
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/ConstraintManager.h"
 #include "arborvia/layout/ConstraintConfig.h"
+#include "arborvia/layout/PathRoutingCoordinator.h"
 #include "sugiyama/EdgeRouting.h"
 #include <cmath>
 #include <algorithm>
@@ -20,6 +21,20 @@ void LayoutUtils::updateEdgePositions(
     float gridSize) {
 
     algorithms::EdgeRouting routing;
+    routing.updateEdgePositions(
+        edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
+}
+
+void LayoutUtils::updateEdgePositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    algorithms::PathRoutingCoordinator& coordinator,
+    const std::unordered_set<NodeId>& movedNodes,
+    float gridSize) {
+
+    // Create EdgeRouting with raw pointer to coordinator (not owned)
+    algorithms::EdgeRouting routing(&coordinator);
     routing.updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }

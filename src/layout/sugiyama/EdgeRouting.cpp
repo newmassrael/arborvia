@@ -4,6 +4,7 @@
 #include "AStarPathFinder.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
+#include "arborvia/layout/PathRoutingCoordinator.h"
 
 #include <algorithm>
 #include <cmath>
@@ -478,6 +479,30 @@ EdgeRouting::EdgeRouting(std::shared_ptr<IPathFinder> pathFinder)
                              : std::make_shared<AStarPathFinder>()) {
 }
 
+EdgeRouting::EdgeRouting(PathRoutingCoordinator* coordinator)
+    : pathFinder_(std::make_shared<AStarPathFinder>())
+    , coordinator_(coordinator) {
+}
+
+const IPathFinder& EdgeRouting::pathFinder() const {
+    return activePathFinder();
+}
+
+void EdgeRouting::setRoutingCoordinator(PathRoutingCoordinator* coordinator) {
+    coordinator_ = coordinator;
+}
+
+PathRoutingCoordinator* EdgeRouting::routingCoordinator() const {
+    return coordinator_;
+}
+
+IPathFinder& EdgeRouting::activePathFinder() const {
+    if (coordinator_) {
+        return coordinator_->currentPathFinder();
+    }
+    return *pathFinder_;
+}
+
 // =============================================================================
 // Static Helper Function Implementations
 // =============================================================================
@@ -589,7 +614,7 @@ void EdgeRouting::recalculateBendPoints(
     // - targetEdge constrains arrival direction
     // - sourceNode (layout.from) + extraStartExcludes excluded only at start cell
     // - targetNode (layout.to) + extraGoalExcludes excluded only at goal cell
-    PathResult pathResult = pathFinder_->findPath(startGrid, goalGrid, obstacles,
+    PathResult pathResult = activePathFinder().findPath(startGrid, goalGrid, obstacles,
                                                   layout.from, layout.to,
                                                   layout.sourceEdge, layout.targetEdge,
                                                   extraStartExcludes, extraGoalExcludes);

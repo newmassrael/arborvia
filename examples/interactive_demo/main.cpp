@@ -4,6 +4,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <arborvia/arborvia.h>
+#include <arborvia/layout/PathRoutingCoordinator.h>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -54,13 +55,33 @@ struct BendPointPreview {
     void clear() { edgeId = INVALID_EDGE; insertIndex = -1; active = false; }
 };
 
-class InteractiveDemo {
+class InteractiveDemo : public algorithms::IRoutingListener {
 public:
-    InteractiveDemo() : manualManager_(std::make_shared<ManualLayoutManager>()) {
+    InteractiveDemo()
+        : manualManager_(std::make_shared<ManualLayoutManager>())
+        , routingCoordinator_(std::make_shared<algorithms::PathRoutingCoordinator>())
+    {
         // Enable grid by default
         layoutOptions_.gridConfig.cellSize = gridSize_;
+
+        // Configure routing coordinator
+        routingCoordinator_->setDebounceDelay(300);  // 300ms delay after drop
+        routingCoordinator_->setListener(this);
+        routingCoordinator_->setOptimizationCallback([this](const std::vector<EdgeId>& edges) {
+            // Re-route affected edges with optimal pathfinder (A*)
+            // Note: draggedNode_ is already INVALID_NODE at callback time, so pass empty set
+            LayoutUtils::updateEdgePositions(
+                edgeLayouts_, nodeLayouts_, edges,
+                *routingCoordinator_, {}, layoutOptions_.gridConfig.cellSize);
+        });
+
         setupGraph();
         doLayout();
+    }
+
+    // IRoutingListener implementation
+    void onOptimizationComplete(const std::vector<EdgeId>& optimizedEdges) override {
+        std::cout << "Optimization complete: " << optimizedEdges.size() << " edges re-routed" << std::endl;
     }
 
     void saveLayout(const std::string& path) {
@@ -170,6 +191,9 @@ public:
     }
 
     void update() {
+        // Update routing coordinator for debounce timing (triggers optimization after delay)
+        routingCoordinator_->update(SDL_GetTicks());
+
         ImGuiIO& io = ImGui::GetIO();
 
         // Skip graph interaction if ImGui wants mouse
@@ -287,6 +311,8 @@ public:
             // Initialize drag constraint state
             lastValidPosition_ = layout.position;
             isInvalidDragPosition_ = false;
+            // Notify coordinator that drag started
+            routingCoordinator_->onDragStart(affectedEdges_);
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
             selectedEdge_ = hoveredEdge_;
             selectedNode_ = INVALID_NODE;
@@ -312,8 +338,10 @@ public:
                     layout.position = lastValidPosition_;
                     manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
                 }
-                // Finalize edge routing
+                // Finalize edge routing with fast pathfinder
                 rerouteAffectedEdges();
+                // Signal drag end - coordinator will schedule optimization after delay
+                routingCoordinator_->onDragEnd();
             }
             draggedNode_ = INVALID_NODE;
             affectedEdges_.clear();
@@ -1001,6 +1029,7 @@ private:
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
     LayoutResult layoutResult_;
     std::shared_ptr<ManualLayoutManager> manualManager_;
+    std::shared_ptr<algorithms::PathRoutingCoordinator> routingCoordinator_;
     LayoutOptions layoutOptions_;
 
     Point offset_ = {0, 0};
