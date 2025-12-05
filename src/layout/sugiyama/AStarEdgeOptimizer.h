@@ -10,6 +10,9 @@
 
 namespace arborvia {
 
+// Forward declaration
+class ObstacleMap;
+
 
 /// A* based edge routing optimizer
 /// Evaluates all 16 combinations (4 source × 4 target edges) for each edge
@@ -74,14 +77,16 @@ private:
         bool valid = true;  // False if no valid path exists
     };
 
-    /// Evaluate all 16 combinations for a single edge
+    /// Evaluate edge combinations for a single edge
+    /// When preserveDirections() is true, only evaluates the existing combination.
+    /// Otherwise, evaluates all 16 combinations (4 source × 4 target edges).
     /// @param edgeId Edge being optimized
     /// @param baseLayout Original layout to derive combinations from
     /// @param assignedLayouts Layouts already assigned (for intersection scoring)
     /// @param nodeLayouts Node positions
     /// @param forbiddenZones Pre-calculated forbidden zones for constraint checking
     /// @return Vector of valid combination results, sorted by score (best first)
-    std::vector<CombinationResult> evaluateAllCombinations(
+    std::vector<CombinationResult> evaluateCombinations(
         EdgeId edgeId,
         const EdgeLayout& baseLayout,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
@@ -94,6 +99,7 @@ private:
     /// @param sourceEdge Desired source node edge
     /// @param targetEdge Desired target node edge
     /// @param nodeLayouts Node positions for snap point and path calculation
+    /// @param obstacles Pre-built obstacle map (includes node and edge obstacles)
     /// @param[out] pathFound Set to true if valid path was found
     /// @return New EdgeLayout with actual bend points (or empty if no path)
     EdgeLayout createCandidateLayout(
@@ -101,6 +107,7 @@ private:
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        ObstacleMap& obstacles,
         bool& pathFound);
 
     /// Calculate snap point position on a node edge (pixel coordinates)

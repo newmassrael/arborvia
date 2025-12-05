@@ -2,6 +2,7 @@
 
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "EdgeScorer.h"
+#include "PathIntersection.h"
 
 #include <unordered_map>
 #include <vector>
@@ -33,19 +34,22 @@ private:
         EdgeLayout layout;
     };
 
-    /// Evaluate all 16 edge combinations geometrically
-    std::vector<CombinationResult> evaluateAllCombinations(
+    /// Evaluate edge combinations geometrically
+    /// When preserveDirections() is true, only evaluates the existing combination.
+    /// Otherwise, evaluates all 16 combinations (4 source × 4 target edges).
+    std::vector<CombinationResult> evaluateCombinations(
         EdgeId edgeId,
         const EdgeLayout& baseLayout,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
-    /// Create candidate layout with geometric path prediction
+    /// Create candidate layout with geometric path prediction and overlap avoidance
     EdgeLayout createCandidateLayout(
         const EdgeLayout& base,
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
 
     /// Calculate edge center point for given node edge
     static Point calculateEdgeCenter(
@@ -107,6 +111,36 @@ private:
         const EdgeLayout& candidate,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Adjust path to avoid overlap with assigned edges
+    /// @param candidate Candidate layout to adjust
+    /// @param assignedLayouts Already assigned edges
+    /// @return Adjusted bend points that avoid overlap
+    std::vector<BendPoint> adjustPathToAvoidOverlap(
+        const EdgeLayout& candidate,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
+
+    /// Find alternative X coordinate that doesn't overlap with existing vertical segments
+    /// @param originalX The X coordinate that causes overlap
+    /// @param yMin Minimum Y of the segment
+    /// @param yMax Maximum Y of the segment
+    /// @param assignedLayouts Already assigned edges
+    /// @param gridSpacing Grid spacing for offset calculation
+    /// @return Alternative X coordinate
+    float findAlternativeX(
+        float originalX,
+        float yMin,
+        float yMax,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        float gridSpacing = 20.0f);
+
+    /// Find alternative Y coordinate that doesn't overlap with existing horizontal segments
+    float findAlternativeY(
+        float originalY,
+        float xMin,
+        float xMax,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        float gridSpacing = 20.0f);
 
     EdgeScorer scorer_;
 };

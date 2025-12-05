@@ -216,6 +216,17 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize = 0.0f);
 
+    /// Recalculate bend points with overlap avoidance
+    /// @param layout The edge layout to recalculate bend points for
+    /// @param nodeLayouts All node layouts for intersection checking
+    /// @param otherEdges Other edge layouts to avoid overlapping with
+    /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
+    void recalculateBendPointsWithOverlapAvoidance(
+        EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        float gridSize = 0.0f);
+
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from
     /// @param nodeId The node to count connections for

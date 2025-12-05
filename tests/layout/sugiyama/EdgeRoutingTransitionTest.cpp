@@ -2173,6 +2173,173 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MustMatchEdgeDesignation) {
     std::cout << "==========================================\n";
 }
 
+// CRITICAL TEST: Direction constraints must be maintained after drag
+// This tests the resume edge (Paused -> Running) which has:
+// - sourceEdge: Top (vertical exit)
+// - targetEdge: Bottom (vertical entry)
+// After drag, both first and last segments must remain vertical
+TEST(EdgeRoutingTransitionTest, SegmentDirection_MaintainedAfterDrag) {
+    Graph graph;
+
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+
+    LayoutOptions options;
+    options.defaultNodeSize = {200.0f, 100.0f};
+    options.setNodeSpacing(100.0f, 100.0f);
+    options.setGridCellSize(20.0f);
+
+    SugiyamaLayout layout(options);
+    LayoutResult result = layout.layout(graph);
+
+    // Get mutable copies of layouts
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts = result.nodeLayouts();
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts = result.edgeLayouts();
+
+    Point originalPos = nodeLayouts[running].position;
+
+    // Helper to check direction constraint
+    auto checkDirectionConstraint = [](const EdgeLayout& edge, const std::string& name) {
+        std::vector<Point> points;
+        points.push_back(edge.sourcePoint);
+        for (const auto& bp : edge.bendPoints) {
+            points.push_back(bp.position);
+        }
+        points.push_back(edge.targetPoint);
+
+        if (points.size() < 2) return true;
+
+        // Check last segment for targetEdge constraint
+        const Point& pN_1 = points[points.size() - 2];
+        const Point& pN = points[points.size() - 1];
+        float dxLast = pN.x - pN_1.x;
+        float dyLast = pN.y - pN_1.y;
+
+        bool lastOk = true;
+        std::string expected;
+
+        switch (edge.targetEdge) {
+            case NodeEdge::Top:
+                expected = "Vertical (dy > 0)";
+                lastOk = (std::abs(dxLast) < 0.1f && dyLast > 0);
+                break;
+            case NodeEdge::Bottom:
+                expected = "Vertical (dy < 0)";
+                lastOk = (std::abs(dxLast) < 0.1f && dyLast < 0);
+                break;
+            case NodeEdge::Left:
+                expected = "Horizontal (dx > 0)";
+                lastOk = (std::abs(dyLast) < 0.1f && dxLast > 0);
+                break;
+            case NodeEdge::Right:
+                expected = "Horizontal (dx < 0)";
+                lastOk = (std::abs(dyLast) < 0.1f && dxLast < 0);
+                break;
+        }
+
+        // Always print for debugging
+        std::cout << "  " << name << ": targetEdge=" << static_cast<int>(edge.targetEdge)
+                  << " last=(" << pN_1.x << "," << pN_1.y << ")->(" << pN.x << "," << pN.y << ")"
+                  << " dx=" << dxLast << " dy=" << dyLast;
+        if (!lastOk) {
+            std::cout << " [VIOLATION: expected " << expected << "]";
+        }
+        std::cout << "\n";
+        return lastOk;
+    };
+
+    // Save initial edge directions (should be preserved during drag)
+    std::unordered_map<EdgeId, std::pair<NodeEdge, NodeEdge>> initialDirections;
+    for (const auto& [edgeId, edge] : edgeLayouts) {
+        initialDirections[edgeId] = {edge.sourceEdge, edge.targetEdge};
+    }
+
+    // Print initial edge directions
+    std::cout << "\nInitial edge directions:\n";
+    for (const auto& [edgeId, dirs] : initialDirections) {
+        std::cout << "  Edge " << edgeId << ": sourceEdge=" << static_cast<int>(dirs.first)
+                  << " targetEdge=" << static_cast<int>(dirs.second) << "\n";
+    }
+
+    // Drag Running node to different positions (cumulative offsets)
+    std::vector<Point> dragOffsets = {
+        {100, 0},   // Right
+        {100, 0},   // More right (cumulative)
+        {0, 50},    // Down
+    };
+
+    int violations = 0;
+    int directionChanges = 0;
+
+    for (size_t i = 0; i < dragOffsets.size(); i++) {
+        // Apply drag offset
+        nodeLayouts[running].position.x += dragOffsets[i].x;
+        nodeLayouts[running].position.y += dragOffsets[i].y;
+
+        std::cout << "\n=== Drag position " << i << ": ("
+                  << nodeLayouts[running].position.x << ", "
+                  << nodeLayouts[running].position.y << ") ===\n";
+
+        // Get affected edges (connected to running)
+        std::vector<EdgeId> affectedEdges = {e0, e1, e2, e3, e5};
+
+        // Update edge positions
+        LayoutUtils::updateEdgePositions(
+            edgeLayouts, nodeLayouts, affectedEdges,
+            options, {running});
+
+        // Check all edges connected to Running
+        std::vector<std::pair<EdgeId, std::string>> edgesToCheck = {
+            {e0, "start (Idle->Running)"},
+            {e1, "pause (Running->Paused)"},
+            {e2, "resume (Paused->Running)"},
+            {e3, "stop (Running->Stopped)"},
+            {e5, "fail (Running->Error)"},
+        };
+
+        for (const auto& [edgeId, name] : edgesToCheck) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it == edgeLayouts.end()) continue;
+
+            // Check if direction was changed
+            auto initIt = initialDirections.find(edgeId);
+            if (initIt != initialDirections.end()) {
+                if (it->second.sourceEdge != initIt->second.first ||
+                    it->second.targetEdge != initIt->second.second) {
+                    std::cout << "  [DIRECTION CHANGED] " << name
+                              << ": (" << static_cast<int>(initIt->second.first)
+                              << "," << static_cast<int>(initIt->second.second) << ") -> ("
+                              << static_cast<int>(it->second.sourceEdge) << ","
+                              << static_cast<int>(it->second.targetEdge) << ")\n";
+                    directionChanges++;
+                }
+            }
+
+            if (!checkDirectionConstraint(it->second, name)) {
+                violations++;
+            }
+        }
+    }
+
+    std::cout << "\nTotal direction changes: " << directionChanges << "\n";
+    std::cout << "Total violations: " << violations << "\n";
+
+    // Direction changes during drag are a bug - optimizer should preserve edge directions
+    EXPECT_EQ(directionChanges, 0) << "Edge directions changed during drag!";
+    EXPECT_EQ(violations, 0) << "Direction constraints violated after drag!";
+}
+
 // CRITICAL TEST: Spike detection with grid snapping enabled
 // Grid snapping (cellSize=20) can create spikes that don't appear without grid snapping
 TEST(EdgeRoutingTransitionTest, GridSnapping_AfterDrag_NoSpikesOrDuplicates) {

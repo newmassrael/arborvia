@@ -9,6 +9,7 @@
 #include "PathCleanup.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/IEdgeOptimizer.h"
+#include "arborvia/layout/EdgeConstraintManager.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
 #include "arborvia/layout/PathRoutingCoordinator.h"
@@ -788,28 +789,52 @@ void EdgeRouting::recalculateBendPoints(
         float dx = std::abs(layout.targetPoint.x - layout.sourcePoint.x);
         float dy = std::abs(layout.targetPoint.y - layout.sourcePoint.y);
 
-        // If both dx and dy are significant, we need a bend point for orthogonal routing
+        // If both dx and dy are significant, we need bend points for orthogonal routing
         if (dx > EPSILON && dy > EPSILON) {
-            // Create L-shaped path based on source edge direction
-            Point bendPoint;
+            // Check both source and target edge directions
             bool sourceVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
+            bool targetVertical = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
 
-            if (sourceVertical) {
-                // Vertical first, then horizontal: bend at (source.x, target.y)
-                bendPoint = {layout.sourcePoint.x, layout.targetPoint.y};
-            } else {
-                // Horizontal first, then vertical: bend at (target.x, source.y)
-                bendPoint = {layout.targetPoint.x, layout.sourcePoint.y};
-            }
+            if (sourceVertical == targetVertical) {
+                // Same orientation (both horizontal or both vertical)
+                // Need 2 bend points to form a Z-shape or S-shape
+                float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
+                float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
 
+                if (sourceVertical) {
+                    // Both vertical: vertical → horizontal → vertical
+                    layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
+                    layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
+                } else {
+                    // Both horizontal: horizontal → vertical → horizontal
+                    layout.bendPoints.push_back({{midX, layout.sourcePoint.y}});
+                    layout.bendPoints.push_back({{midX, layout.targetPoint.y}});
+                }
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[EdgeRouting] recalculateBendPoints: ORTHOGONALITY FIX applied!" << std::endl;
-            std::cout << "  src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ") "
-                      << "tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")" << std::endl;
-            std::cout << "  dx=" << dx << " dy=" << dy << " sourceVertical=" << sourceVertical << std::endl;
-            std::cout << "  Added bend: (" << bendPoint.x << "," << bendPoint.y << ")" << std::endl;
+                std::cout << "[EdgeRouting] recalculateBendPoints: SAME ORIENTATION FIX (2 bends)!" << std::endl;
+                std::cout << "  src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ") "
+                          << "tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")" << std::endl;
+                std::cout << "  sourceVertical=" << sourceVertical << " targetVertical=" << targetVertical << std::endl;
 #endif
-            layout.bendPoints.push_back({bendPoint});
+            } else {
+                // Different orientation: Create L-shaped path (1 bend point)
+                Point bendPoint;
+                if (sourceVertical) {
+                    // Vertical first, then horizontal: bend at (source.x, target.y)
+                    bendPoint = {layout.sourcePoint.x, layout.targetPoint.y};
+                } else {
+                    // Horizontal first, then vertical: bend at (target.x, source.y)
+                    bendPoint = {layout.targetPoint.x, layout.sourcePoint.y};
+                }
+                layout.bendPoints.push_back({bendPoint});
+#if EDGE_ROUTING_DEBUG
+                std::cout << "[EdgeRouting] recalculateBendPoints: ORTHOGONALITY FIX (1 bend)!" << std::endl;
+                std::cout << "  src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ") "
+                          << "tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")" << std::endl;
+                std::cout << "  dx=" << dx << " dy=" << dy << " sourceVertical=" << sourceVertical << std::endl;
+                std::cout << "  Added bend: (" << bendPoint.x << "," << bendPoint.y << ")" << std::endl;
+#endif
+            }
         }
 #if EDGE_ROUTING_DEBUG
         else {
@@ -818,6 +843,158 @@ void EdgeRouting::recalculateBendPoints(
         }
 #endif
     }
+}
+
+void EdgeRouting::recalculateBendPointsWithOverlapAvoidance(
+    EdgeLayout& layout,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+    float gridSize) {
+
+    // First, calculate the basic path
+    recalculateBendPoints(layout, nodeLayouts, gridSize);
+
+    // If no other edges, nothing to check
+    if (otherEdges.empty()) {
+        return;
+    }
+
+    // Need at least 2 bend points to have a middle segment we can adjust
+    if (layout.bendPoints.size() < 2) {
+        return;
+    }
+
+    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+
+    // Check ONLY middle segments (between bend points)
+    // We can only shift if the adjacent segments are perpendicular to the shift direction
+    bool adjusted = false;
+
+    for (size_t bendIdx = 0; bendIdx + 1 < layout.bendPoints.size(); ++bendIdx) {
+        Point& p1 = layout.bendPoints[bendIdx].position;
+        Point& p2 = layout.bendPoints[bendIdx + 1].position;
+
+        bool isVertical = std::abs(p1.x - p2.x) < 0.5f;
+        bool isHorizontal = std::abs(p1.y - p2.y) < 0.5f;
+
+        if (!isVertical && !isHorizontal) {
+            continue;  // Non-orthogonal segment, skip
+        }
+
+        // Get adjacent points (prev connects to p1, next connects to p2)
+        Point prev = (bendIdx == 0) ? layout.sourcePoint : layout.bendPoints[bendIdx - 1].position;
+        Point next = (bendIdx + 2 >= layout.bendPoints.size()) ? layout.targetPoint
+                                                                : layout.bendPoints[bendIdx + 2].position;
+
+        // Check if we can safely shift this segment
+        // For vertical segment (shift in X): adjacent segments must be horizontal (same Y)
+        // For horizontal segment (shift in Y): adjacent segments must be vertical (same X)
+        bool canShift = false;
+        if (isVertical) {
+            // To shift X, prev->p1 must be horizontal (same Y) and p2->next must be horizontal (same Y)
+            bool prevHorizontal = std::abs(prev.y - p1.y) < 0.5f;
+            bool nextHorizontal = std::abs(p2.y - next.y) < 0.5f;
+            canShift = prevHorizontal && nextHorizontal;
+        } else {
+            // To shift Y, prev->p1 must be vertical (same X) and p2->next must be vertical (same X)
+            bool prevVertical = std::abs(prev.x - p1.x) < 0.5f;
+            bool nextVertical = std::abs(p2.x - next.x) < 0.5f;
+            canShift = prevVertical && nextVertical;
+        }
+
+        if (!canShift) {
+            continue;  // Can't shift without breaking orthogonality
+        }
+
+        float segMin, segMax;
+        float segCoord;  // The fixed coordinate (x for vertical, y for horizontal)
+
+        if (isVertical) {
+            segCoord = p1.x;
+            segMin = std::min(p1.y, p2.y);
+            segMax = std::max(p1.y, p2.y);
+        } else {
+            segCoord = p1.y;
+            segMin = std::min(p1.x, p2.x);
+            segMax = std::max(p1.x, p2.x);
+        }
+
+        // Check for overlaps with other edges' segments
+        bool hasOverlap = false;
+        for (const auto& [otherId, otherLayout] : otherEdges) {
+            if (otherId == layout.id) continue;
+
+            // Build other edge's path
+            std::vector<Point> otherPath;
+            otherPath.push_back(otherLayout.sourcePoint);
+            for (const auto& bp : otherLayout.bendPoints) {
+                otherPath.push_back(bp.position);
+            }
+            otherPath.push_back(otherLayout.targetPoint);
+
+            // Check each segment of the other edge
+            for (size_t j = 0; j + 1 < otherPath.size(); ++j) {
+                const Point& op1 = otherPath[j];
+                const Point& op2 = otherPath[j + 1];
+
+                bool otherVertical = std::abs(op1.x - op2.x) < 0.5f;
+                bool otherHorizontal = std::abs(op1.y - op2.y) < 0.5f;
+
+                // Only check same-orientation segments for collinear overlap
+                if (isVertical && otherVertical) {
+                    if (std::abs(segCoord - op1.x) < effectiveGridSize * 0.5f) {
+                        float otherMin = std::min(op1.y, op2.y);
+                        float otherMax = std::max(op1.y, op2.y);
+                        if (segMax > otherMin + 1.0f && segMin < otherMax - 1.0f) {
+                            hasOverlap = true;
+                            break;
+                        }
+                    }
+                } else if (isHorizontal && otherHorizontal) {
+                    if (std::abs(segCoord - op1.y) < effectiveGridSize * 0.5f) {
+                        float otherMin = std::min(op1.x, op2.x);
+                        float otherMax = std::max(op1.x, op2.x);
+                        if (segMax > otherMin + 1.0f && segMin < otherMax - 1.0f) {
+                            hasOverlap = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (hasOverlap) break;
+        }
+
+        // If overlap detected and we can shift safely, do it
+        if (hasOverlap) {
+            float shift = effectiveGridSize;
+
+            if (isVertical) {
+                // Shift in X direction
+                float midX = (layout.sourcePoint.x + layout.targetPoint.x) / 2.0f;
+                if (segCoord < midX) {
+                    shift = -effectiveGridSize;
+                }
+                p1.x += shift;
+                p2.x += shift;
+            } else {
+                // Shift in Y direction
+                float midY = (layout.sourcePoint.y + layout.targetPoint.y) / 2.0f;
+                if (segCoord < midY) {
+                    shift = -effectiveGridSize;
+                }
+                p1.y += shift;
+                p2.y += shift;
+            }
+            adjusted = true;
+        }
+    }
+
+#if EDGE_ROUTING_DEBUG
+    if (adjusted) {
+        std::cout << "[EdgeRouting] recalculateBendPointsWithOverlapAvoidance: "
+                  << "Adjusted edge " << layout.id << " to avoid overlap" << std::endl;
+    }
+#endif
 }
 
 std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
@@ -914,6 +1091,15 @@ EdgeRouting::Result EdgeRouting::route(
             case PostDragAlgorithm::None:
                 break;
         }
+
+        // Set up constraint manager with default constraints
+        // All constraints apply automatically to all optimizers through this manager
+        if (fallbackOptimizer) {
+            auto constraintManager = std::make_shared<EdgeConstraintManager>(
+                EdgeConstraintManager::createDefault());
+            fallbackOptimizer->setConstraintManager(constraintManager);
+        }
+
         optimizer = fallbackOptimizer.get();
     }
 
@@ -1228,19 +1414,24 @@ EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     }
 
     // === Phase 4: Recalculate bend points for all processed edges ===
+    // Build "other edges" map for overlap detection
+    std::unordered_map<EdgeId, EdgeLayout> otherEdges;
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        if (std::find(result.processedEdges.begin(), result.processedEdges.end(), edgeId)
+            == result.processedEdges.end()) {
+            otherEdges[edgeId] = layout;
+        }
+    }
+
     for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
 
-        // Preserve channel routing for ALL edges (bidirectional and non-bidirectional)
-        // channelY stores absolute coordinates (Y for vertical, X for horizontal layout)
-        // and is already set correctly by allocateChannels(), so we keep it unchanged.
-        // recalculateBendPoints() will use this absolute position to maintain consistent routing.
-        //
-        // ARCHITECTURAL PRINCIPLE: All edges maintain their channel assignment across
-        // initial layout, drag, and post-drag scenarios for complete consistency.
+        // Recalculate bend points with overlap avoidance
+        recalculateBendPointsWithOverlapAvoidance(it->second, nodeLayouts, otherEdges, effectiveGridSize);
 
-        recalculateBendPoints(it->second, nodeLayouts, effectiveGridSize);
+        // Add this edge to otherEdges so subsequent edges avoid overlapping with it
+        otherEdges[edgeId] = it->second;
 
 #if EDGE_ROUTING_DEBUG
         size_t bendsBeforeCleanup = it->second.bendPoints.size();
@@ -1321,7 +1512,19 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
                 break;
         }
 
+        // Set up constraint manager with default constraints
+        // All constraints apply automatically to all optimizers through this manager
         if (optimizer) {
+            auto constraintManager = std::make_shared<EdgeConstraintManager>(
+                EdgeConstraintManager::createDefault());
+            optimizer->setConstraintManager(constraintManager);
+        }
+
+        if (optimizer) {
+            // During drag operations, preserve existing edge directions
+            // Only optimize path routing, not source/target edge selection
+            optimizer->setPreserveDirections(true);
+
             // Collect non-self-loop edges
             std::vector<EdgeId> edgesToOptimize;
             edgesToOptimize.reserve(affectedEdges.size());
@@ -1332,16 +1535,17 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
                 }
             }
 
-            // Step 1: Optimizer selects best edge combinations (sourceEdge/targetEdge only)
+            // Step 1: Optimizer calculates best paths while preserving edge directions
             auto optimizedLayouts = optimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts);
 
-            // Merge optimized edge combinations (including obstacle-avoidance bendPoints)
+            // Merge optimized sourceEdge/targetEdge choices from optimizer
+            // Note: bendPoints from optimizer are not preserved here - they will be
+            // recalculated in updateSnapPositions to ensure orthogonality with snap positions
             for (auto& [edgeId, layout] : optimizedLayouts) {
                 auto it = edgeLayouts.find(edgeId);
                 if (it != edgeLayouts.end()) {
                     it->second.sourceEdge = layout.sourceEdge;
                     it->second.targetEdge = layout.targetEdge;
-                    it->second.bendPoints = layout.bendPoints;  // Use obstacle-avoidance path
                     // Reset snap indices for redistribution
                     it->second.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
                     it->second.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
@@ -1349,6 +1553,7 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
             }
 
             // Step 2: Snap distribution for new edge combinations
+            // Note: bendPoints will be recalculated to maintain orthogonality with snap positions
             updateSnapPositions(edgeLayouts, nodeLayouts, edgesToOptimize, movedNodes, gridSize);
 
             // Step 3: Update self-loops separately (they don't go through optimizer)

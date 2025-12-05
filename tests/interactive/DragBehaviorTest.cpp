@@ -1338,3 +1338,128 @@ TEST_F(ConnectedNodesSnapPointsTest, SnapPointsPreserved) {
     std::cout << "\nTotal failures: " << failCount << std::endl;
     EXPECT_EQ(failCount, 0) << "Connected nodes' snap points should NOT change when dragging Running!";
 }
+
+
+// Test: Edge paths remain orthogonal (all segments horizontal or vertical) during drag
+TEST_F(DragBehaviorTest, Drag_OrthogonalityMaintained) {
+    ManualLayoutManager manager;
+
+    SugiyamaLayout layout;
+    LayoutOptions options;
+    layout.setOptions(options);
+    layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
+
+    // Initial layout
+    LayoutResult result = layout.layout(graph_);
+
+    std::cout << "\n=== Orthogonality During Drag Test ===" << std::endl;
+
+    // Store layouts locally
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    for (const auto& [id, nl] : result.nodeLayouts()) {
+        nodeLayouts[id] = nl;
+    }
+    for (const auto& [id, el] : result.edgeLayouts()) {
+        edgeLayouts[id] = el;
+    }
+
+    // Helper to check if edge path is orthogonal
+    auto checkOrthogonality = [](const EdgeLayout& el, EdgeId edgeId) -> bool {
+        // Build path: sourcePoint -> bendPoints -> targetPoint
+        std::vector<Point> path;
+        path.push_back(el.sourcePoint);
+        for (const auto& bp : el.bendPoints) {
+            path.push_back(bp.position);
+        }
+        path.push_back(el.targetPoint);
+
+        // Check each segment
+        for (size_t i = 0; i + 1 < path.size(); ++i) {
+            float dx = std::abs(path[i + 1].x - path[i].x);
+            float dy = std::abs(path[i + 1].y - path[i].y);
+
+            // A segment is orthogonal if either dx ~= 0 (vertical) or dy ~= 0 (horizontal)
+            bool isHorizontal = dy < 0.5f;
+            bool isVertical = dx < 0.5f;
+
+            if (!isHorizontal && !isVertical) {
+                std::cout << "  Edge " << edgeId << " segment " << i << " is DIAGONAL: "
+                          << "(" << path[i].x << "," << path[i].y << ") -> "
+                          << "(" << path[i + 1].x << "," << path[i + 1].y << ") "
+                          << "dx=" << dx << ", dy=" << dy << std::endl;
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Verify orthogonality in initial layout
+    std::cout << "\n--- Checking initial layout orthogonality ---" << std::endl;
+    int initialFailures = 0;
+    for (const auto& [edgeId, el] : edgeLayouts) {
+        if (!checkOrthogonality(el, edgeId)) {
+            initialFailures++;
+        }
+    }
+    EXPECT_EQ(initialFailures, 0) << "Initial layout should have orthogonal edges!";
+    if (initialFailures == 0) {
+        std::cout << "  All edges orthogonal in initial layout." << std::endl;
+    }
+
+    // Test multiple drag positions
+    std::vector<std::pair<NodeId, Point>> dragTests = {
+        {error_, {50.0f, -30.0f}},   // Drag Error up-right
+        {running_, {-40.0f, 20.0f}}, // Drag Running down-left
+        {paused_, {30.0f, 15.0f}},   // Drag Paused down-right
+        {stopped_, {-20.0f, -40.0f}} // Drag Stopped up-left
+    };
+
+    for (const auto& [dragNode, dragOffset] : dragTests) {
+        std::cout << "\n--- Dragging node " << static_cast<int>(dragNode)
+                  << " by (" << dragOffset.x << ", " << dragOffset.y << ") ---" << std::endl;
+
+        // Apply drag
+        Point originalPos = nodeLayouts[dragNode].position;
+        nodeLayouts[dragNode].position.x += dragOffset.x;
+        nodeLayouts[dragNode].position.y += dragOffset.y;
+
+        // Get affected edges
+        std::vector<EdgeId> affectedEdges;
+        for (const auto& [edgeId, el] : edgeLayouts) {
+            if (el.from == dragNode || el.to == dragNode) {
+                affectedEdges.push_back(edgeId);
+            }
+        }
+
+        // Update edge positions using library API
+        std::unordered_set<NodeId> movedNodes = {dragNode};
+        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, affectedEdges, movedNodes);
+
+        // Check orthogonality for affected edges
+        int failures = 0;
+        for (EdgeId edgeId : affectedEdges) {
+            if (!checkOrthogonality(edgeLayouts[edgeId], edgeId)) {
+                failures++;
+            }
+        }
+
+        EXPECT_EQ(failures, 0)
+            << "After dragging node " << static_cast<int>(dragNode)
+            << ", all edges should remain orthogonal!";
+
+        if (failures == 0) {
+            std::cout << "  All affected edges orthogonal after drag." << std::endl;
+        }
+
+        // Restore position for next test
+        nodeLayouts[dragNode].position = originalPos;
+        for (EdgeId edgeId : affectedEdges) {
+            // Re-update to restore
+            LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, {edgeId}, {dragNode});
+        }
+    }
+
+    std::cout << "\n=== Orthogonality test complete ===" << std::endl;
+}

@@ -96,7 +96,13 @@ bool ObstacleMap::isBlocked(int gridX, int gridY,
         return false;
     }
     
-    // Blocked - check if ANY blocking node is NOT excluded
+    // If this cell is blocked by edge segments (no blocking nodes), always blocked
+    // Edge segment blocking cannot be excluded
+    if (cell.blockingNodes.empty()) {
+        return true;  // Blocked by edge segment, cannot be excluded
+    }
+    
+    // Blocked by nodes - check if ANY blocking node is NOT excluded
     // If at least one blocking node is not in the exclude set, cell is blocked
     for (NodeId blockingNode : cell.blockingNodes) {
         if (exclude.find(blockingNode) == exclude.end()) {
@@ -193,12 +199,116 @@ bool ObstacleMap::inBounds(int gridX, int gridY) const {
 int ObstacleMap::toIndex(int gridX, int gridY) const {
     int localX = gridX - offsetX_;
     int localY = gridY - offsetY_;
-    
+
     if (localX < 0 || localX >= width_ || localY < 0 || localY >= height_) {
         return -1;
     }
-    
+
     return localY * width_ + localX;
+}
+
+void ObstacleMap::addEdgeSegments(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    EdgeId excludeEdgeId) {
+
+    // Initialize edge segment tracking if needed
+    if (edgeSegmentCells_.size() != grid_.size()) {
+        edgeSegmentCells_.resize(grid_.size(), false);
+    }
+
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        if (edgeId == excludeEdgeId) {
+            continue;  // Skip the edge being routed
+        }
+
+        // Skip self-loops
+        if (layout.from == layout.to) {
+            continue;
+        }
+
+        // Mark each segment of the edge path
+        layout.forEachSegment([this](const Point& p1, const Point& p2) {
+            markSegmentBlocked(p1, p2, true);
+        });
+    }
+}
+
+void ObstacleMap::clearEdgeSegments() {
+    // Only clear cells that were blocked by edge segments
+    for (size_t i = 0; i < grid_.size() && i < edgeSegmentCells_.size(); ++i) {
+        if (edgeSegmentCells_[i]) {
+            // Only unblock if no nodes are blocking this cell
+            if (grid_[i].blockingNodes.empty()) {
+                grid_[i].blocked = false;
+            }
+            edgeSegmentCells_[i] = false;
+        }
+    }
+}
+
+void ObstacleMap::markSegmentBlocked(const Point& p1, const Point& p2, bool isEdgeSegment) {
+    // Convert to grid coordinates
+    GridPoint g1 = pixelToGrid(p1);
+    GridPoint g2 = pixelToGrid(p2);
+
+    // Determine if horizontal or vertical
+    if (g1.y == g2.y) {
+        // Horizontal segment
+        int minX = std::min(g1.x, g2.x);
+        int maxX = std::max(g1.x, g2.x);
+        for (int gx = minX; gx <= maxX; ++gx) {
+            int idx = toIndex(gx, g1.y);
+            if (idx >= 0) {
+                grid_[idx].blocked = true;
+                if (isEdgeSegment) {
+                    edgeSegmentCells_[idx] = true;
+                }
+            }
+        }
+    } else if (g1.x == g2.x) {
+        // Vertical segment
+        int minY = std::min(g1.y, g2.y);
+        int maxY = std::max(g1.y, g2.y);
+        for (int gy = minY; gy <= maxY; ++gy) {
+            int idx = toIndex(g1.x, gy);
+            if (idx >= 0) {
+                grid_[idx].blocked = true;
+                if (isEdgeSegment) {
+                    edgeSegmentCells_[idx] = true;
+                }
+            }
+        }
+    } else {
+        // Diagonal segment - use Bresenham-like line drawing
+        int dx = std::abs(g2.x - g1.x);
+        int dy = std::abs(g2.y - g1.y);
+        int sx = (g1.x < g2.x) ? 1 : -1;
+        int sy = (g1.y < g2.y) ? 1 : -1;
+        int err = dx - dy;
+
+        int cx = g1.x, cy = g1.y;
+        while (true) {
+            int idx = toIndex(cx, cy);
+            if (idx >= 0) {
+                grid_[idx].blocked = true;
+                if (isEdgeSegment) {
+                    edgeSegmentCells_[idx] = true;
+                }
+            }
+            if (cx == g2.x && cy == g2.y) {
+                break;
+            }
+            int e2 = 2 * err;
+            if (e2 > -dy) {
+                err -= dy;
+                cx += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                cy += sy;
+            }
+        }
+    }
 }
 
 

@@ -34,6 +34,17 @@ public:
         float gridSize,
         int margin = 1);
 
+    /// Add edge segments as obstacles
+    /// This prevents A* from routing through existing edge paths
+    /// @param edgeLayouts Edge layouts to add as obstacles
+    /// @param excludeEdgeId Edge ID to exclude (the edge being routed)
+    void addEdgeSegments(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        EdgeId excludeEdgeId = INVALID_EDGE);
+
+    /// Clear edge segment obstacles (keeps node obstacles)
+    void clearEdgeSegments();
+
     /// Check if a grid coordinate is blocked
     /// @param gridX Grid X coordinate
     /// @param gridY Grid Y coordinate
@@ -91,7 +102,11 @@ private:
     /// @return -1 if out of bounds
     int toIndex(int gridX, int gridY) const;
 
+    /// Mark a line segment on the grid as blocked
+    void markSegmentBlocked(const Point& p1, const Point& p2, bool isEdgeSegment);
+
     std::vector<GridCell> grid_;
+    std::vector<bool> edgeSegmentCells_;  ///< Track cells blocked by edge segments
     int width_ = 0;
     int height_ = 0;
     int offsetX_ = 0;

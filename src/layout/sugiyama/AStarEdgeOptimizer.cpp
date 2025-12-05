@@ -1,6 +1,7 @@
 #include "AStarEdgeOptimizer.h"
 #include "ObstacleMap.h"
 #include "AStarPathFinder.h"
+#include "PathIntersection.h"
 #include "arborvia/core/GeometryUtils.h"
 
 #include <algorithm>
@@ -53,8 +54,13 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
 
-    // Start with assigned layouts (will accumulate as we process)
+    // Initialize with edges NOT being optimized (so constraints check against them)
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts;
+    for (const auto& [edgeId, layout] : currentLayouts) {
+        if (std::find(edges.begin(), edges.end(), edgeId) == edges.end()) {
+            assignedLayouts[edgeId] = layout;
+        }
+    }
     std::unordered_map<EdgeId, EdgeLayout> result;
 
     // Calculate forbidden zones once for all edges
@@ -76,14 +82,18 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             continue;
         }
 
-        // Evaluate all 16 combinations
-        auto combinations = evaluateAllCombinations(
+        // Evaluate edge combinations (respects preserveDirections flag)
+        auto combinations = evaluateCombinations(
             edgeId, baseLayout, assignedLayouts, nodeLayouts, forbiddenZones);
 
         if (combinations.empty()) {
-            // No valid combinations, keep original
-            result[edgeId] = baseLayout;
-            assignedLayouts[edgeId] = baseLayout;
+            // No valid combinations found - apply constraint check before fallback
+            // This prevents returning layouts that violate constraints (e.g., overlapping edges)
+            if (passesConstraints(baseLayout, assignedLayouts)) {
+                result[edgeId] = baseLayout;
+                assignedLayouts[edgeId] = baseLayout;
+            }
+            // If constraints fail, edge is not included in result (caller should handle)
             continue;
         }
 
@@ -97,7 +107,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 }
 
 std::vector<AStarEdgeOptimizer::CombinationResult>
-AStarEdgeOptimizer::evaluateAllCombinations(
+AStarEdgeOptimizer::evaluateCombinations(
     EdgeId /*edgeId*/,
     const EdgeLayout& baseLayout,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
@@ -107,27 +117,49 @@ AStarEdgeOptimizer::evaluateAllCombinations(
     std::vector<CombinationResult> results;
     results.reserve(16);
 
-    // All 4 node edges
-    constexpr std::array<NodeEdge, 4> allEdges = {
-        NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+    // Build obstacle map once for all combinations (more efficient)
+    float gridSize = effectiveGridSize();
+    ObstacleMap obstacles;
+    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);  // margin = 0
+
+    // Add existing edge segments as obstacles (prevents A* from routing through them)
+    obstacles.addEdgeSegments(assignedLayouts, baseLayout.id);
+
+    // Lambda to evaluate a single edge combination
+    auto evaluateEdge = [&](NodeEdge srcEdge, NodeEdge tgtEdge) {
+        bool pathFound = false;
+        EdgeLayout candidate = createCandidateLayout(
+            baseLayout, srcEdge, tgtEdge, nodeLayouts, obstacles, pathFound);
+
+        // Skip invalid candidates (node not found or no valid path)
+        if (!pathFound) {
+            return;
+        }
+
+        // Apply all registered constraints via EdgeConstraintManager
+        // This ensures constraint additions automatically apply to all optimizers
+        if (!passesConstraints(candidate, assignedLayouts)) {
+            return;
+        }
+
+        // Score this combination (now with actual bend points and constraint checking)
+        int score = scorer_.calculateScore(candidate, assignedLayouts, nodeLayouts, forbiddenZones);
+
+        results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
     };
 
-    // Evaluate all 16 combinations
-    for (NodeEdge srcEdge : allEdges) {
-        for (NodeEdge tgtEdge : allEdges) {
-            bool pathFound = false;
-            EdgeLayout candidate = createCandidateLayout(
-                baseLayout, srcEdge, tgtEdge, nodeLayouts, pathFound);
-
-            // Skip invalid candidates (node not found or no valid path)
-            if (!pathFound) {
-                continue;
+    if (preserveDirections()) {
+        // Preserve existing direction - only evaluate current combination
+        evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
+    } else {
+        // Optimize directions - evaluate all 16 combinations (4 source × 4 target)
+        constexpr std::array<NodeEdge, 4> allEdges = {
+            NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+        };
+        for (NodeEdge srcEdge : allEdges) {
+            for (NodeEdge tgtEdge : allEdges) {
+                evaluateEdge(srcEdge, tgtEdge);
             }
-
-            // Score this combination (now with actual bend points and constraint checking)
-            int score = scorer_.calculateScore(candidate, assignedLayouts, nodeLayouts, forbiddenZones);
-
-            results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
         }
     }
 
@@ -149,6 +181,7 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     NodeEdge sourceEdge,
     NodeEdge targetEdge,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    ObstacleMap& obstacles,
     bool& pathFound) {
 
     pathFound = false;
@@ -178,10 +211,8 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
         return candidate;  // Invalid: target node not found
     }
 
-    // Build obstacle map from node layouts
+    // Use pre-built obstacle map (includes node and edge obstacles)
     float gridSize = effectiveGridSize();
-    ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);  // margin = 0
 
     // Calculate source/target as grid coordinates first, then convert to pixel
     // This ensures all coordinates are exactly on grid vertices

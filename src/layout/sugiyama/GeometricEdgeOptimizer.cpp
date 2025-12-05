@@ -30,7 +30,13 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
 
+    // Initialize with edges NOT being optimized (so constraints check against them)
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts;
+    for (const auto& [edgeId, layout] : currentLayouts) {
+        if (std::find(edges.begin(), edges.end(), edgeId) == edges.end()) {
+            assignedLayouts[edgeId] = layout;
+        }
+    }
     std::unordered_map<EdgeId, EdgeLayout> result;
 
     for (EdgeId edgeId : edges) {
@@ -48,13 +54,16 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
             continue;
         }
 
-        // Evaluate all 16 combinations geometrically
-        auto combinations = evaluateAllCombinations(
+        // Evaluate edge combinations (respects preserveDirections flag)
+        auto combinations = evaluateCombinations(
             edgeId, baseLayout, assignedLayouts, nodeLayouts);
 
         if (combinations.empty()) {
-            result[edgeId] = baseLayout;
-            assignedLayouts[edgeId] = baseLayout;
+            // No valid combinations found - apply constraint check before fallback
+            if (passesConstraints(baseLayout, assignedLayouts)) {
+                result[edgeId] = baseLayout;
+                assignedLayouts[edgeId] = baseLayout;
+            }
             continue;
         }
 
@@ -76,7 +85,7 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
 }
 
 std::vector<GeometricEdgeOptimizer::CombinationResult>
-GeometricEdgeOptimizer::evaluateAllCombinations(
+GeometricEdgeOptimizer::evaluateCombinations(
     EdgeId /*edgeId*/,
     const EdgeLayout& baseLayout,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
@@ -85,24 +94,40 @@ GeometricEdgeOptimizer::evaluateAllCombinations(
     std::vector<CombinationResult> results;
     results.reserve(16);
 
-    constexpr std::array<NodeEdge, 4> allEdges = {
-        NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+    // Lambda to evaluate a single edge combination
+    auto evaluateEdge = [&](NodeEdge srcEdge, NodeEdge tgtEdge) {
+        EdgeLayout candidate = createCandidateLayout(
+            baseLayout, srcEdge, tgtEdge, nodeLayouts, assignedLayouts);
+
+        // Skip if nodes not found
+        auto srcIt = nodeLayouts.find(baseLayout.from);
+        auto tgtIt = nodeLayouts.find(baseLayout.to);
+        if (srcIt == nodeLayouts.end() || tgtIt == nodeLayouts.end()) {
+            return;
+        }
+
+        // Apply all registered constraints via EdgeConstraintManager
+        // This ensures constraint additions automatically apply to all optimizers
+        if (!passesConstraints(candidate, assignedLayouts)) {
+            return;
+        }
+
+        int score = scoreGeometricPath(candidate, assignedLayouts, nodeLayouts);
+        results.push_back({srcEdge, tgtEdge, score, std::move(candidate)});
     };
 
-    for (NodeEdge srcEdge : allEdges) {
-        for (NodeEdge tgtEdge : allEdges) {
-            EdgeLayout candidate = createCandidateLayout(
-                baseLayout, srcEdge, tgtEdge, nodeLayouts);
-
-            // Skip if nodes not found
-            auto srcIt = nodeLayouts.find(baseLayout.from);
-            auto tgtIt = nodeLayouts.find(baseLayout.to);
-            if (srcIt == nodeLayouts.end() || tgtIt == nodeLayouts.end()) {
-                continue;
+    if (preserveDirections()) {
+        // Preserve existing direction - only evaluate current combination
+        evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
+    } else {
+        // Optimize directions - evaluate all 16 combinations (4 source × 4 target)
+        constexpr std::array<NodeEdge, 4> allEdges = {
+            NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+        };
+        for (NodeEdge srcEdge : allEdges) {
+            for (NodeEdge tgtEdge : allEdges) {
+                evaluateEdge(srcEdge, tgtEdge);
             }
-
-            int score = scoreGeometricPath(candidate, assignedLayouts, nodeLayouts);
-            results.push_back({srcEdge, tgtEdge, score, std::move(candidate)});
         }
     }
 
@@ -123,7 +148,8 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     const EdgeLayout& base,
     NodeEdge sourceEdge,
     NodeEdge targetEdge,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts) {
 
     EdgeLayout candidate = base;
     candidate.sourceEdge = sourceEdge;
@@ -149,15 +175,33 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     Point tempSource = calculateEdgeCenter(srcIt->second, sourceEdge);
     Point tempTarget = calculateEdgeCenter(tgtIt->second, targetEdge);
 
-    // Create path WITH obstacle avoidance
+    // Create path WITH obstacle avoidance (nodes)
     auto tempBends = createPathWithObstacleAvoidance(
         tempSource, tempTarget, sourceEdge, targetEdge,
         nodeLayouts, base.from, base.to);
 
-    // Store temporary values for scoring
+    // Store temporary values
     candidate.sourcePoint = tempSource;
     candidate.targetPoint = tempTarget;
     candidate.bendPoints = std::move(tempBends);
+
+    // Iteratively adjust path to avoid ALL overlaps with assigned edges
+    // May need multiple passes if first adjustment creates new overlaps
+    if (!assignedLayouts.empty()) {
+        constexpr int MAX_OVERLAP_ITERATIONS = 5;
+        for (int iter = 0; iter < MAX_OVERLAP_ITERATIONS; ++iter) {
+            auto overlapInfo = PathIntersection::findOverlapInfo(candidate, assignedLayouts, candidate.id);
+            if (!overlapInfo.found) {
+                break;  // No more overlaps
+            }
+            
+            auto adjustedBends = adjustPathToAvoidOverlap(candidate, assignedLayouts);
+            if (adjustedBends.empty() && !candidate.bendPoints.empty()) {
+                break;  // Adjustment failed, keep current
+            }
+            candidate.bendPoints = std::move(adjustedBends);
+        }
+    }
 
     return candidate;
 }
@@ -432,6 +476,193 @@ int GeometricEdgeOptimizer::scoreGeometricPath(
 
     // Use the same scoring as AStarEdgeOptimizer for consistency
     return scorer_.calculateScore(candidate, assignedLayouts, nodeLayouts);
+}
+
+// =============================================================================
+// Overlap Avoidance Implementation
+// =============================================================================
+
+std::vector<BendPoint> GeometricEdgeOptimizer::adjustPathToAvoidOverlap(
+    const EdgeLayout& candidate,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts) {
+
+    // Check if there's any overlap
+    auto overlapInfo = PathIntersection::findOverlapInfo(candidate, assignedLayouts, candidate.id);
+    if (!overlapInfo.found) {
+        return candidate.bendPoints;  // No overlap, return as-is
+    }
+
+    // Build the full path including source/target
+    std::vector<Point> pathPoints;
+    pathPoints.push_back(candidate.sourcePoint);
+    for (const auto& bp : candidate.bendPoints) {
+        pathPoints.push_back(bp.position);
+    }
+    pathPoints.push_back(candidate.targetPoint);
+
+    // Find and adjust the overlapping segment
+    std::vector<BendPoint> adjustedBends;
+
+    if (overlapInfo.isVertical) {
+        // Vertical segment overlap - need to change X coordinate
+        float newX = findAlternativeX(
+            overlapInfo.sharedCoordinate,
+            overlapInfo.overlapStart,
+            overlapInfo.overlapEnd,
+            assignedLayouts);
+
+        // Rebuild bend points with new X
+        for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
+            const Point& p1 = pathPoints[i];
+            const Point& p2 = pathPoints[i + 1];
+
+            // Check if this is a vertical segment at the overlapping X
+            if (std::abs(p1.x - overlapInfo.sharedCoordinate) < EPSILON &&
+                std::abs(p2.x - overlapInfo.sharedCoordinate) < EPSILON) {
+                // This segment needs adjustment - insert offset bend points
+                if (i > 0) {
+                    // Not starting from source, add transition to new X
+                    adjustedBends.push_back({{newX, p1.y}});
+                }
+                adjustedBends.push_back({{newX, p2.y}});
+            } else if (i > 0 && i < pathPoints.size() - 2) {
+                // Regular intermediate point
+                adjustedBends.push_back({{p2.x, p2.y}});
+            }
+        }
+    } else {
+        // Horizontal segment overlap - need to change Y coordinate
+        float newY = findAlternativeY(
+            overlapInfo.sharedCoordinate,
+            overlapInfo.overlapStart,
+            overlapInfo.overlapEnd,
+            assignedLayouts);
+
+        // Rebuild bend points with new Y
+        for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
+            const Point& p1 = pathPoints[i];
+            const Point& p2 = pathPoints[i + 1];
+
+            // Check if this is a horizontal segment at the overlapping Y
+            if (std::abs(p1.y - overlapInfo.sharedCoordinate) < EPSILON &&
+                std::abs(p2.y - overlapInfo.sharedCoordinate) < EPSILON) {
+                // This segment needs adjustment
+                if (i > 0) {
+                    adjustedBends.push_back({{p1.x, newY}});
+                }
+                adjustedBends.push_back({{p2.x, newY}});
+            } else if (i > 0 && i < pathPoints.size() - 2) {
+                adjustedBends.push_back({{p2.x, p2.y}});
+            }
+        }
+    }
+
+    // If adjustment produced valid bends, return them
+    if (!adjustedBends.empty()) {
+        return adjustedBends;
+    }
+
+    // Fallback: simple offset from original path
+    std::vector<BendPoint> fallbackBends;
+    float offset = overlapInfo.isVertical ? 20.0f : 20.0f;
+
+    for (const auto& bp : candidate.bendPoints) {
+        Point adjusted = bp.position;
+        if (overlapInfo.isVertical) {
+            adjusted.x += offset;
+        } else {
+            adjusted.y += offset;
+        }
+        fallbackBends.push_back({adjusted, bp.isControlPoint});
+    }
+
+    return fallbackBends;
+}
+
+float GeometricEdgeOptimizer::findAlternativeX(
+    float originalX,
+    float yMin,
+    float yMax,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSpacing) {
+
+    // Find all X coordinates used by vertical segments in the Y range
+    auto usedX = PathIntersection::findUsedVerticalX(assignedLayouts, yMin, yMax);
+
+    // Try offsets in both directions to find unused X
+    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
+        // Try positive offset first
+        float candidateX = originalX + offset;
+        bool used = false;
+        for (float x : usedX) {
+            if (std::abs(x - candidateX) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateX;
+        }
+
+        // Try negative offset
+        candidateX = originalX - offset;
+        used = false;
+        for (float x : usedX) {
+            if (std::abs(x - candidateX) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateX;
+        }
+    }
+
+    // Fallback: just use offset
+    return originalX + gridSpacing;
+}
+
+float GeometricEdgeOptimizer::findAlternativeY(
+    float originalY,
+    float xMin,
+    float xMax,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSpacing) {
+
+    // Find all Y coordinates used by horizontal segments in the X range
+    auto usedY = PathIntersection::findUsedHorizontalY(assignedLayouts, xMin, xMax);
+
+    // Try offsets in both directions to find unused Y
+    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
+        // Try positive offset first
+        float candidateY = originalY + offset;
+        bool used = false;
+        for (float y : usedY) {
+            if (std::abs(y - candidateY) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateY;
+        }
+
+        // Try negative offset
+        candidateY = originalY - offset;
+        used = false;
+        for (float y : usedY) {
+            if (std::abs(y - candidateY) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateY;
+        }
+    }
+
+    // Fallback: just use offset
+    return originalY + gridSpacing;
 }
 
 }  // namespace arborvia
