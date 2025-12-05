@@ -3,8 +3,10 @@
 #include "arborvia/core/Types.h"
 #include "arborvia/layout/LayoutOptions.h"
 #include "arborvia/layout/LayoutResult.h"
+#include "arborvia/layout/ValidRegionCalculator.h"
 
 #include <unordered_map>
+#include <vector>
 
 namespace arborvia {
 
@@ -27,11 +29,13 @@ public:
     /// @param candidate The edge layout to score
     /// @param assignedLayouts Other edges already assigned (for intersection counting)
     /// @param nodeLayouts Node positions (for collision detection)
+    /// @param forbiddenZones Pre-calculated forbidden zones (for constraint violation)
     /// @return Total weighted score
     int calculateScore(
         const EdgeLayout& candidate,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones = {}) const;
 
     // === Individual Scoring Components ===
 
@@ -67,6 +71,15 @@ public:
     /// @return Distance between source and target points
     float calculateDistance(const EdgeLayout& layout) const;
 
+    /// Count constraint violations (snap points or segments in forbidden zones)
+    /// Checks both snap points (sourcePoint, targetPoint) and path segments (bendPoints)
+    /// @param layout Edge layout to check
+    /// @param forbiddenZones Forbidden zones to check against
+    /// @return Number of violations (points or segments in forbidden zones)
+    int countConstraintViolations(
+        const EdgeLayout& layout,
+        const std::vector<ForbiddenZone>& forbiddenZones) const;
+
     /// Get current weights
     const ScoringWeights& weights() const { return weights_; }
 
@@ -80,6 +93,14 @@ private:
     static bool segmentIntersectsNode(
         const Point& p1, const Point& p2,
         const NodeLayout& node, float margin = 0.0f);
+
+    /// Check if a point is inside a forbidden zone
+    static bool isPointInZone(const Point& p, const ForbiddenZone& zone);
+
+    /// Check if a segment intersects a forbidden zone
+    static bool segmentIntersectsZone(
+        const Point& p1, const Point& p2,
+        const ForbiddenZone& zone);
 };
 
 

@@ -1148,8 +1148,21 @@ void EdgeRouting::updateEdgePositions(
     for (auto& [key, connections] : affectedConnections) {
         auto [nodeId, nodeEdge] = key;
 
-        // Skip nodes that haven't moved
-        if (!shouldUpdateNode(nodeId)) continue;
+        // Check if any edge needs snap index redistribution (has -1)
+        bool needsRedistribution = false;
+        for (const auto& [edgeId, isSource] : connections) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it != edgeLayouts.end()) {
+                int snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
+                if (snapIdx < 0) {
+                    needsRedistribution = true;
+                    break;
+                }
+            }
+        }
+
+        // Skip nodes that haven't moved AND don't need redistribution
+        if (!shouldUpdateNode(nodeId) && !needsRedistribution) continue;
 
         auto nodeIt = nodeLayouts.find(nodeId);
         if (nodeIt == nodeLayouts.end()) continue;
@@ -1181,8 +1194,10 @@ void EdgeRouting::updateEdgePositions(
 
             if (isSource) {
                 layout.sourcePoint = snapPoint;
+                layout.sourceSnapIndex = snapIdx;
             } else {
                 layout.targetPoint = snapPoint;
+                layout.targetSnapIndex = snapIdx;
             }
         }
     }

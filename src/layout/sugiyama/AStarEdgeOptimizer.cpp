@@ -57,6 +57,10 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts;
     std::unordered_map<EdgeId, EdgeLayout> result;
 
+    // Calculate forbidden zones once for all edges
+    float gridSize = effectiveGridSize();
+    auto forbiddenZones = calculateForbiddenZones(nodeLayouts, gridSize);
+
     for (EdgeId edgeId : edges) {
         auto it = currentLayouts.find(edgeId);
         if (it == currentLayouts.end()) {
@@ -74,7 +78,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
         // Evaluate all 16 combinations
         auto combinations = evaluateAllCombinations(
-            edgeId, baseLayout, assignedLayouts, nodeLayouts);
+            edgeId, baseLayout, assignedLayouts, nodeLayouts, forbiddenZones);
 
         if (combinations.empty()) {
             // No valid combinations, keep original
@@ -97,7 +101,8 @@ AStarEdgeOptimizer::evaluateAllCombinations(
     EdgeId /*edgeId*/,
     const EdgeLayout& baseLayout,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<ForbiddenZone>& forbiddenZones) {
 
     std::vector<CombinationResult> results;
     results.reserve(16);
@@ -119,8 +124,8 @@ AStarEdgeOptimizer::evaluateAllCombinations(
                 continue;
             }
 
-            // Score this combination (now with actual bend points)
-            int score = scorer_.calculateScore(candidate, assignedLayouts, nodeLayouts);
+            // Score this combination (now with actual bend points and constraint checking)
+            int score = scorer_.calculateScore(candidate, assignedLayouts, nodeLayouts, forbiddenZones);
 
             results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
         }
@@ -269,6 +274,29 @@ GridPoint AStarEdgeOptimizer::calculateGridPosition(
         static_cast<int>(std::round(px / gridSize)),
         static_cast<int>(std::round(py / gridSize))
     };
+}
+
+std::vector<ForbiddenZone> AStarEdgeOptimizer::calculateForbiddenZones(
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSize) const {
+
+    const float baseMargin = constants::MIN_NODE_GRID_DISTANCE * gridSize;
+    std::vector<ForbiddenZone> zones;
+    zones.reserve(nodeLayouts.size());
+
+    for (const auto& [nodeId, node] : nodeLayouts) {
+        ForbiddenZone zone;
+        zone.blockedBy = nodeId;
+        zone.bounds = {
+            node.position.x - baseMargin,
+            node.position.y - baseMargin,
+            node.size.width + 2 * baseMargin,
+            node.size.height + 2 * baseMargin
+        };
+        zones.push_back(zone);
+    }
+
+    return zones;
 }
 
 

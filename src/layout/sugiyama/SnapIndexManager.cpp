@@ -227,4 +227,73 @@ std::vector<std::pair<EdgeId, bool>> SnapIndexManager::sortSnapPointsByOtherNode
 }
 
 
+// =============================================================================
+// Grid-Aligned Position Calculation
+// =============================================================================
+
+std::vector<float> SnapIndexManager::calculateGridAlignedPositions(
+    float edgeLength, int count, float gridSize, float minSpacing) {
+
+    std::vector<float> positions;
+    if (count <= 0 || gridSize <= 0.0f) {
+        return positions;
+    }
+
+    positions.reserve(static_cast<size_t>(count));
+
+    // Use gridSize as minimum spacing if not specified
+    float spacing = minSpacing > 0.0f ? minSpacing : gridSize;
+
+    // Calculate required length for count snap points with minimum spacing
+    float requiredLength = calculateRequiredLength(count, spacing);
+
+    // Single snap point: center of edge
+    if (count == 1) {
+        float center = edgeLength / 2.0f;
+        // Snap to grid
+        positions.push_back(std::round(center / gridSize) * gridSize);
+        return positions;
+    }
+
+    // Multiple snap points: distribute evenly with minimum spacing
+    float startOffset;
+    float actualSpacing;
+
+    if (edgeLength >= requiredLength) {
+        // Enough space: distribute evenly within edge bounds
+        // Leave margin at edges equal to half the spacing between points
+        float totalSpan = static_cast<float>(count - 1) * spacing;
+        startOffset = (edgeLength - totalSpan) / 2.0f;
+        actualSpacing = spacing;
+    } else {
+        // Not enough space: extend beyond edge bounds (centered)
+        // Snap points will extend past node edge but maintain minimum spacing
+        float totalSpan = static_cast<float>(count - 1) * spacing;
+        startOffset = (edgeLength - totalSpan) / 2.0f;  // Will be negative
+        actualSpacing = spacing;
+    }
+
+    // Generate positions
+    for (int i = 0; i < count; ++i) {
+        float pos = startOffset + static_cast<float>(i) * actualSpacing;
+        // Snap to grid
+        pos = std::round(pos / gridSize) * gridSize;
+        positions.push_back(pos);
+    }
+
+    return positions;
+}
+
+float SnapIndexManager::calculateRequiredLength(int count, float gridSize) {
+    if (count <= 1 || gridSize <= 0.0f) {
+        return gridSize;  // Single point needs minimal space
+    }
+
+    // For N snap points with minimum gridSize spacing:
+    // Need (N-1) gaps of gridSize each, plus margin at each end
+    // Total = (N-1) * gridSize + gridSize = N * gridSize
+    return static_cast<float>(count) * gridSize;
+}
+
+
 }  // namespace arborvia

@@ -106,6 +106,7 @@ enum class NodeAlignment {
 /// Higher scores indicate worse routing choices (lower is better)
 /// Used by AStarEdgeOptimizer to evaluate edge combinations
 struct ScoringWeights {
+    int constraintViolation = 200000; ///< Path violates forbidden zone constraints (highest penalty)
     int tooCloseSnap = 100000;      ///< Snap points too close together
     int selfOverlap = 50000;        ///< Path overlaps itself (MIN_SEGMENT violation)
     int nodeCollision = 10000;      ///< Path passes through a node

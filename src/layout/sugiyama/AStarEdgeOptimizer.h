@@ -2,6 +2,7 @@
 
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "arborvia/layout/IPathFinder.h"
+#include "arborvia/layout/ValidRegionCalculator.h"
 #include "EdgeScorer.h"
 
 #include <memory>
@@ -78,12 +79,14 @@ private:
     /// @param baseLayout Original layout to derive combinations from
     /// @param assignedLayouts Layouts already assigned (for intersection scoring)
     /// @param nodeLayouts Node positions
+    /// @param forbiddenZones Pre-calculated forbidden zones for constraint checking
     /// @return Vector of valid combination results, sorted by score (best first)
     std::vector<CombinationResult> evaluateAllCombinations(
         EdgeId edgeId,
         const EdgeLayout& baseLayout,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones);
 
     /// Create a candidate layout for a specific source/target edge combination
     /// Calculates actual orthogonal path using A* pathfinder
@@ -125,6 +128,15 @@ private:
 
     /// Get effective grid size (uses default if not set)
     float effectiveGridSize() const;
+
+    /// Calculate forbidden zones for all nodes
+    /// Uses base margin (MIN_NODE_GRID_DISTANCE * gridSize) around each node
+    /// @param nodeLayouts Node positions
+    /// @param gridSize Grid cell size
+    /// @return Vector of forbidden zones
+    std::vector<ForbiddenZone> calculateForbiddenZones(
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize) const;
 };
 
 

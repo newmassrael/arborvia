@@ -15,9 +15,13 @@ EdgeScorer::EdgeScorer(const ScoringWeights& weights)
 int EdgeScorer::calculateScore(
     const EdgeLayout& candidate,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<ForbiddenZone>& forbiddenZones) const {
 
     int score = 0;
+
+    // constraintViolation (200,000) - highest penalty
+    score += countConstraintViolations(candidate, forbiddenZones) * weights_.constraintViolation;
 
     // tooCloseSnap (100,000)
     score += checkSnapPointProximity(candidate) * weights_.tooCloseSnap;
@@ -244,6 +248,96 @@ bool EdgeScorer::segmentIntersectsNode(
     float yMax = std::max(p1.y, p2.y);
 
     return !(xMax < nodeXmin || xMin > nodeXmax || yMax < nodeYmin || yMin > nodeYmax);
+}
+
+bool EdgeScorer::isPointInZone(const Point& p, const ForbiddenZone& zone) {
+    return p.x >= zone.bounds.x &&
+           p.x < zone.bounds.x + zone.bounds.width &&
+           p.y >= zone.bounds.y &&
+           p.y < zone.bounds.y + zone.bounds.height;
+}
+
+bool EdgeScorer::segmentIntersectsZone(
+    const Point& p1, const Point& p2,
+    const ForbiddenZone& zone) {
+
+    // Check if orthogonal segment intersects the zone bounds
+    float zoneXmin = zone.bounds.x;
+    float zoneXmax = zone.bounds.x + zone.bounds.width;
+    float zoneYmin = zone.bounds.y;
+    float zoneYmax = zone.bounds.y + zone.bounds.height;
+
+    bool isHorizontal = (std::abs(p1.y - p2.y) < EPSILON);
+    bool isVertical = (std::abs(p1.x - p2.x) < EPSILON);
+
+    if (isHorizontal) {
+        float y = p1.y;
+        float xMin = std::min(p1.x, p2.x);
+        float xMax = std::max(p1.x, p2.x);
+        return (y > zoneYmin && y < zoneYmax && xMin < zoneXmax && xMax > zoneXmin);
+    }
+    else if (isVertical) {
+        float x = p1.x;
+        float yMin = std::min(p1.y, p2.y);
+        float yMax = std::max(p1.y, p2.y);
+        return (x > zoneXmin && x < zoneXmax && yMin < zoneYmax && yMax > zoneYmin);
+    }
+
+    // Non-orthogonal: AABB intersection
+    float xMin = std::min(p1.x, p2.x);
+    float xMax = std::max(p1.x, p2.x);
+    float yMin = std::min(p1.y, p2.y);
+    float yMax = std::max(p1.y, p2.y);
+
+    return !(xMax < zoneXmin || xMin > zoneXmax || yMax < zoneYmin || yMin > zoneYmax);
+}
+
+int EdgeScorer::countConstraintViolations(
+    const EdgeLayout& layout,
+    const std::vector<ForbiddenZone>& forbiddenZones) const {
+
+    if (forbiddenZones.empty()) {
+        return 0;
+    }
+
+    int violations = 0;
+
+    for (const auto& zone : forbiddenZones) {
+        // Skip zones created by source/target nodes (edge endpoints are always on their nodes)
+        if (zone.blockedBy == layout.from || zone.blockedBy == layout.to) {
+            continue;
+        }
+
+        // Check snap points (sourcePoint, targetPoint)
+        if (isPointInZone(layout.sourcePoint, zone)) {
+            violations++;
+        }
+        if (isPointInZone(layout.targetPoint, zone)) {
+            violations++;
+        }
+
+        // Check bendPoints
+        for (const auto& bend : layout.bendPoints) {
+            if (isPointInZone(bend.position, zone)) {
+                violations++;
+            }
+        }
+
+        // Check path segments
+        std::vector<std::pair<Point, Point>> segments;
+        layout.forEachSegment([&](const Point& p1, const Point& p2) {
+            segments.emplace_back(p1, p2);
+        });
+
+        for (const auto& [p1, p2] : segments) {
+            if (segmentIntersectsZone(p1, p2, zone)) {
+                violations++;
+                break;  // Count each zone at most once per segment type
+            }
+        }
+    }
+
+    return violations;
 }
 
 
