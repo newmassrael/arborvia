@@ -1120,7 +1120,7 @@ void EdgeRouting::distributeAutoSnapPoints(
     }
 }
 
-void EdgeRouting::updateEdgePositions(
+void EdgeRouting::updateSnapPositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
@@ -1154,7 +1154,7 @@ void EdgeRouting::updateEdgePositions(
             auto it = edgeLayouts.find(edgeId);
             if (it != edgeLayouts.end()) {
                 int snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
-                if (snapIdx < 0) {
+                if (snapIdx == constants::SNAP_INDEX_UNASSIGNED) {
                     needsRedistribution = true;
                     break;
                 }
@@ -1178,7 +1178,7 @@ void EdgeRouting::updateEdgePositions(
 
             // Use existing snap index
             int snapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
-            if (snapIdx < 0 || snapIdx >= totalCount) {
+            if (snapIdx < 0 || snapIdx >= totalCount) {  // includes SNAP_INDEX_UNASSIGNED
                 // Fallback: find index based on current position in connections
                 snapIdx = 0;
                 for (size_t i = 0; i < connections.size(); ++i) {
@@ -1260,7 +1260,7 @@ void EdgeRouting::updateEdgePositions(
     }
 }
 
-void EdgeRouting::updateEdgePositions(
+void EdgeRouting::updateEdgeRoutingWithOptimization(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
@@ -1305,13 +1305,13 @@ void EdgeRouting::updateEdgePositions(
                     it->second.targetEdge = layout.targetEdge;
                     it->second.bendPoints = layout.bendPoints;  // Use obstacle-avoidance path
                     // Reset snap indices for redistribution
-                    it->second.sourceSnapIndex = -1;
-                    it->second.targetSnapIndex = -1;
+                    it->second.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
+                    it->second.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
                 }
             }
 
             // Step 2: Snap distribution for new edge combinations
-            updateEdgePositions(edgeLayouts, nodeLayouts, edgesToOptimize, movedNodes, gridSize);
+            updateSnapPositions(edgeLayouts, nodeLayouts, edgesToOptimize, movedNodes, gridSize);
 
             // Step 3: Update self-loops separately (they don't go through optimizer)
             std::vector<EdgeId> selfLoops;
@@ -1322,7 +1322,7 @@ void EdgeRouting::updateEdgePositions(
                 }
             }
             if (!selfLoops.empty()) {
-                updateEdgePositions(edgeLayouts, nodeLayouts, selfLoops, movedNodes, gridSize);
+                updateSnapPositions(edgeLayouts, nodeLayouts, selfLoops, movedNodes, gridSize);
             }
 
             // Note: bendPoints already set by GeometricEdgeOptimizer with obstacle avoidance
@@ -1330,7 +1330,7 @@ void EdgeRouting::updateEdgePositions(
         }
     } else {
         // No optimizer: just update snap positions
-        updateEdgePositions(edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
+        updateSnapPositions(edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
     }
 }
 

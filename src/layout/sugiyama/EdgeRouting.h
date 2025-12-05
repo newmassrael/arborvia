@@ -95,24 +95,31 @@ public:
         float gridSize = 0.0f,
         bool sortSnapPoints = true);
 
-    /// Update edge positions when nodes move (for interactive drag)
+    /// Update snap point positions when nodes move
     /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
+    /// Use this for simple position updates without edge re-routing
     /// @param edgeLayouts The edge layouts to update (modified in place)
     /// @param nodeLayouts Current node positions
     /// @param affectedEdges Edges that need updating (connected to moved nodes)
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
-    void updateEdgePositions(
+    void updateSnapPositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
 
-    /// Update edge positions with full layout options (supports greedy optimization)
+    /// Update edge routing with optimization (for interactive drag)
+    /// Runs edge optimizer to potentially change sourceEdge/targetEdge,
+    /// then recalculates snap positions
+    /// @param edgeLayouts The edge layouts to update (modified in place)
+    /// @param nodeLayouts Current node positions
+    /// @param affectedEdges Edges that need updating
     /// @param options Layout options including optimization settings
-    void updateEdgePositions(
+    /// @param movedNodes Optional set of nodes that moved
+    void updateEdgeRoutingWithOptimization(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,

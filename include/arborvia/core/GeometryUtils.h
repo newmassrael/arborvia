@@ -81,6 +81,10 @@ constexpr float MIN_NODE_GRID_DISTANCE = 5.0f;
 /// Used when user grid is disabled (cellSize <= 0)
 constexpr float PATHFINDING_GRID_SIZE = 10.0f;
 
+/// Snap index value indicating redistribution is needed
+/// Used when edge routing changes and snap points must be recalculated
+constexpr int SNAP_INDEX_UNASSIGNED = -1;
+
 }  // namespace constants
 
 }  // namespace arborvia

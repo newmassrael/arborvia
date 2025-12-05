@@ -21,7 +21,7 @@ void LayoutUtils::updateEdgePositions(
     float gridSize) {
 
     EdgeRouting routing;
-    routing.updateEdgePositions(
+    routing.updateSnapPositions(
         edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }
 
@@ -35,7 +35,7 @@ void LayoutUtils::updateEdgePositions(
 
     // Create EdgeRouting with raw pointer to coordinator (not owned)
     EdgeRouting routing(&coordinator);
-    routing.updateEdgePositions(
+    routing.updateSnapPositions(
         edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }
 
@@ -47,7 +47,7 @@ void LayoutUtils::updateEdgePositions(
     const std::unordered_set<NodeId>& movedNodes) {
 
     EdgeRouting routing;
-    routing.updateEdgePositions(
+    routing.updateEdgeRoutingWithOptimization(
         edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes);
 }
 
