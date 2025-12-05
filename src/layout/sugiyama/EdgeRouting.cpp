@@ -2,6 +2,10 @@
 #include "SnapIndexManager.h"
 #include "ObstacleMap.h"
 #include "AStarPathFinder.h"
+#include "AStarEdgeOptimizer.h"
+#include "GeometricEdgeOptimizer.h"
+#include "arborvia/core/GeometryUtils.h"
+#include "arborvia/layout/IEdgeOptimizer.h"
 #include "arborvia/layout/LayoutTypes.h"
 #include "arborvia/layout/LayoutUtils.h"
 #include "arborvia/layout/PathRoutingCoordinator.h"
@@ -12,7 +16,7 @@
 #include <unordered_map>
 
 namespace arborvia {
-namespace algorithms {
+
 
 // =============================================================================
 // Routing Constants
@@ -46,20 +50,17 @@ namespace {
 
 
     /// Get effective grid size for calculations
-    /// Returns 1.0f when grid is disabled (gridSize <= 0) to prevent division by zero
-    /// This means grid unit = pixel coordinate when grid is disabled
-    inline float getEffectiveGridSize(float gridSize) {
-        return gridSize > 0.0f ? gridSize : 1.0f;
-    }
-
     // =========================================================================
     // Grid-Unit Constants for Quantized-First Calculations
     // =========================================================================
     // These constants define offsets in GRID UNITS (integers).
     // All routing calculations use these directly without conversion.
 
-    // Default grid size when grid is disabled (used for minimum clearance)
-    constexpr float DEFAULT_GRID_SIZE = 20.0f;
+    /// Returns PATHFINDING_GRID_SIZE when grid is disabled (gridSize <= 0)
+    /// This ensures A* pathfinding uses a coarse enough grid for performance
+    inline float getEffectiveGridSize(float gridSize) {
+        return gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+    }
 
     // =========================================================================
     // Grid Coordinate Types for Quantized-First Calculations
@@ -496,6 +497,14 @@ PathRoutingCoordinator* EdgeRouting::routingCoordinator() const {
     return coordinator_;
 }
 
+void EdgeRouting::setEdgeOptimizer(std::shared_ptr<IEdgeOptimizer> optimizer) {
+    edgeOptimizer_ = std::move(optimizer);
+}
+
+IEdgeOptimizer* EdgeRouting::edgeOptimizer() const {
+    return edgeOptimizer_.get();
+}
+
 IPathFinder& EdgeRouting::activePathFinder() const {
     if (coordinator_) {
         return coordinator_->currentPathFinder();
@@ -574,7 +583,7 @@ void EdgeRouting::recalculateBendPoints(
     }
 
     // Use effective grid size for routing calculations
-    float effectiveGridSize = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
+    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
 
     // Build obstacle map from node layouts
     ObstacleMap obstacles;
@@ -766,56 +775,72 @@ void EdgeRouting::recalculateBendPoints(
 
     // Post-processing: ensure first bend has proper clearance from source
     // This handles cases where PathFinder or fallback paths don't maintain direction clearance
-    // Also updates second bend to maintain orthogonality
+    // When clearance is needed, INSERT a clearance point rather than modifying existing bends
+    // to maintain orthogonality of the entire path
     if (!layout.bendPoints.empty()) {
-        Point& firstBend = layout.bendPoints[0].position;
-        float minClearance = std::max(effectiveGridSize, DEFAULT_GRID_SIZE);
+        Point firstBend = layout.bendPoints[0].position;
+        float minClearance = std::max(effectiveGridSize, constants::PATHFINDING_GRID_SIZE);
 
         switch (layout.sourceEdge) {
             case NodeEdge::Top:
                 // First bend must be ABOVE source (smaller Y)
                 if (firstBend.y > layout.sourcePoint.y - minClearance) {
                     float newY = layout.sourcePoint.y - minClearance;
-                    firstBend.y = newY;
-                    // Update second bend's Y to maintain horizontal segment
-                    if (layout.bendPoints.size() >= 2) {
-                        layout.bendPoints[1].position.y = newY;
-                    }
+                    // Insert clearance point: go up from source, then horizontal to first bend
+                    Point clearancePoint = {layout.sourcePoint.x, newY};
+                    Point connectionPoint = {firstBend.x, newY};
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
                 break;
             case NodeEdge::Bottom:
                 // First bend must be BELOW source (larger Y)
                 if (firstBend.y < layout.sourcePoint.y + minClearance) {
                     float newY = layout.sourcePoint.y + minClearance;
-                    firstBend.y = newY;
-                    // Update second bend's Y to maintain horizontal segment
-                    if (layout.bendPoints.size() >= 2) {
-                        layout.bendPoints[1].position.y = newY;
-                    }
+                    // Insert clearance point: go down from source, then horizontal to first bend
+                    Point clearancePoint = {layout.sourcePoint.x, newY};
+                    Point connectionPoint = {firstBend.x, newY};
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
                 break;
             case NodeEdge::Left:
                 // First bend must be LEFT of source (smaller X)
                 if (firstBend.x > layout.sourcePoint.x - minClearance) {
                     float newX = layout.sourcePoint.x - minClearance;
-                    firstBend.x = newX;
-                    // Update second bend's X to maintain vertical segment
-                    if (layout.bendPoints.size() >= 2) {
-                        layout.bendPoints[1].position.x = newX;
-                    }
+                    // Insert clearance point: go left from source, then vertical to first bend Y
+                    Point clearancePoint = {newX, layout.sourcePoint.y};
+                    Point connectionPoint = {newX, firstBend.y};
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
                 break;
             case NodeEdge::Right:
                 // First bend must be RIGHT of source (larger X)
                 if (firstBend.x < layout.sourcePoint.x + minClearance) {
                     float newX = layout.sourcePoint.x + minClearance;
-                    firstBend.x = newX;
-                    // Update second bend's X to maintain vertical segment
-                    if (layout.bendPoints.size() >= 2) {
-                        layout.bendPoints[1].position.x = newX;
-                    }
+                    // Insert clearance point: go right from source, then vertical to first bend Y
+                    Point clearancePoint = {newX, layout.sourcePoint.y};
+                    Point connectionPoint = {newX, firstBend.y};
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
+                    layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
                 break;
+        }
+
+        // Clean up any duplicate points that may have been introduced
+        std::vector<Point> allPoints;
+        allPoints.push_back(layout.sourcePoint);
+        for (const auto& bend : layout.bendPoints) {
+            allPoints.push_back(bend.position);
+        }
+        allPoints.push_back(layout.targetPoint);
+
+        removeSpikesAndDuplicates(allPoints);
+
+        layout.bendPoints.clear();
+        for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
+            layout.bendPoints.push_back({allPoints[i]});
         }
     }
 }
@@ -924,6 +949,46 @@ EdgeRouting::Result EdgeRouting::route(
         result.edgeLayouts[edgeId] = layout;
     }
 
+    // Apply edge optimization if optimizer is injected or postDragAlgorithm is enabled
+    IEdgeOptimizer* optimizer = edgeOptimizer_.get();
+    std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
+
+    // Use injected optimizer, or create based on postDragAlgorithm
+    if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
+        const float gridSize = options.gridConfig.cellSize;
+
+        switch (options.optimizationOptions.postDragAlgorithm) {
+            case PostDragAlgorithm::AStar:
+                fallbackOptimizer = std::make_unique<AStarEdgeOptimizer>(
+                    pathFinder_,  // Share pathfinder with optimizer
+                    options.optimizationOptions.scoringWeights,
+                    gridSize);
+                break;
+            case PostDragAlgorithm::None:
+                break;
+        }
+        optimizer = fallbackOptimizer.get();
+    }
+
+    if (optimizer && !result.edgeLayouts.empty()) {
+        // Collect all edge IDs (skip self-loops which have fixed routing)
+        std::vector<EdgeId> edgeIds;
+        edgeIds.reserve(result.edgeLayouts.size());
+        for (const auto& [edgeId, layout] : result.edgeLayouts) {
+            if (layout.from != layout.to) {
+                edgeIds.push_back(edgeId);
+            }
+        }
+
+        // Optimize edge layouts (optimizer now calculates actual paths internally)
+        auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts);
+
+        // Merge optimized layouts (bend points already calculated by optimizer)
+        for (auto& [edgeId, layout] : optimizedLayouts) {
+            result.edgeLayouts[edgeId] = std::move(layout);
+        }
+    }
+
     return result;
 }
 
@@ -934,7 +999,8 @@ EdgeRouting::Result EdgeRouting::route(
 void EdgeRouting::distributeAutoSnapPoints(
     Result& result,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
+    float gridSize,
+    bool sortSnapPoints) {
 
     float effectiveGridSize = getEffectiveGridSize(gridSize);
 
@@ -949,6 +1015,18 @@ void EdgeRouting::distributeAutoSnapPoints(
 
     for (auto& [key, connections] : allConnections) {
         auto [nodeId, nodeEdge] = key;
+
+        // Sort snap points by other node position to minimize edge crossings
+        if (sortSnapPoints && connections.size() > 1) {
+            auto sortedPairs = SnapIndexManager::sortSnapPointsByOtherNode(
+                nodeId, nodeEdge, result.edgeLayouts, nodeLayouts);
+
+            // Replace original connections if sorting succeeded
+            // sortedPairs contains (EdgeId, isSource) pairs in correct order
+            if (sortedPairs.size() == connections.size()) {
+                connections = std::move(sortedPairs);
+            }
+        }
 
         auto nodeIt = nodeLayouts.find(nodeId);
         if (nodeIt == nodeLayouts.end()) continue;
@@ -996,7 +1074,7 @@ void EdgeRouting::distributeAutoSnapPoints(
         // Ensure first bend has proper clearance from source
         if (!layout.bendPoints.empty()) {
             Point& firstBend = layout.bendPoints[0].position;
-            float minClearance = std::max(effectiveGridSize, DEFAULT_GRID_SIZE);
+            float minClearance = std::max(effectiveGridSize, constants::PATHFINDING_GRID_SIZE);
 
             switch (layout.sourceEdge) {
                 case NodeEdge::Top:
@@ -1164,6 +1242,80 @@ void EdgeRouting::updateEdgePositions(
         }
 
         it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
+    }
+}
+
+void EdgeRouting::updateEdgePositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    const LayoutOptions& options,
+    const std::unordered_set<NodeId>& movedNodes) {
+
+    float gridSize = options.gridConfig.cellSize;
+
+    // Apply drag algorithm if enabled
+    if (options.optimizationOptions.dragAlgorithm != DragAlgorithm::None && !affectedEdges.empty()) {
+        std::unique_ptr<IEdgeOptimizer> optimizer;
+
+        switch (options.optimizationOptions.dragAlgorithm) {
+            case DragAlgorithm::Geometric:
+                optimizer = std::make_unique<GeometricEdgeOptimizer>(
+                    options.optimizationOptions.scoringWeights);
+                break;
+            case DragAlgorithm::None:
+                // No optimization
+                break;
+        }
+
+        if (optimizer) {
+            // Collect non-self-loop edges
+            std::vector<EdgeId> edgesToOptimize;
+            edgesToOptimize.reserve(affectedEdges.size());
+            for (EdgeId edgeId : affectedEdges) {
+                auto it = edgeLayouts.find(edgeId);
+                if (it != edgeLayouts.end() && it->second.from != it->second.to) {
+                    edgesToOptimize.push_back(edgeId);
+                }
+            }
+
+            // Step 1: Optimizer selects best edge combinations (sourceEdge/targetEdge only)
+            auto optimizedLayouts = optimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts);
+
+            // Merge optimized edge combinations (including obstacle-avoidance bendPoints)
+            for (auto& [edgeId, layout] : optimizedLayouts) {
+                auto it = edgeLayouts.find(edgeId);
+                if (it != edgeLayouts.end()) {
+                    it->second.sourceEdge = layout.sourceEdge;
+                    it->second.targetEdge = layout.targetEdge;
+                    it->second.bendPoints = layout.bendPoints;  // Use obstacle-avoidance path
+                    // Reset snap indices for redistribution
+                    it->second.sourceSnapIndex = -1;
+                    it->second.targetSnapIndex = -1;
+                }
+            }
+
+            // Step 2: Snap distribution for new edge combinations
+            updateEdgePositions(edgeLayouts, nodeLayouts, edgesToOptimize, movedNodes, gridSize);
+
+            // Step 3: Update self-loops separately (they don't go through optimizer)
+            std::vector<EdgeId> selfLoops;
+            for (EdgeId edgeId : affectedEdges) {
+                auto it = edgeLayouts.find(edgeId);
+                if (it != edgeLayouts.end() && it->second.from == it->second.to) {
+                    selfLoops.push_back(edgeId);
+                }
+            }
+            if (!selfLoops.empty()) {
+                updateEdgePositions(edgeLayouts, nodeLayouts, selfLoops, movedNodes, gridSize);
+            }
+
+            // Note: bendPoints already set by GeometricEdgeOptimizer with obstacle avoidance
+            // No need to recalculate here
+        }
+    } else {
+        // No optimizer: just update snap positions
+        updateEdgePositions(edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
     }
 }
 
@@ -1711,7 +1863,7 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
                 const NodeLayout& blockingNode = nodeIt->second;
 
                 // Calculate bypass route to the left or right of all blocking nodes
-                float margin = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
+                float margin = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
 
                 // Find leftmost and rightmost edges of all intermediate nodes
                 float leftmostEdge = blockingNode.position.x;
@@ -1779,7 +1931,7 @@ EdgeLayout EdgeRouting::routeChannelOrthogonal(
     }
 
     // Final clearance check: ensure first bend has minimum distance from source
-    float minClearance = gridSize > 0.0f ? gridSize : DEFAULT_GRID_SIZE;
+    float minClearance = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
     if (!layout.bendPoints.empty()) {
         Point& firstBend = layout.bendPoints[0].position;
 
@@ -1911,5 +2063,5 @@ EdgeLayout EdgeRouting::routeSelfLoop(
     return layout;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

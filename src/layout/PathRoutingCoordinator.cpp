@@ -3,7 +3,7 @@
 #include "sugiyama/AStarPathFinder.h"
 
 namespace arborvia {
-namespace algorithms {
+
 
 PathRoutingCoordinator::PathRoutingCoordinator(
     std::shared_ptr<IPathFinder> dragFinder,
@@ -161,5 +161,5 @@ void PathRoutingCoordinator::executeOptimization() {
     dropTimeMs_ = 0;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

@@ -41,11 +41,11 @@ SugiyamaLayout::SugiyamaLayout()
 
 SugiyamaLayout::SugiyamaLayout(const LayoutOptions& options)
     : options_(options)
-    , cycleRemoval_(std::make_shared<algorithms::CycleRemoval>())
-    , layerAssignment_(std::make_shared<algorithms::LongestPathLayerAssignment>())
-    , crossingMinimization_(std::make_shared<algorithms::BarycenterCrossingMinimization>())
-    , coordinateAssignment_(std::make_shared<algorithms::SimpleCoordinateAssignment>())
-    , pathFinder_(std::make_shared<algorithms::AStarPathFinder>())
+    , cycleRemoval_(std::make_shared<CycleRemoval>())
+    , layerAssignment_(std::make_shared<LongestPathLayerAssignment>())
+    , crossingMinimization_(std::make_shared<BarycenterCrossingMinimization>())
+    , coordinateAssignment_(std::make_shared<SimpleCoordinateAssignment>())
+    , pathFinder_(std::make_shared<AStarPathFinder>())
     , state_(std::make_unique<LayoutState>()) {}
 
 SugiyamaLayout::~SugiyamaLayout() = default;
@@ -57,23 +57,23 @@ void SugiyamaLayout::setOptions(const LayoutOptions& options) {
     options_ = options;
 }
 
-void SugiyamaLayout::setCycleRemoval(std::shared_ptr<algorithms::ICycleRemoval> impl) {
+void SugiyamaLayout::setCycleRemoval(std::shared_ptr<ICycleRemoval> impl) {
     if (impl) cycleRemoval_ = std::move(impl);
 }
 
-void SugiyamaLayout::setLayerAssignment(std::shared_ptr<algorithms::ILayerAssignment> impl) {
+void SugiyamaLayout::setLayerAssignment(std::shared_ptr<ILayerAssignment> impl) {
     if (impl) layerAssignment_ = std::move(impl);
 }
 
-void SugiyamaLayout::setCrossingMinimization(std::shared_ptr<algorithms::ICrossingMinimization> impl) {
+void SugiyamaLayout::setCrossingMinimization(std::shared_ptr<ICrossingMinimization> impl) {
     if (impl) crossingMinimization_ = std::move(impl);
 }
 
-void SugiyamaLayout::setCoordinateAssignment(std::shared_ptr<algorithms::ICoordinateAssignment> impl) {
+void SugiyamaLayout::setCoordinateAssignment(std::shared_ptr<ICoordinateAssignment> impl) {
     if (impl) coordinateAssignment_ = std::move(impl);
 }
 
-void SugiyamaLayout::setPathFinder(std::shared_ptr<algorithms::IPathFinder> impl) {
+void SugiyamaLayout::setPathFinder(std::shared_ptr<IPathFinder> impl) {
     if (impl) pathFinder_ = std::move(impl);
 }
 
@@ -284,13 +284,14 @@ void SugiyamaLayout::assignCoordinates() {
 
 void SugiyamaLayout::routeEdges() {
     // Create EdgeRouting with injected pathfinder if available
-    algorithms::EdgeRouting routing(pathFinder_);
+    EdgeRouting routing(pathFinder_);
     auto result = routing.route(*state_->graph,
                                state_->result.nodeLayouts(),
                                state_->reversedEdges,
                                options_);
 
     // Apply auto snap point distribution if enabled
+    // This distributes snap points on grid vertices and recalculates bend points
     if (options_.autoSnapPoints) {
         routing.distributeAutoSnapPoints(
             result, state_->result.nodeLayouts(),

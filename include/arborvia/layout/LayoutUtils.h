@@ -4,6 +4,7 @@
 #include "arborvia/layout/LayoutResult.h"
 #include "arborvia/layout/LayoutOptions.h"
 #include "arborvia/layout/ConstraintManager.h"
+#include "arborvia/layout/ValidRegionCalculator.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -12,9 +13,7 @@
 
 namespace arborvia {
 
-namespace algorithms {
 class PathRoutingCoordinator;
-}  // namespace algorithms
 
 /// Utility functions for interactive layout manipulation
 class LayoutUtils {
@@ -46,9 +45,23 @@ public:
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
-        algorithms::PathRoutingCoordinator& coordinator,
+        PathRoutingCoordinator& coordinator,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
+
+    /// Update edge positions with full layout options (supports greedy optimization)
+    /// Use this when you want greedy optimization during drag for better path quality
+    /// @param edgeLayouts The edge layouts to update (modified in place)
+    /// @param nodeLayouts Current node positions
+    /// @param affectedEdges Edges that need updating (connected to moved nodes)
+    /// @param options Layout options including optimization settings
+    /// @param movedNodes Optional set of nodes that actually moved
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const LayoutOptions& options,
+        const std::unordered_set<NodeId>& movedNodes = {});
 
     /// Result of edge hit test with insertion info
     struct EdgeHitResult {
@@ -113,12 +126,12 @@ public:
     };
 
     /// Check if a node can be moved to a specific position
-    /// Validates that all connected edges can still have valid routing
+    /// Uses ValidRegionCalculator to check forbidden zones based on edge counts
     /// @param nodeId Node being moved
     /// @param newPosition Proposed new position
     /// @param nodeLayouts Current node layouts
-    /// @param edgeLayouts Current edge layouts
-    /// @param gridSize Grid size for routing calculations
+    /// @param edgeLayouts Current edge layouts (used to count edges per direction)
+    /// @param gridSize Grid size for margin calculations
     /// @return DragValidation indicating if move is valid
     static DragValidation canMoveNodeTo(
         NodeId nodeId,
@@ -158,6 +171,19 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const ConstraintConfig& config,
         float gridSize = 20.0f);
+
+    /// Check if a node can be moved using pre-calculated forbidden zones
+    /// Use this for consistent validation with visualization during drag
+    /// @param nodeId Node being moved
+    /// @param newPosition Proposed new position
+    /// @param nodeLayouts Current node layouts (for node size lookup)
+    /// @param preCalculatedZones Forbidden zones calculated at drag start
+    /// @return DragValidation indicating if move is valid
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& preCalculatedZones);
 
     /// Get edges connected to a node
     /// @param nodeId The node to query

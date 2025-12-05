@@ -3,7 +3,7 @@
 #include "arborvia/layout/IPathFinder.h"
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// A* based orthogonal pathfinder for edge routing
 /// Finds paths that avoid obstacles and minimize bend points
@@ -124,5 +124,5 @@ private:
     static MoveDirection getRequiredTargetArrivalDirection(NodeEdge targetEdge);
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia

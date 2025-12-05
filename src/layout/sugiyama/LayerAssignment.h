@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Longest-path based layer assignment algorithm
 ///
@@ -48,5 +48,5 @@ private:
 /// Backward compatibility alias
 using LayerAssignment = LongestPathLayerAssignment;
 
-}  // namespace algorithms
+
 }  // namespace arborvia

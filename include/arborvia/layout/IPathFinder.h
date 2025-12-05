@@ -9,7 +9,6 @@
 #include <memory>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Direction of movement in the grid
 enum class MoveDirection {
@@ -84,5 +83,4 @@ public:
 /// Factory function type for creating pathfinders
 using PathFinderFactory = std::unique_ptr<IPathFinder>(*)();
 
-}  // namespace algorithms
 }  // namespace arborvia

@@ -5,7 +5,6 @@
 #include <unordered_set>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Safe zone boundaries (grid coordinates outside all obstacles)
 struct SafeZones {
@@ -74,5 +73,4 @@ public:
     virtual Point gridToPixel(int gridX, int gridY) const = 0;
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

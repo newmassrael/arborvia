@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Barycenter-based crossing minimization algorithm
 /// 
@@ -64,7 +64,8 @@ private:
 };
 
 /// Backward compatibility alias
-using CrossingMinimization = BarycenterCrossingMinimization;
+// Note: CrossingMinimization is an enum class in LayoutOptions.h
+// Use BarycenterCrossingMinimization directly
 
-}  // namespace algorithms
+
 }  // namespace arborvia

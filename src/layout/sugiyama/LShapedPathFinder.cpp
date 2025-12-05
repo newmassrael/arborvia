@@ -1,7 +1,7 @@
 #include "LShapedPathFinder.h"
 
 namespace arborvia {
-namespace algorithms {
+
 
 PathResult LShapedPathFinder::findPath(
     const GridPoint& start,
@@ -484,5 +484,5 @@ int LShapedPathFinder::countBends(const std::vector<GridPoint>& path) {
     return bends;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

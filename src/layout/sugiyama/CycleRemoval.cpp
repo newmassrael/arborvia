@@ -1,7 +1,7 @@
 #include "CycleRemoval.h"
 
 namespace arborvia {
-namespace algorithms {
+
 
 CycleRemovalResult CycleRemoval::findEdgesToReverse(const Graph& graph) const {
     CycleRemovalResult result;
@@ -67,5 +67,5 @@ void CycleRemoval::dfs(NodeId node, const Graph& graph,
     state[nodeIdx] = NodeState::Black;  // Fully processed
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

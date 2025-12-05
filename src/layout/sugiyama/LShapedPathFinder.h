@@ -3,7 +3,7 @@
 #include "arborvia/layout/IPathFinder.h"
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Context for pathfinding operations - bundles all parameters for cleaner code
 struct PathContext {
@@ -123,5 +123,5 @@ private:
     static constexpr int MIN_DETOUR_DISTANCE = 3;
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia

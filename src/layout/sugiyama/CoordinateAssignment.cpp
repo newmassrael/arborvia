@@ -3,7 +3,7 @@
 #include <algorithm>
 
 namespace arborvia {
-namespace algorithms {
+
 
 CoordinateAssignmentResult SimpleCoordinateAssignment::assign(
     const Graph& graph,
@@ -128,5 +128,5 @@ void SimpleCoordinateAssignment::simpleAssignment(
     }
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

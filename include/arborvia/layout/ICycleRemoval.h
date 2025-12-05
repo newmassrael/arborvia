@@ -6,7 +6,6 @@
 #include <vector>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Result of cycle removal operation
 struct CycleRemovalResult {
@@ -42,5 +41,4 @@ public:
     virtual const char* algorithmName() const = 0;
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

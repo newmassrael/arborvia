@@ -27,16 +27,10 @@ struct SingleConstraintConfig {
         return config;
     }
     
-    /// Create EdgeValidity constraint config
-    static SingleConstraintConfig edgeValidity() {
-        SingleConstraintConfig config;
-        config.type = "EdgeValidity";
-        return config;
-    }
 };
 
 /// Configuration for drag constraints
-/// 
+///
 /// This struct provides a declarative way to configure which constraints
 /// are active during drag operations. It can be serialized to/from JSON
 /// and used to create a ConstraintManager.
@@ -45,15 +39,14 @@ struct SingleConstraintConfig {
 /// @code
 /// ConstraintConfig config;
 /// config.constraints.push_back(SingleConstraintConfig::minDistance(3.0f));
-/// config.constraints.push_back(SingleConstraintConfig::edgeValidity());
-/// 
+///
 /// auto manager = ConstraintFactory::create(config);
 /// @endcode
 struct ConstraintConfig {
     std::vector<SingleConstraintConfig> constraints;
     
     /// Create default constraint configuration
-    /// Includes MinDistance (5 grid units) and EdgeValidity
+    /// Includes MinDistance which delegates to ValidRegionCalculator
     static ConstraintConfig createDefault();
     
     /// Create empty configuration (no constraints)
@@ -67,13 +60,7 @@ struct ConstraintConfig {
         constraints.push_back(SingleConstraintConfig::minDistance(gridUnits));
         return *this;
     }
-    
-    /// Builder: add EdgeValidity constraint
-    ConstraintConfig& addEdgeValidity() {
-        constraints.push_back(SingleConstraintConfig::edgeValidity());
-        return *this;
-    }
-    
+
     /// Remove constraint by type
     ConstraintConfig& remove(const std::string& type);
     
@@ -106,13 +93,12 @@ public:
 };
 
 /// JSON serialization for ConstraintConfig
-/// 
+///
 /// JSON format:
 /// @code
 /// {
 ///   "constraints": [
-///     {"type": "MinDistance", "enabled": true, "minGridDistance": 5.0},
-///     {"type": "EdgeValidity", "enabled": true}
+///     {"type": "MinDistance", "enabled": true, "minGridDistance": 5.0}
 ///   ]
 /// }
 /// @endcode

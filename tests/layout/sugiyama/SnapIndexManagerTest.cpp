@@ -2,7 +2,7 @@
 #include "../../../src/layout/sugiyama/SnapIndexManager.h"
 
 using namespace arborvia;
-using namespace arborvia::algorithms;
+using namespace arborvia;
 
 // =============================================================================
 // Index Conversion Tests

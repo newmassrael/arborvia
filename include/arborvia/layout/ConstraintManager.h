@@ -28,7 +28,6 @@ struct DragValidationResult {
 /// @code
 /// ConstraintManager manager;
 /// manager.addConstraint(std::make_unique<MinDistanceConstraint>(5.0f));
-/// manager.addConstraint(std::make_unique<EdgeValidityConstraint>());
 ///
 /// ConstraintContext ctx{nodeId, newPos, nodeLayouts, edgeLayouts, gridSize};
 /// auto result = manager.validate(ctx);
@@ -81,7 +80,7 @@ public:
     void clear();
 
     /// Create a default constraint manager with standard constraints
-    /// Includes: MinDistanceConstraint, EdgeValidityConstraint
+    /// Includes: MinDistanceConstraint (delegates to ValidRegionCalculator)
     /// @param minGridDistance Minimum distance between nodes in grid units (default 5.0)
     /// @return Configured ConstraintManager
     static ConstraintManager createDefault(float minGridDistance = 5.0f);

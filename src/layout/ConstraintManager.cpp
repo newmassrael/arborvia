@@ -1,6 +1,5 @@
 #include "arborvia/layout/ConstraintManager.h"
 #include "arborvia/layout/MinDistanceConstraint.h"
-#include "arborvia/layout/EdgeValidityConstraint.h"
 
 #include <algorithm>
 #include <optional>
@@ -128,8 +127,9 @@ void ConstraintManager::clear() {
 
 ConstraintManager ConstraintManager::createDefault(float minGridDistance) {
     ConstraintManager manager;
+    // MinDistanceConstraint now delegates to ValidRegionCalculator internally
+    // which provides direction-aware margin calculation
     manager.addConstraint(std::make_unique<MinDistanceConstraint>(minGridDistance));
-    manager.addConstraint(std::make_unique<EdgeValidityConstraint>());
     return manager;
 }
 

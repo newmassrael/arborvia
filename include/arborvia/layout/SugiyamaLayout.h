@@ -12,20 +12,18 @@
 namespace arborvia {
 
 // Forward declarations for algorithm phases
-namespace algorithms {
-    class CycleRemoval;
-    class LongestPathLayerAssignment;
-    class BarycenterCrossingMinimization;
-    class SimpleCoordinateAssignment;
-    class EdgeRouting;
+class CycleRemoval;
+class LongestPathLayerAssignment;
+class BarycenterCrossingMinimization;
+class SimpleCoordinateAssignment;
+class EdgeRouting;
 
-    // Interfaces
-    class ICycleRemoval;
-    class ILayerAssignment;
-    class ICrossingMinimization;
-    class ICoordinateAssignment;
-    class IPathFinder;
-}
+// Interfaces
+class ICycleRemoval;
+class ILayerAssignment;
+class ICrossingMinimization;
+class ICoordinateAssignment;
+class IPathFinder;
 
 /// Sugiyama-style hierarchical graph layout algorithm
 ///
@@ -81,11 +79,11 @@ public:
 
     /// Algorithm injection (for swapping implementations)
     /// If not set, defaults are used
-    void setCycleRemoval(std::shared_ptr<algorithms::ICycleRemoval> impl);
-    void setLayerAssignment(std::shared_ptr<algorithms::ILayerAssignment> impl);
-    void setCrossingMinimization(std::shared_ptr<algorithms::ICrossingMinimization> impl);
-    void setCoordinateAssignment(std::shared_ptr<algorithms::ICoordinateAssignment> impl);
-    void setPathFinder(std::shared_ptr<algorithms::IPathFinder> impl);
+    void setCycleRemoval(std::shared_ptr<ICycleRemoval> impl);
+    void setLayerAssignment(std::shared_ptr<ILayerAssignment> impl);
+    void setCrossingMinimization(std::shared_ptr<ICrossingMinimization> impl);
+    void setCoordinateAssignment(std::shared_ptr<ICoordinateAssignment> impl);
+    void setPathFinder(std::shared_ptr<IPathFinder> impl);
 
 private:
     LayoutOptions options_;
@@ -93,11 +91,11 @@ private:
     std::shared_ptr<ManualLayoutManager> manualManager_;
 
     // Algorithm implementations (nullptr = use defaults)
-    std::shared_ptr<algorithms::ICycleRemoval> cycleRemoval_;
-    std::shared_ptr<algorithms::ILayerAssignment> layerAssignment_;
-    std::shared_ptr<algorithms::ICrossingMinimization> crossingMinimization_;
-    std::shared_ptr<algorithms::ICoordinateAssignment> coordinateAssignment_;
-    std::shared_ptr<algorithms::IPathFinder> pathFinder_;
+    std::shared_ptr<ICycleRemoval> cycleRemoval_;
+    std::shared_ptr<ILayerAssignment> layerAssignment_;
+    std::shared_ptr<ICrossingMinimization> crossingMinimization_;
+    std::shared_ptr<ICoordinateAssignment> coordinateAssignment_;
+    std::shared_ptr<IPathFinder> pathFinder_;
 
     // Incremental layout caching
     uint64_t cachedVersion_ = 0;

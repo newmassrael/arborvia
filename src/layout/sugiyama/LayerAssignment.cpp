@@ -4,7 +4,7 @@
 #include <queue>
 
 namespace arborvia {
-namespace algorithms {
+
 
 LayerAssignmentResult LongestPathLayerAssignment::assignLayers(
     const Graph& graph,
@@ -168,5 +168,5 @@ int LongestPathLayerAssignment::computeLayerDFS(
     return layer;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

@@ -6,7 +6,7 @@
 #include <climits>
 
 namespace arborvia {
-namespace algorithms {
+
 
 // Hash function for GridPoint in unordered_map
 struct GridPointHash {
@@ -566,5 +566,5 @@ std::vector<GridPoint> AStarPathFinder::simplifyPath(const std::vector<GridPoint
     return simplified;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

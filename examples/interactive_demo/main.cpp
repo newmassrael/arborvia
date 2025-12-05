@@ -5,6 +5,7 @@
 
 #include <arborvia/arborvia.h>
 #include <arborvia/layout/PathRoutingCoordinator.h>
+#include <arborvia/layout/ValidRegionCalculator.h>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -55,11 +56,11 @@ struct BendPointPreview {
     void clear() { edgeId = INVALID_EDGE; insertIndex = -1; active = false; }
 };
 
-class InteractiveDemo : public algorithms::IRoutingListener {
+class InteractiveDemo : public IRoutingListener {
 public:
     InteractiveDemo()
         : manualManager_(std::make_shared<ManualLayoutManager>())
-        , routingCoordinator_(std::make_shared<algorithms::PathRoutingCoordinator>())
+        , routingCoordinator_(std::make_shared<PathRoutingCoordinator>())
     {
         // Enable grid by default
         layoutOptions_.gridConfig.cellSize = gridSize_;
@@ -311,6 +312,9 @@ public:
             // Initialize drag constraint state
             lastValidPosition_ = layout.position;
             isInvalidDragPosition_ = false;
+            // Pre-calculate forbidden zones based on edge direction counts
+            forbiddenZones_ = ValidRegionCalculator::calculate(
+                draggedNode_, nodeLayouts_, edgeLayouts_, gridSize_);
             // Notify coordinator that drag started
             routingCoordinator_->onDragStart(affectedEdges_);
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
@@ -346,6 +350,7 @@ public:
             draggedNode_ = INVALID_NODE;
             affectedEdges_.clear();
             isInvalidDragPosition_ = false;
+            lastRoutedPosition_ = {-9999, -9999};  // Reset for next drag
         }
 
         // Handle bend point dragging with orthogonal constraint
@@ -418,10 +423,11 @@ public:
                 newY = std::round(newY / gridSize) * gridSize;
             }
 
-            // Full validation: check if all edges can be routed properly
+            // Full validation using pre-calculated forbidden zones
+            // This ensures visualization and validation use the same zones
             Point proposedPosition = {newX, newY};
             auto validation = LayoutUtils::canMoveNodeTo(
-                draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, gridSize);
+                draggedNode_, proposedPosition, nodeLayouts_, forbiddenZones_);
 
             // Always update position during drag (visual feedback)
             layout.position.x = newX;
@@ -433,8 +439,14 @@ public:
                 lastValidPosition_ = proposedPosition;
                 manualManager_->setNodePosition(draggedNode_, layout.position);
 
-                // Re-route connected edges only for valid positions
-                rerouteAffectedEdges();
+                // Re-route connected edges only when position actually changed
+                // This prevents flickering when mouse is stationary
+                constexpr float EPSILON = 0.001f;
+                if (std::abs(proposedPosition.x - lastRoutedPosition_.x) > EPSILON ||
+                    std::abs(proposedPosition.y - lastRoutedPosition_.y) > EPSILON) {
+                    rerouteAffectedEdges();
+                    lastRoutedPosition_ = proposedPosition;
+                }
             } else {
                 // Invalid position - show red, no edge re-routing
                 isInvalidDragPosition_ = true;
@@ -453,12 +465,12 @@ public:
     }
 
     void rerouteAffectedEdges() {
-        // Use library API for edge position updates
+        // Use library API for edge position updates with geometric optimization
         // Only update endpoints on the dragged node, not on connected nodes
         std::unordered_set<NodeId> movedNodes = {draggedNode_};
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, affectedEdges_,
-            movedNodes, layoutOptions_.gridConfig.cellSize);
+            layoutOptions_, movedNodes);
     }
 
     void drawGrid(ImDrawList* drawList, float width, float height) {
@@ -489,39 +501,37 @@ public:
     }
 
     void drawBlockedCells(ImDrawList* drawList) {
-        // Only show during drag, and skip if disabled
+        // Only show during drag, and skip if disabled or no pre-calculated zones
         if (!showBlockedCells_ || gridSize_ <= 0.0f || draggedNode_ == INVALID_NODE) return;
 
-        // MIN_GRID_DISTANCE from LayoutUtils::canMoveNodeTo
-        constexpr float MIN_GRID_DISTANCE = 5.0f;
-        float margin = MIN_GRID_DISTANCE * gridSize_;
+        // Verify dragged node exists
+        if (nodeLayouts_.find(draggedNode_) == nodeLayouts_.end()) return;
 
-        // Draw forbidden zone around each node (excluding the dragged node)
-        for (const auto& [id, layout] : nodeLayouts_) {
-            // Skip the node being dragged
-            if (id == draggedNode_) continue;
-            // Forbidden zone extends margin pixels beyond node boundaries
-            float zoneLeft = layout.position.x - margin;
-            float zoneTop = layout.position.y - margin;
-            float zoneRight = layout.position.x + layout.size.width + margin;
-            float zoneBottom = layout.position.y + layout.size.height + margin;
+        // Use pre-calculated forbidden zones (based on edge connectivity)
+        for (const auto& zone : forbiddenZones_) {
+            // Get the node that created this forbidden zone
+            auto nodeIt = nodeLayouts_.find(zone.blockedBy);
+            if (nodeIt == nodeLayouts_.end()) continue;
+            const auto& blockerLayout = nodeIt->second;
 
-            // Calculate grid cells for the forbidden zone
-            int leftCell = static_cast<int>(std::floor(zoneLeft / gridSize_));
-            int topCell = static_cast<int>(std::floor(zoneTop / gridSize_));
-            int rightCell = static_cast<int>(std::ceil(zoneRight / gridSize_));
-            int bottomCell = static_cast<int>(std::ceil(zoneBottom / gridSize_));
+            // Show zone.bounds directly (5-cell margin around blocker)
+            // Note: Large dragged nodes may be blocked outside this area too,
+            // but showing just the margin is more intuitive for users
+            int leftCell = static_cast<int>(std::ceil(zone.bounds.x / gridSize_));
+            int topCell = static_cast<int>(std::ceil(zone.bounds.y / gridSize_));
+            int rightCell = static_cast<int>(std::ceil((zone.bounds.x + zone.bounds.width) / gridSize_));
+            int bottomCell = static_cast<int>(std::ceil((zone.bounds.y + zone.bounds.height) / gridSize_));
 
             // Node's actual cell range (to exclude from red coloring)
-            int nodeLeftCell = static_cast<int>(std::floor(layout.position.x / gridSize_));
-            int nodeTopCell = static_cast<int>(std::floor(layout.position.y / gridSize_));
-            int nodeRightCell = static_cast<int>(std::ceil((layout.position.x + layout.size.width) / gridSize_));
-            int nodeBottomCell = static_cast<int>(std::ceil((layout.position.y + layout.size.height) / gridSize_));
+            int nodeLeftCell = static_cast<int>(std::floor(blockerLayout.position.x / gridSize_));
+            int nodeTopCell = static_cast<int>(std::floor(blockerLayout.position.y / gridSize_));
+            int nodeRightCell = static_cast<int>(std::ceil((blockerLayout.position.x + blockerLayout.size.width) / gridSize_));
+            int nodeBottomCell = static_cast<int>(std::ceil((blockerLayout.position.y + blockerLayout.size.height) / gridSize_));
 
-            // Draw forbidden cells (excluding node's own cells)
+            // Draw forbidden cells (excluding blocker node's own cells)
             for (int gx = leftCell; gx < rightCell; ++gx) {
                 for (int gy = topCell; gy < bottomCell; ++gy) {
-                    // Skip cells occupied by the node itself
+                    // Skip cells occupied by the blocker node itself
                     if (gx >= nodeLeftCell && gx < nodeRightCell &&
                         gy >= nodeTopCell && gy < nodeBottomCell) {
                         continue;
@@ -1029,7 +1039,7 @@ private:
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
     LayoutResult layoutResult_;
     std::shared_ptr<ManualLayoutManager> manualManager_;
-    std::shared_ptr<algorithms::PathRoutingCoordinator> routingCoordinator_;
+    std::shared_ptr<PathRoutingCoordinator> routingCoordinator_;
     LayoutOptions layoutOptions_;
 
     Point offset_ = {0, 0};
@@ -1049,6 +1059,8 @@ private:
     // Drag constraint state
     bool isInvalidDragPosition_ = false;      // Current drag position is invalid
     Point lastValidPosition_ = {0, 0};        // Last known valid position during drag
+    Point lastRoutedPosition_ = {-9999, -9999};  // Last position where edges were routed
+    std::vector<ForbiddenZone> forbiddenZones_;  // Pre-calculated forbidden zones for drag
 
     // Bend point interaction state
     HoveredBendPoint hoveredBendPoint_;

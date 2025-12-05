@@ -8,7 +8,6 @@
 #include <unordered_map>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Result of coordinate assignment operation
 struct CoordinateAssignmentResult {
@@ -54,5 +53,4 @@ public:
     virtual const char* algorithmName() const = 0;
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

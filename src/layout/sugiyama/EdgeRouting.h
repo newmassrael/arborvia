@@ -11,11 +11,12 @@
 #include <memory>
 
 namespace arborvia {
-namespace algorithms {
+
 
 // Forward declarations
 class SnapIndexManager;
 class IPathFinder;
+class IEdgeOptimizer;
 class PathRoutingCoordinator;
 
 /// Channel assignment info for an edge
@@ -70,6 +71,13 @@ public:
     /// Get routing coordinator (may be null)
     PathRoutingCoordinator* routingCoordinator() const;
 
+    /// Set edge optimizer for snap point selection (optional)
+    /// @param optimizer Edge optimizer implementing IEdgeOptimizer
+    void setEdgeOptimizer(std::shared_ptr<IEdgeOptimizer> optimizer);
+
+    /// Get edge optimizer (may be null)
+    IEdgeOptimizer* edgeOptimizer() const;
+
     /// Route edges based on node positions
     Result route(const Graph& graph,
                 const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -77,10 +85,15 @@ public:
                 const LayoutOptions& options);
 
     /// Distribute snap points evenly for edges connecting to same node edge (Auto mode)
+    /// @param result The routing result to modify
+    /// @param nodeLayouts Node positions for snap point calculation
+    /// @param gridSize Grid size for coordinate snapping (0 = disabled)
+    /// @param sortSnapPoints If true, sort snap points by other node position to minimize crossings
     void distributeAutoSnapPoints(
         Result& result,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize = 0.0f);
+        float gridSize = 0.0f,
+        bool sortSnapPoints = true);
 
     /// Update edge positions when nodes move (for interactive drag)
     /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
@@ -96,6 +109,15 @@ public:
         const std::vector<EdgeId>& affectedEdges,
         const std::unordered_set<NodeId>& movedNodes = {},
         float gridSize = 0.0f);
+
+    /// Update edge positions with full layout options (supports greedy optimization)
+    /// @param options Layout options including optimization settings
+    void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const LayoutOptions& options,
+        const std::unordered_set<NodeId>& movedNodes = {});
 
     // === Edge Layout Validation ===
 
@@ -250,6 +272,9 @@ private:
     /// Pathfinder instance (injected via constructor, used when no coordinator)
     std::shared_ptr<IPathFinder> pathFinder_;
 
+    /// Edge optimizer for snap point selection (optional)
+    std::shared_ptr<IEdgeOptimizer> edgeOptimizer_;
+
     /// Routing coordinator for dual-algorithm support (optional, not owned)
     PathRoutingCoordinator* coordinator_ = nullptr;
 
@@ -257,5 +282,5 @@ private:
     IPathFinder& activePathFinder() const;
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia

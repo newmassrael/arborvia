@@ -8,7 +8,6 @@
 #include <unordered_set>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Result of crossing minimization operation
 struct CrossingMinimizationResult {
@@ -70,5 +69,4 @@ public:
     virtual const char* algorithmName() const = 0;
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

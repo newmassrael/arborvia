@@ -1,7 +1,6 @@
 #include "arborvia/layout/ConstraintConfig.h"
 #include "arborvia/layout/ConstraintManager.h"
 #include "arborvia/layout/MinDistanceConstraint.h"
-#include "arborvia/layout/EdgeValidityConstraint.h"
 #include "arborvia/core/GeometryUtils.h"
 
 #include <nlohmann/json.hpp>
@@ -22,18 +21,11 @@ namespace {
     // Initialize built-in types
     struct BuiltinInitializer {
         BuiltinInitializer() {
-            // MinDistance constraint
-            ConstraintFactory::registerType("MinDistance", 
+            // MinDistance constraint (delegates to ValidRegionCalculator internally)
+            ConstraintFactory::registerType("MinDistance",
                 [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
                     float distance = config.minGridDistance.value_or(constants::MIN_NODE_GRID_DISTANCE);
                     return std::make_unique<MinDistanceConstraint>(distance);
-                });
-            
-            // EdgeValidity constraint
-            ConstraintFactory::registerType("EdgeValidity",
-                [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
-                    (void)config;  // No parameters needed
-                    return std::make_unique<EdgeValidityConstraint>();
                 });
         }
     };
@@ -44,8 +36,9 @@ namespace {
 
 ConstraintConfig ConstraintConfig::createDefault() {
     ConstraintConfig config;
+    // MinDistanceConstraint delegates to ValidRegionCalculator internally
+    // which provides direction-aware margin calculation
     config.addMinDistance(constants::MIN_NODE_GRID_DISTANCE);
-    config.addEdgeValidity();
     return config;
 }
 

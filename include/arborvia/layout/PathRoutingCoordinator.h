@@ -14,8 +14,6 @@ namespace arborvia {
 struct EdgeLayout;
 struct NodeLayout;
 
-namespace algorithms {
-
 /// State of the routing coordinator
 enum class RoutingState {
     Idle,      ///< No drag in progress
@@ -171,5 +169,4 @@ private:
     void executeOptimization();
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

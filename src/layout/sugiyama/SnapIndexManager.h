@@ -12,7 +12,7 @@
 #include <stdexcept>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Error types for snap index operations
 enum class SnapIndexError {
@@ -126,7 +126,35 @@ public:
 
     /// Format snap index info for debugging
     static std::string formatIndexInfo(int unifiedIdx, int localIdx, int offset, int count);
+
+    // === Snap Point Sorting ===
+
+    /// Sort snap points by other node position to minimize edge crossings
+    /// Uses the scxml-core-engine/visualizer algorithm:
+    /// - Incoming edges sorted by source node position
+    /// - Outgoing edges sorted by target node position
+    /// - For horizontal edges (Top/Bottom): sort by X coordinate
+    /// - For vertical edges (Left/Right): sort by Y coordinate
+    /// - Incoming edges sorted in reverse for horizontal edges
+    /// 
+    /// @param nodeId Target node whose snap points are being sorted
+    /// @param edge Which edge of the node
+    /// @param edgeLayouts All edge layouts
+    /// @param nodeLayouts All node layouts (for position lookup)
+    /// @return Sorted pairs (EdgeId, isSource): incoming first (isSource=false), then outgoing (isSource=true)
+    static std::vector<std::pair<EdgeId, bool>> sortSnapPointsByOtherNode(
+        NodeId nodeId,
+        NodeEdge edge,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+private:
+    /// Get sort key for a node based on edge orientation
+    /// @param node Node to get key for
+    /// @param edge Edge orientation (determines X vs Y sorting)
+    /// @return Sort key (center X for horizontal edges, center Y for vertical edges)
+    static float getSortKey(const NodeLayout& node, NodeEdge edge);
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia

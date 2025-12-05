@@ -8,7 +8,7 @@
 #include <vector>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Simple coordinate assignment algorithm
 ///
@@ -50,5 +50,5 @@ private:
 /// Backward compatibility alias
 using CoordinateAssignment = SimpleCoordinateAssignment;
 
-}  // namespace algorithms
+
 }  // namespace arborvia

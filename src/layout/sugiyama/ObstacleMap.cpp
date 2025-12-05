@@ -3,7 +3,7 @@
 #include <cmath>
 
 namespace arborvia {
-namespace algorithms {
+
 
 void ObstacleMap::buildFromNodes(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -201,5 +201,5 @@ int ObstacleMap::toIndex(int gridX, int gridY) const {
     return localY * width_ + localX;
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

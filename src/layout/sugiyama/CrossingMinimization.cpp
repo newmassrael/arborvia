@@ -4,7 +4,7 @@
 #include <numeric>
 
 namespace arborvia {
-namespace algorithms {
+
 
 CrossingMinimizationResult BarycenterCrossingMinimization::minimize(
     const Graph& graph,
@@ -213,5 +213,5 @@ float BarycenterCrossingMinimization::computeBarycenter(
     return sum / static_cast<float>(neighborPositions.size());
 }
 
-}  // namespace algorithms
+
 }  // namespace arborvia

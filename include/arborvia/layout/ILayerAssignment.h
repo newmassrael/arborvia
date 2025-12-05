@@ -9,7 +9,6 @@
 #include <unordered_set>
 
 namespace arborvia {
-namespace algorithms {
 
 /// Result of layer assignment operation
 struct LayerAssignmentResult {
@@ -53,5 +52,4 @@ public:
     virtual const char* algorithmName() const = 0;
 };
 
-}  // namespace algorithms
 }  // namespace arborvia

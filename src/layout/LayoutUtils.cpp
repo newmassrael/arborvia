@@ -20,7 +20,7 @@ void LayoutUtils::updateEdgePositions(
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
-    algorithms::EdgeRouting routing;
+    EdgeRouting routing;
     routing.updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }
@@ -29,14 +29,26 @@ void LayoutUtils::updateEdgePositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
-    algorithms::PathRoutingCoordinator& coordinator,
+    PathRoutingCoordinator& coordinator,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
     // Create EdgeRouting with raw pointer to coordinator (not owned)
-    algorithms::EdgeRouting routing(&coordinator);
+    EdgeRouting routing(&coordinator);
     routing.updateEdgePositions(
         edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
+}
+
+void LayoutUtils::updateEdgePositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    const LayoutOptions& options,
+    const std::unordered_set<NodeId>& movedNodes) {
+
+    EdgeRouting routing;
+    routing.updateEdgePositions(
+        edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes);
 }
 
 float LayoutUtils::pointToSegmentDistance(
@@ -192,11 +204,18 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     float gridSize) {
 
-    // Use ConstraintManager with default constraints
-    // Default constraints: MinDistanceConstraint (5 grid units), EdgeValidityConstraint
-    static auto constraintManager = ConstraintManager::createDefault(constants::MIN_NODE_GRID_DISTANCE);
+    // Use ValidRegionCalculator as single source of truth
+    auto nodeIt = nodeLayouts.find(nodeId);
+    if (nodeIt == nodeLayouts.end()) {
+        return DragValidation{true, {}};  // Node not found, allow
+    }
 
-    return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, constraintManager, gridSize);
+    auto zones = ValidRegionCalculator::calculate(nodeId, nodeLayouts, edgeLayouts, gridSize);
+    bool valid = ValidRegionCalculator::isValid(newPosition, nodeIt->second.size, zones);
+
+    DragValidation result;
+    result.valid = valid;
+    return result;
 }
 
 LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
@@ -232,6 +251,21 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
         : ConstraintFactory::create(config);
 
     return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, *manager, gridSize);
+}
+
+LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
+    NodeId nodeId,
+    Point newPosition,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<ForbiddenZone>& zones) {
+
+    auto nodeIt = nodeLayouts.find(nodeId);
+    if (nodeIt == nodeLayouts.end()) {
+        return DragValidation{true, {}};
+    }
+
+    bool valid = ValidRegionCalculator::isValid(newPosition, nodeIt->second.size, zones);
+    return DragValidation{valid, {}};
 }
 
 bool LayoutUtils::canMoveNodeToFast(

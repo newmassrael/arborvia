@@ -5,7 +5,7 @@
 #include <iomanip>
 
 using namespace arborvia;
-using namespace arborvia::algorithms;
+using namespace arborvia;
 
 // Test case that creates the exact scenario from interactive demo:
 // Bottom edge exiting to a target that is FAR ABOVE the source
@@ -1441,7 +1441,7 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
         if (!edgeLayout) continue;
 
         // Validate the routed edge using centralized validation
-        auto edgeValidation = algorithms::EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
+        auto edgeValidation = EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
         if (!edgeValidation.valid) {
             // Routing algorithm couldn't produce valid path for this configuration
             skippedPositions++;
@@ -1615,7 +1615,7 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
             const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
             if (!edgeLayout) continue;
 
-            auto validation = algorithms::EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
+            auto validation = EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
             if (!validation.valid) {
                 allValid = false;
                 break;

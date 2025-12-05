@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// DFS-based cycle removal algorithm
 /// 
@@ -37,5 +37,5 @@ private:
              std::unordered_set<EdgeId>& backEdges) const;
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia

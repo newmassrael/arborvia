@@ -66,10 +66,12 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/ManualLayoutTest.cpp
         tests/layout/sugiyama/SnapIndexManagerTest.cpp
         tests/layout/sugiyama/EdgeRoutingTransitionTest.cpp
+        tests/layout/sugiyama/EdgeOptimizerTest.cpp
         tests/layout/manual/BendPointTest.cpp
         tests/layout/manual/OrthogonalDragTest.cpp
         tests/export/SvgExportTest.cpp
         tests/interactive/DragBehaviorTest.cpp
+        tests/layout/ValidRegionCalculatorTest.cpp
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)
 

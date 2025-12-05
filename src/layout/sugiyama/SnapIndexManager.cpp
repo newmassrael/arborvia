@@ -4,7 +4,7 @@
 #include <sstream>
 
 namespace arborvia {
-namespace algorithms {
+
 
 // =============================================================================
 // Index Conversion
@@ -142,5 +142,89 @@ std::string SnapIndexManager::formatIndexInfo(int unifiedIdx, int localIdx, int 
     return oss.str();
 }
 
-}  // namespace algorithms
+// =============================================================================
+// Snap Point Sorting
+// =============================================================================
+
+float SnapIndexManager::getSortKey(const NodeLayout& node, NodeEdge edge) {
+    // For vertical edges (Left/Right): sort by Y coordinate
+    // For horizontal edges (Top/Bottom): sort by X coordinate
+    if (edge == NodeEdge::Left || edge == NodeEdge::Right) {
+        return node.center().y;
+    }
+    return node.center().x;
+}
+
+std::vector<std::pair<EdgeId, bool>> SnapIndexManager::sortSnapPointsByOtherNode(
+    NodeId nodeId,
+    NodeEdge edge,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+
+    // Get all connections on this node edge
+    auto connections = getConnections(edgeLayouts, nodeId, edge);
+
+    // Build sortable vectors with sort keys
+    std::vector<std::pair<EdgeId, float>> incomingSorted;
+    std::vector<std::pair<EdgeId, float>> outgoingSorted;
+
+    // Process incoming edges (target = nodeId, isSource = false)
+    for (EdgeId edgeId : connections.incoming) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it == edgeLayouts.end()) continue;
+
+        NodeId otherNodeId = it->second.from;  // Source node
+        auto nodeIt = nodeLayouts.find(otherNodeId);
+        if (nodeIt == nodeLayouts.end()) continue;
+
+        float sortKey = getSortKey(nodeIt->second, edge);
+        incomingSorted.emplace_back(edgeId, sortKey);
+    }
+
+    // Process outgoing edges (source = nodeId, isSource = true)
+    for (EdgeId edgeId : connections.outgoing) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it == edgeLayouts.end()) continue;
+
+        NodeId otherNodeId = it->second.to;  // Target node
+        auto nodeIt = nodeLayouts.find(otherNodeId);
+        if (nodeIt == nodeLayouts.end()) continue;
+
+        float sortKey = getSortKey(nodeIt->second, edge);
+        outgoingSorted.emplace_back(edgeId, sortKey);
+    }
+
+    // Determine sort direction
+    // For horizontal edges (Top/Bottom): incoming sorted in reverse (right to left)
+    // For vertical edges (Left/Right): incoming sorted ascending (top to bottom)
+    bool reverseIncoming = (edge == NodeEdge::Top || edge == NodeEdge::Bottom);
+
+    // Sort incoming
+    if (reverseIncoming) {
+        std::sort(incomingSorted.begin(), incomingSorted.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+    } else {
+        std::sort(incomingSorted.begin(), incomingSorted.end(),
+                  [](const auto& a, const auto& b) { return a.second < b.second; });
+    }
+
+    // Sort outgoing (always ascending)
+    std::sort(outgoingSorted.begin(), outgoingSorted.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Build result: incoming first (isSource=false), then outgoing (isSource=true)
+    std::vector<std::pair<EdgeId, bool>> result;
+    result.reserve(incomingSorted.size() + outgoingSorted.size());
+
+    for (const auto& [id, _] : incomingSorted) {
+        result.emplace_back(id, false);  // incoming = target side, isSource=false
+    }
+    for (const auto& [id, _] : outgoingSorted) {
+        result.emplace_back(id, true);  // outgoing = source side, isSource=true
+    }
+
+    return result;
+}
+
+
 }  // namespace arborvia

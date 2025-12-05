@@ -68,12 +68,18 @@ void aabbGapDistance(
 /// Layout constraint constants
 namespace constants {
 
+/// Floating-point comparison tolerance
+/// Used across geometry and layout calculations
+constexpr float EPSILON = 1e-6f;
+
 /// Minimum distance between nodes in grid units
-/// Used by MinDistanceConstraint and interactive demos
+/// Used by MinDistanceConstraint and ValidRegionCalculator
 constexpr float MIN_NODE_GRID_DISTANCE = 5.0f;
 
-/// Default grid size when grid is disabled (used for minimum clearance)
-constexpr float DEFAULT_GRID_SIZE = 20.0f;
+/// Internal grid size for A* pathfinding algorithms
+/// Independent of user's GridConfig.cellSize setting
+/// Used when user grid is disabled (cellSize <= 0)
+constexpr float PATHFINDING_GRID_SIZE = 10.0f;
 
 }  // namespace constants
 

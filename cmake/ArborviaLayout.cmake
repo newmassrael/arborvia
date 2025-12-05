@@ -11,7 +11,6 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/ConstraintManager.cpp
     src/layout/ConstraintConfig.cpp
     src/layout/constraints/MinDistanceConstraint.cpp
-    src/layout/constraints/EdgeValidityConstraint.cpp
     src/layout/sugiyama/CycleRemoval.cpp
     src/layout/sugiyama/LayerAssignment.cpp
     src/layout/sugiyama/CrossingMinimization.cpp
@@ -21,7 +20,12 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/ObstacleMap.cpp
     src/layout/sugiyama/AStarPathFinder.cpp
     src/layout/sugiyama/LShapedPathFinder.cpp
+    src/layout/sugiyama/PathIntersection.cpp
+    src/layout/sugiyama/EdgeScorer.cpp
+    src/layout/sugiyama/AStarEdgeOptimizer.cpp
+    src/layout/sugiyama/GeometricEdgeOptimizer.cpp
     src/layout/PathRoutingCoordinator.cpp
+    src/layout/ValidRegionCalculator.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS
@@ -41,5 +45,6 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/ConstraintManager.h
     include/arborvia/layout/ConstraintConfig.h
     include/arborvia/layout/MinDistanceConstraint.h
-    include/arborvia/layout/EdgeValidityConstraint.h
+    include/arborvia/layout/IEdgeOptimizer.h
+    include/arborvia/layout/ValidRegionCalculator.h
 )

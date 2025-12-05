@@ -1,64 +1,41 @@
 #include "arborvia/layout/MinDistanceConstraint.h"
-
-#include <algorithm>
-#include <cmath>
+#include "arborvia/layout/ValidRegionCalculator.h"
 
 namespace arborvia {
 
 MinDistanceConstraint::MinDistanceConstraint(float minGridDistance)
-    : minGridDistance_(minGridDistance) {}
+    : minGridDistance_(minGridDistance) {
+    // Note: minGridDistance_ is kept for API compatibility but ValidRegionCalculator
+    // uses constants::MIN_NODE_GRID_DISTANCE internally for direction-aware margins
+}
 
 ConstraintResult MinDistanceConstraint::check(const ConstraintContext& ctx) const {
     auto nodeIt = ctx.nodeLayouts.find(ctx.nodeId);
     if (nodeIt == ctx.nodeLayouts.end()) {
-        return ConstraintResult::ok();  // Node not found, allow move
+        return ConstraintResult::ok();
     }
 
-    float minDist = minGridDistance_ * ctx.gridSize;
-    const Size& nodeSize = nodeIt->second.size;
+    // Delegate to ValidRegionCalculator for direction-aware margin calculation
+    auto zones = ValidRegionCalculator::calculate(
+        ctx.nodeId, ctx.nodeLayouts, ctx.edgeLayouts, ctx.gridSize);
 
-    for (const auto& [otherId, other] : ctx.nodeLayouts) {
-        if (otherId == ctx.nodeId) continue;
+    bool valid = ValidRegionCalculator::isValid(
+        ctx.newPosition, nodeIt->second.size, zones);
 
-        // Calculate AABB distance (gap between bounding boxes)
-        float dx = std::max(0.0f, std::max(other.position.x - (ctx.newPosition.x + nodeSize.width),
-                                           ctx.newPosition.x - (other.position.x + other.size.width)));
-        float dy = std::max(0.0f, std::max(other.position.y - (ctx.newPosition.y + nodeSize.height),
-                                           ctx.newPosition.y - (other.position.y + other.size.height)));
-
-        if (dx < minDist && dy < minDist) {
-            return ConstraintResult::fail("Too close to another node");
-        }
-    }
-
-    return ConstraintResult::ok();
+    return valid ? ConstraintResult::ok()
+                 : ConstraintResult::fail("Too close to another node");
 }
 
 std::vector<Rect> MinDistanceConstraint::getBlockedRegions(const ConstraintContext& ctx) const {
+    // Delegate to ValidRegionCalculator for consistent visualization
+    auto zones = ValidRegionCalculator::calculate(
+        ctx.nodeId, ctx.nodeLayouts, ctx.edgeLayouts, ctx.gridSize);
+
     std::vector<Rect> regions;
-
-    auto nodeIt = ctx.nodeLayouts.find(ctx.nodeId);
-    if (nodeIt == ctx.nodeLayouts.end()) {
-        return regions;
+    regions.reserve(zones.size());
+    for (const auto& zone : zones) {
+        regions.push_back(zone.bounds);
     }
-
-    float margin = minGridDistance_ * ctx.gridSize;
-
-    for (const auto& [otherId, other] : ctx.nodeLayouts) {
-        if (otherId == ctx.nodeId) continue;
-
-        // Create a margin zone around the node
-        // This represents the area where the dragged node cannot go
-        Rect blockedRegion{
-            other.position.x - margin,
-            other.position.y - margin,
-            other.size.width + 2 * margin,
-            other.size.height + 2 * margin
-        };
-
-        regions.push_back(blockedRegion);
-    }
-
     return regions;
 }
 

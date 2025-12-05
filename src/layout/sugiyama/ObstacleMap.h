@@ -8,7 +8,7 @@
 #include <limits>
 
 namespace arborvia {
-namespace algorithms {
+
 
 /// Grid-based obstacle map for pathfinding
 /// Tracks which grid cells are blocked by nodes
@@ -100,5 +100,5 @@ private:
     SafeZones safeZones_;
 };
 
-}  // namespace algorithms
+
 }  // namespace arborvia
