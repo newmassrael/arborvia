@@ -711,6 +711,36 @@ void EdgeRouting::recalculateBendPoints(
         }
     }
 
+    // CRITICAL: Check if PathCleanup violated direction constraints
+    // - First segment must match source edge direction (vertical for Top/Bottom, horizontal for Left/Right)
+    // - Last segment must match target edge direction
+    // If violated, clear bendPoints so the empty-check logic below recreates proper shape
+    if (!layout.bendPoints.empty()) {
+        bool sourceVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
+        bool targetVertical = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
+
+        const Point& firstBend = layout.bendPoints.front().position;
+        const Point& lastBend = layout.bendPoints.back().position;
+
+        constexpr float DIRECTION_TOLERANCE = 0.5f;
+        bool firstSegmentVertical = std::abs(layout.sourcePoint.x - firstBend.x) < DIRECTION_TOLERANCE;
+        bool lastSegmentVertical = std::abs(lastBend.x - layout.targetPoint.x) < DIRECTION_TOLERANCE;
+
+        // Check if direction constraints are violated
+        bool sourceViolated = (sourceVertical != firstSegmentVertical);
+        bool targetViolated = (targetVertical != lastSegmentVertical);
+
+        if (sourceViolated || targetViolated) {
+#if EDGE_ROUTING_DEBUG
+            std::cout << "[EdgeRouting] recalculateBendPoints: Direction constraint violated!"
+                      << " sourceViolated=" << sourceViolated
+                      << " targetViolated=" << targetViolated
+                      << " - clearing bendPoints for recreation" << std::endl;
+#endif
+            layout.bendPoints.clear();
+        }
+    }
+
     // Post-processing: ensure first bend has proper clearance from source
     // This handles cases where PathFinder or fallback paths don't maintain direction clearance
     // When clearance is needed, INSERT a clearance point rather than modifying existing bends
@@ -1451,6 +1481,29 @@ EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
         it->second.bendPoints.clear();
         for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
             it->second.bendPoints.push_back({fullPath[i]});
+        }
+
+        // CRITICAL: Validate direction constraints after PathCleanup
+        // PathCleanup may remove bend points needed for direction constraints
+        // If violated, recalculate with proper Z-shape
+        if (!it->second.bendPoints.empty()) {
+            bool sourceVertical = (it->second.sourceEdge == NodeEdge::Top || 
+                                   it->second.sourceEdge == NodeEdge::Bottom);
+            bool targetVertical = (it->second.targetEdge == NodeEdge::Top || 
+                                   it->second.targetEdge == NodeEdge::Bottom);
+
+            const Point& firstBend = it->second.bendPoints.front().position;
+            const Point& lastBend = it->second.bendPoints.back().position;
+
+            constexpr float DIRECTION_TOLERANCE = 0.5f;
+            bool firstSegmentVertical = std::abs(it->second.sourcePoint.x - firstBend.x) < DIRECTION_TOLERANCE;
+            bool lastSegmentVertical = std::abs(lastBend.x - it->second.targetPoint.x) < DIRECTION_TOLERANCE;
+
+            if (sourceVertical != firstSegmentVertical || targetVertical != lastSegmentVertical) {
+                // Direction constraint violated - recreate proper path
+                it->second.bendPoints.clear();
+                recalculateBendPoints(it->second, nodeLayouts, effectiveGridSize);
+            }
         }
 
 #if EDGE_ROUTING_DEBUG
