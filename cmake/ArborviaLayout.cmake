@@ -16,12 +16,15 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/CrossingMinimization.cpp
     src/layout/sugiyama/CoordinateAssignment.cpp
     src/layout/sugiyama/EdgeRouting.cpp
+    src/layout/sugiyama/EdgeValidator.cpp
     src/layout/sugiyama/SnapIndexManager.cpp
     src/layout/sugiyama/ObstacleMap.cpp
     src/layout/sugiyama/AStarPathFinder.cpp
     src/layout/sugiyama/LShapedPathFinder.cpp
     src/layout/sugiyama/PathIntersection.cpp
     src/layout/sugiyama/EdgeScorer.cpp
+    src/layout/sugiyama/SelfLoopRouter.cpp
+    src/layout/sugiyama/PathCleanup.cpp
     src/layout/sugiyama/AStarEdgeOptimizer.cpp
     src/layout/sugiyama/GeometricEdgeOptimizer.cpp
     src/layout/PathRoutingCoordinator.cpp

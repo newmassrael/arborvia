@@ -158,6 +158,15 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     candidate.targetEdge = targetEdge;
     candidate.bendPoints.clear();
 
+    // When edge routing changes, mark snap indices for redistribution
+    // This prevents duplicate snap indices on the same node edge
+    if (sourceEdge != base.sourceEdge) {
+        candidate.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
+    }
+    if (targetEdge != base.targetEdge) {
+        candidate.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
+    }
+
     // Get node layouts
     auto srcIt = nodeLayouts.find(base.from);
     if (srcIt == nodeLayouts.end()) {

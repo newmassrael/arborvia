@@ -12,12 +12,12 @@
 
 namespace arborvia {
 
-
 // Forward declarations
 class SnapIndexManager;
 class IPathFinder;
 class IEdgeOptimizer;
 class PathRoutingCoordinator;
+class EdgeValidator;
 
 /// Channel assignment info for an edge
 struct ChannelAssignment {
@@ -95,16 +95,39 @@ public:
         float gridSize = 0.0f,
         bool sortSnapPoints = true);
 
+    /// Result of snap position update operation
+    /// Provides transparency about which edges were actually processed
+    struct SnapUpdateResult {
+        std::unordered_set<EdgeId> processedEdges;      ///< All edges that had bendPoints recalculated
+        std::unordered_set<EdgeId> redistributedEdges;  ///< Edges affected by snap redistribution (may include edges not in affectedEdges)
+
+        /// Check if any edges outside affectedEdges were processed due to redistribution
+        bool hasIndirectUpdates(const std::vector<EdgeId>& affectedEdges) const {
+            for (EdgeId edgeId : redistributedEdges) {
+                if (std::find(affectedEdges.begin(), affectedEdges.end(), edgeId) == affectedEdges.end()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    };
+
     /// Update snap point positions when nodes move
     /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
     /// Use this for simple position updates without edge re-routing
+    ///
+    /// NOTE: When snap redistribution occurs on a node-edge, ALL edges on that node-edge
+    /// will have their snap positions updated, even if not in affectedEdges.
+    /// The returned SnapUpdateResult shows exactly which edges were processed.
+    ///
     /// @param edgeLayouts The edge layouts to update (modified in place)
     /// @param nodeLayouts Current node positions
     /// @param affectedEdges Edges that need updating (connected to moved nodes)
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
-    void updateSnapPositions(
+    /// @return SnapUpdateResult showing which edges were actually processed
+    SnapUpdateResult updateSnapPositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
@@ -126,9 +149,10 @@ public:
         const LayoutOptions& options,
         const std::unordered_set<NodeId>& movedNodes = {});
 
-    // === Edge Layout Validation ===
+    // === Edge Layout Validation (delegated to EdgeValidator) ===
 
     /// Validation result for an edge layout
+    /// @deprecated Use EdgeValidator::ValidationResult directly
     struct ValidationResult {
         bool valid = true;
         bool orthogonal = true;           ///< All segments are orthogonal
@@ -141,6 +165,7 @@ public:
     };
 
     /// Validate an edge layout against all routing constraints
+    /// @deprecated Use EdgeValidator::validate directly
     /// Checks: orthogonality, node intersection, direction constraints
     /// @param layout The edge layout to validate
     /// @param nodeLayouts All node layouts for intersection checking
@@ -149,9 +174,10 @@ public:
         const EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
-    // === Utility functions for edge routing (public for internal helper use) ===
+    // === Utility functions for edge routing (delegated to EdgeValidator) ===
 
     /// Check if an orthogonal segment intersects a node's interior or margin zone
+    /// @deprecated Use EdgeValidator::segmentIntersectsNode directly
     /// @param p1 Start point of segment
     /// @param p2 End point of segment
     /// @param node The node to check intersection with

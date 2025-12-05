@@ -286,3 +286,49 @@ TEST_F(SnapIndexManagerTest, Integration_UnifiedModeDistribution) {
         EXPECT_LT(pos, 1.0f);
     }
 }
+
+// =============================================================================
+// Bug Reproduction: Same Snap Index on Same Node Edge
+// =============================================================================
+
+TEST_F(SnapIndexManagerTest, BugRepro_TwoEdgesSameNodeEdge_ConnectionCounting) {
+    // Verifies that getConnections correctly counts both incoming and outgoing
+    // connections on the same node edge.
+    //
+    // Setup: Node 1 right edge has two connections:
+    //   - Edge 2 incoming (target on right edge)
+    //   - Edge 5 outgoing (source on right edge)
+
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Edge 2: from node 2 to node 1 (incoming to node 1's right edge)
+    EdgeLayout e2;
+    e2.id = EdgeId{2};
+    e2.from = NodeId{2};
+    e2.to = NodeId{1};
+    e2.sourceEdge = NodeEdge::Left;
+    e2.targetEdge = NodeEdge::Right;  // connects to node 1's RIGHT edge
+    e2.sourceSnapIndex = 0;
+    e2.targetSnapIndex = 0;
+    edgeLayouts[EdgeId{2}] = e2;
+
+    // Edge 5: from node 1 to node 4 (outgoing from node 1's right edge)
+    EdgeLayout e5;
+    e5.id = EdgeId{5};
+    e5.from = NodeId{1};
+    e5.to = NodeId{4};
+    e5.sourceEdge = NodeEdge::Right;  // connects from node 1's RIGHT edge
+    e5.targetEdge = NodeEdge::Bottom;
+    e5.sourceSnapIndex = 0;
+    e5.targetSnapIndex = 0;
+    edgeLayouts[EdgeId{5}] = e5;
+
+    // Check connections on node 1's right edge
+    auto conn = SnapIndexManager::getConnections(edgeLayouts, NodeId{1}, NodeEdge::Right);
+
+    // Should count both incoming and outgoing
+    EXPECT_EQ(conn.incomingCount(), 1);   // Edge 2 target
+    EXPECT_EQ(conn.outgoingCount(), 1);   // Edge 5 source
+    EXPECT_EQ(conn.totalCount(), 2);
+    EXPECT_TRUE(conn.hasBoth());
+}

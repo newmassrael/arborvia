@@ -4,6 +4,9 @@
 #include "AStarPathFinder.h"
 #include "AStarEdgeOptimizer.h"
 #include "GeometricEdgeOptimizer.h"
+#include "EdgeValidator.h"
+#include "SelfLoopRouter.h"
+#include "PathCleanup.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "arborvia/layout/LayoutTypes.h"
@@ -12,8 +15,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <set>
 #include <unordered_map>
+
+// Debug flag for edge routing
+#ifndef EDGE_ROUTING_DEBUG
+#define EDGE_ROUTING_DEBUG 1
+#endif
 
 namespace arborvia {
 
@@ -26,28 +35,11 @@ namespace {
     /// Tolerance for floating point comparisons in path calculations
     constexpr float EPSILON = 0.1f;
 
-
-
-    /// Self-loop spacing between source and target points
-    constexpr float SELF_LOOP_SPACING = 10.0f;
-
-    /// Default offset for self-loop routing when grid is disabled
-    /// Self-loops route outside the node by this amount
-    constexpr float DEFAULT_SELF_LOOP_OFFSET = 20.0f;
-
-
     // =========================================================================
     // Grid-Relative Offset Functions
     // =========================================================================
     // These functions return offsets that are guaranteed to be grid-aligned
     // when gridSize > 0, preventing post-hoc snap from creating spikes/duplicates.
-
-
-    /// Self-loop spacing: distance between source and target on self-loops
-    inline float getSelfLoopSpacing(float gridSize) {
-        return gridSize > 0.0f ? gridSize : SELF_LOOP_SPACING;
-    }
-
 
     /// Get effective grid size for calculations
     // =========================================================================
@@ -371,104 +363,6 @@ namespace {
         }
     };
 
-    /// Check if two points are essentially the same (within tolerance)
-    bool isPointDuplicate(const Point& a, const Point& b) {
-        return std::abs(a.x - b.x) < EPSILON && std::abs(a.y - b.y) < EPSILON;
-    }
-
-    /// Check if three collinear points form a spike (direction reversal)
-    bool isSpike(const Point& a, const Point& b, const Point& c) {
-        // Check vertical spike (all on same X)
-        bool sameX = (std::abs(a.x - b.x) < EPSILON && std::abs(b.x - c.x) < EPSILON);
-        if (sameX) {
-            bool aToB_down = b.y > a.y;
-            bool bToC_down = c.y > b.y;
-            if (aToB_down != bToC_down) {
-                return true;
-            }
-        }
-
-        // Check horizontal spike (all on same Y)
-        bool sameY = (std::abs(a.y - b.y) < EPSILON && std::abs(b.y - c.y) < EPSILON);
-        if (sameY) {
-            bool aToB_right = b.x > a.x;
-            bool bToC_right = c.x > b.x;
-            if (aToB_right != bToC_right) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// Remove spikes, duplicate points, and circular detours from a path
-    /// A circular detour is when the path returns to a previously visited point
-    void removeSpikesAndDuplicates(std::vector<Point>& points) {
-        bool modified = true;
-        while (modified && points.size() > 2) {
-            modified = false;
-
-            // Remove duplicate consecutive points
-            for (size_t i = 0; i + 1 < points.size(); ++i) {
-                if (isPointDuplicate(points[i], points[i + 1])) {
-                    points.erase(points.begin() + i + 1);
-                    modified = true;
-                    break;
-                }
-            }
-            if (modified) continue;
-
-            // Remove spike points (direction reversal on same line)
-            for (size_t i = 0; i + 2 < points.size(); ++i) {
-                if (isSpike(points[i], points[i + 1], points[i + 2])) {
-                    points.erase(points.begin() + i + 1);
-                    modified = true;
-                    break;
-                }
-            }
-            if (modified) continue;
-
-            // Remove redundant collinear intermediate points
-            // If three consecutive points are on the same line (vertical or horizontal),
-            // the middle point can be removed as it doesn't affect the path
-            for (size_t i = 0; i + 2 < points.size(); ++i) {
-                const Point& a = points[i];
-                const Point& b = points[i + 1];
-                const Point& c = points[i + 2];
-
-                // Check if all three are on same vertical line
-                bool sameX = (std::abs(a.x - b.x) < EPSILON && std::abs(b.x - c.x) < EPSILON);
-                // Check if all three are on same horizontal line
-                bool sameY = (std::abs(a.y - b.y) < EPSILON && std::abs(b.y - c.y) < EPSILON);
-
-                if (sameX || sameY) {
-                    // Middle point is redundant, remove it
-                    points.erase(points.begin() + i + 1);
-                    modified = true;
-                    break;
-                }
-            }
-            if (modified) continue;
-
-            // Remove non-consecutive duplicate points and the circular detour between them
-            // This is safe because if two points are identical, the path between them
-            // is a closed loop that accomplishes nothing
-            for (size_t i = 0; i + 2 < points.size(); ++i) {
-                for (size_t j = i + 2; j < points.size(); ++j) {
-                    if (isPointDuplicate(points[i], points[j])) {
-                        // Found duplicate at i and j - remove all points from i+1 to j (inclusive)
-                        // This eliminates the circular detour between them
-                        points.erase(points.begin() + i + 1, points.begin() + j + 1);
-                        modified = true;
-                        break;
-                    }
-                }
-                if (modified) break;
-            }
-        }
-    }
-
-
 }
 
 // =============================================================================
@@ -535,48 +429,91 @@ void EdgeRouting::recalculateBendPoints(
     float gridSize) {
     layout.bendPoints.clear();
 
-    // Handle self-loops specially - they need to route around the same node
+    // Handle self-loops specially - they need to route around the node corner
+    // CONSTRAINT: Self-loops use adjacent edges (sourceEdge != targetEdge)
     if (layout.from == layout.to) {
         auto nodeIt = nodeLayouts.find(layout.from);
         if (nodeIt != nodeLayouts.end()) {
             const NodeLayout& node = nodeIt->second;
-            // Self-loop offset: use the larger of gridSize or DEFAULT_SELF_LOOP_OFFSET
-            // This ensures sufficient clearance regardless of grid settings
-            float offset = std::max(gridSize, DEFAULT_SELF_LOOP_OFFSET);
+            // Self-loop offset: use the larger of gridSize or default offset
+            float offset = std::max(gridSize, SelfLoopRouter::DEFAULT_OFFSET);
 
-            // Determine direction from sourceEdge
-            switch (layout.sourceEdge) {
-                case NodeEdge::Right:
-                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
-                                                  layout.sourcePoint.y}});
-                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
-                                                  layout.targetPoint.y}});
-                    break;
-                case NodeEdge::Left:
-                    layout.bendPoints.push_back({{node.position.x - offset,
-                                                  layout.sourcePoint.y}});
-                    layout.bendPoints.push_back({{node.position.x - offset,
-                                                  layout.targetPoint.y}});
-                    break;
-                case NodeEdge::Top:
-                    layout.bendPoints.push_back({{layout.sourcePoint.x,
-                                                  node.position.y - offset}});
-                    layout.bendPoints.push_back({{layout.targetPoint.x,
-                                                  node.position.y - offset}});
-                    break;
-                case NodeEdge::Bottom:
-                    layout.bendPoints.push_back({{layout.sourcePoint.x,
-                                                  node.position.y + node.size.height + offset}});
-                    layout.bendPoints.push_back({{layout.targetPoint.x,
-                                                  node.position.y + node.size.height + offset}});
-                    break;
-                default:
-                    // For unknown edge, default to right
-                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
-                                                  layout.sourcePoint.y}});
-                    layout.bendPoints.push_back({{node.position.x + node.size.width + offset,
-                                                  layout.targetPoint.y}});
-                    break;
+            float nodeLeft = node.position.x;
+            float nodeRight = node.position.x + node.size.width;
+            float nodeTop = node.position.y;
+            float nodeBottom = node.position.y + node.size.height;
+
+            // Route based on sourceEdge → targetEdge combination (adjacent edges)
+            if (layout.sourceEdge == NodeEdge::Right && layout.targetEdge == NodeEdge::Top) {
+                // Right → Top (top-right corner)
+                layout.bendPoints.push_back({{nodeRight + offset, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{nodeRight + offset, nodeTop - offset}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, nodeTop - offset}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Right && layout.targetEdge == NodeEdge::Bottom) {
+                // Right → Bottom (bottom-right corner)
+                layout.bendPoints.push_back({{nodeRight + offset, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{nodeRight + offset, nodeBottom + offset}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, nodeBottom + offset}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Left && layout.targetEdge == NodeEdge::Top) {
+                // Left → Top (top-left corner)
+                layout.bendPoints.push_back({{nodeLeft - offset, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{nodeLeft - offset, nodeTop - offset}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, nodeTop - offset}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Left && layout.targetEdge == NodeEdge::Bottom) {
+                // Left → Bottom (bottom-left corner)
+                layout.bendPoints.push_back({{nodeLeft - offset, layout.sourcePoint.y}});
+                layout.bendPoints.push_back({{nodeLeft - offset, nodeBottom + offset}});
+                layout.bendPoints.push_back({{layout.targetPoint.x, nodeBottom + offset}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Top && layout.targetEdge == NodeEdge::Right) {
+                // Top → Right (top-right corner)
+                layout.bendPoints.push_back({{layout.sourcePoint.x, nodeTop - offset}});
+                layout.bendPoints.push_back({{nodeRight + offset, nodeTop - offset}});
+                layout.bendPoints.push_back({{nodeRight + offset, layout.targetPoint.y}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Top && layout.targetEdge == NodeEdge::Left) {
+                // Top → Left (top-left corner)
+                layout.bendPoints.push_back({{layout.sourcePoint.x, nodeTop - offset}});
+                layout.bendPoints.push_back({{nodeLeft - offset, nodeTop - offset}});
+                layout.bendPoints.push_back({{nodeLeft - offset, layout.targetPoint.y}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Bottom && layout.targetEdge == NodeEdge::Right) {
+                // Bottom → Right (bottom-right corner)
+                layout.bendPoints.push_back({{layout.sourcePoint.x, nodeBottom + offset}});
+                layout.bendPoints.push_back({{nodeRight + offset, nodeBottom + offset}});
+                layout.bendPoints.push_back({{nodeRight + offset, layout.targetPoint.y}});
+            }
+            else if (layout.sourceEdge == NodeEdge::Bottom && layout.targetEdge == NodeEdge::Left) {
+                // Bottom → Left (bottom-left corner)
+                layout.bendPoints.push_back({{layout.sourcePoint.x, nodeBottom + offset}});
+                layout.bendPoints.push_back({{nodeLeft - offset, nodeBottom + offset}});
+                layout.bendPoints.push_back({{nodeLeft - offset, layout.targetPoint.y}});
+            }
+            else {
+                // Fallback for legacy same-edge self-loops (should not happen with new constraint)
+                switch (layout.sourceEdge) {
+                    case NodeEdge::Right:
+                        layout.bendPoints.push_back({{nodeRight + offset, layout.sourcePoint.y}});
+                        layout.bendPoints.push_back({{nodeRight + offset, layout.targetPoint.y}});
+                        break;
+                    case NodeEdge::Left:
+                        layout.bendPoints.push_back({{nodeLeft - offset, layout.sourcePoint.y}});
+                        layout.bendPoints.push_back({{nodeLeft - offset, layout.targetPoint.y}});
+                        break;
+                    case NodeEdge::Top:
+                        layout.bendPoints.push_back({{layout.sourcePoint.x, nodeTop - offset}});
+                        layout.bendPoints.push_back({{layout.targetPoint.x, nodeTop - offset}});
+                        break;
+                    case NodeEdge::Bottom:
+                        layout.bendPoints.push_back({{layout.sourcePoint.x, nodeBottom + offset}});
+                        layout.bendPoints.push_back({{layout.targetPoint.x, nodeBottom + offset}});
+                        break;
+                    default:
+                        break;
+                }
             }
         }
         return;  // Self-loops don't need further processing
@@ -764,7 +701,7 @@ void EdgeRouting::recalculateBendPoints(
         allPoints.push_back(layout.targetPoint);
 
         // Clean up any spikes or duplicates
-        removeSpikesAndDuplicates(allPoints);
+        PathCleanup::removeSpikesAndDuplicates(allPoints);
 
         // Reconstruct bendPoints from allPoints
         layout.bendPoints.clear();
@@ -836,12 +773,50 @@ void EdgeRouting::recalculateBendPoints(
         }
         allPoints.push_back(layout.targetPoint);
 
-        removeSpikesAndDuplicates(allPoints);
+        PathCleanup::removeSpikesAndDuplicates(allPoints);
 
         layout.bendPoints.clear();
         for (size_t i = 1; i + 1 < allPoints.size(); ++i) {
             layout.bendPoints.push_back({allPoints[i]});
         }
+    }
+
+    // CRITICAL: Ensure orthogonality when bendPoints is empty but source/target misaligned
+    // This can happen when A* returns a 2-point path or PathCleanup removes all intermediate points
+    if (layout.bendPoints.empty()) {
+        const float EPSILON = 0.1f;
+        float dx = std::abs(layout.targetPoint.x - layout.sourcePoint.x);
+        float dy = std::abs(layout.targetPoint.y - layout.sourcePoint.y);
+
+        // If both dx and dy are significant, we need a bend point for orthogonal routing
+        if (dx > EPSILON && dy > EPSILON) {
+            // Create L-shaped path based on source edge direction
+            Point bendPoint;
+            bool sourceVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
+
+            if (sourceVertical) {
+                // Vertical first, then horizontal: bend at (source.x, target.y)
+                bendPoint = {layout.sourcePoint.x, layout.targetPoint.y};
+            } else {
+                // Horizontal first, then vertical: bend at (target.x, source.y)
+                bendPoint = {layout.targetPoint.x, layout.sourcePoint.y};
+            }
+
+#if EDGE_ROUTING_DEBUG
+            std::cout << "[EdgeRouting] recalculateBendPoints: ORTHOGONALITY FIX applied!" << std::endl;
+            std::cout << "  src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ") "
+                      << "tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")" << std::endl;
+            std::cout << "  dx=" << dx << " dy=" << dy << " sourceVertical=" << sourceVertical << std::endl;
+            std::cout << "  Added bend: (" << bendPoint.x << "," << bendPoint.y << ")" << std::endl;
+#endif
+            layout.bendPoints.push_back({bendPoint});
+        }
+#if EDGE_ROUTING_DEBUG
+        else {
+            std::cout << "[EdgeRouting] recalculateBendPoints: bendPoints empty, no fix needed "
+                      << "(dx=" << dx << " dy=" << dy << ")" << std::endl;
+        }
+#endif
     }
 }
 
@@ -868,36 +843,8 @@ bool EdgeRouting::segmentIntersectsNode(
     const Point& p2,
     const NodeLayout& node,
     float margin) {
-
-    // Expand node bounds by margin for proximity detection
-    float nodeXmin = node.position.x - margin;
-    float nodeXmax = node.position.x + node.size.width + margin;
-    float nodeYmin = node.position.y - margin;
-    float nodeYmax = node.position.y + node.size.height + margin;
-
-    bool isHorizontal = (std::abs(p1.y - p2.y) < EPSILON);
-    bool isVertical = (std::abs(p1.x - p2.x) < EPSILON);
-
-    if (isHorizontal) {
-        // Horizontal segment: check if Y is strictly inside node Y-range AND X-ranges overlap
-        float y = p1.y;
-        float xMin = std::min(p1.x, p2.x);
-        float xMax = std::max(p1.x, p2.x);
-
-        // Y must be strictly inside (not on boundary) AND X-ranges must overlap
-        return (y > nodeYmin && y < nodeYmax && xMin < nodeXmax && xMax > nodeXmin);
-    }
-    else if (isVertical) {
-        // Vertical segment: check if X is strictly inside node X-range AND Y-ranges overlap
-        float x = p1.x;
-        float yMin = std::min(p1.y, p2.y);
-        float yMax = std::max(p1.y, p2.y);
-
-        // X must be strictly inside (not on boundary) AND Y-ranges must overlap
-        return (x > nodeXmin && x < nodeXmax && yMin < nodeYmax && yMax > nodeYmin);
-    }
-
-    return false;  // No diagonal segments in orthogonal routing
+    // Delegate to EdgeValidator
+    return EdgeValidator::segmentIntersectsNode(p1, p2, node, margin);
 }
 
 EdgeRouting::Result EdgeRouting::route(
@@ -1028,6 +975,9 @@ void EdgeRouting::distributeAutoSnapPoints(
             }
         }
 
+        // Move self-loop endpoints to corner positions
+        SelfLoopRouter::applySelfLoopCornerPositioning(connections, result.edgeLayouts, nodeEdge);
+
         auto nodeIt = nodeLayouts.find(nodeId);
         if (nodeIt == nodeLayouts.end()) continue;
 
@@ -1064,7 +1014,7 @@ void EdgeRouting::distributeAutoSnapPoints(
         }
         fullPath.push_back(layout.targetPoint);
 
-        removeSpikesAndDuplicates(fullPath);
+        PathCleanup::removeSpikesAndDuplicates(fullPath);
 
         layout.bendPoints.clear();
         for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
@@ -1120,13 +1070,14 @@ void EdgeRouting::distributeAutoSnapPoints(
     }
 }
 
-void EdgeRouting::updateSnapPositions(
+EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
+    SnapUpdateResult result;
     float effectiveGridSize = getEffectiveGridSize(gridSize);
 
     // Helper to check if a node should be updated
@@ -1134,7 +1085,7 @@ void EdgeRouting::updateSnapPositions(
         return movedNodes.empty() || movedNodes.count(nodeId) > 0;
     };
 
-    // Unified mode: all connections on same edge distributed together
+    // === Phase 1: Collect affected connections by node-edge ===
     std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> affectedConnections;
 
     for (EdgeId edgeId : affectedEdges) {
@@ -1145,19 +1096,29 @@ void EdgeRouting::updateSnapPositions(
         affectedConnections[{layout.to, layout.targetEdge}].push_back({edgeId, false});
     }
 
+    // === Phase 2: Calculate snap positions and track redistributed edges ===
     for (auto& [key, connections] : affectedConnections) {
         auto [nodeId, nodeEdge] = key;
 
-        // Check if any edge needs snap index redistribution (has -1)
+        // Check if any edge needs snap index redistribution:
+        // 1. Has -1 (SNAP_INDEX_UNASSIGNED)
+        // 2. Has duplicate snap index (two edges with same index on same node edge)
         bool needsRedistribution = false;
+        std::set<int> usedIndices;
         for (const auto& [edgeId, isSource] : connections) {
             auto it = edgeLayouts.find(edgeId);
             if (it != edgeLayouts.end()) {
                 int snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
-                if (snapIdx == constants::SNAP_INDEX_UNASSIGNED) {
+                if (snapIdx < 0) {
                     needsRedistribution = true;
                     break;
                 }
+                // Check for duplicate
+                if (usedIndices.count(snapIdx) > 0) {
+                    needsRedistribution = true;
+                    break;
+                }
+                usedIndices.insert(snapIdx);
             }
         }
 
@@ -1169,23 +1130,44 @@ void EdgeRouting::updateSnapPositions(
 
         const NodeLayout& node = nodeIt->second;
 
-        // Get TOTAL count from all edgeLayouts, not just affected edges
-        auto [totalIn, totalOut] = countConnectionsOnNodeEdge(edgeLayouts, nodeId, nodeEdge);
-        int totalCount = totalIn + totalOut;
+        // Get ALL connections on this node-edge for correct totalCount calculation
+        // CRITICAL: totalCount must always be the total number of connections,
+        // not just the affected ones, for correct snap position calculation.
+        auto allConnections = SnapIndexManager::getConnections(edgeLayouts, nodeId, nodeEdge);
+        int totalCount = static_cast<int>(allConnections.incoming.size() + allConnections.outgoing.size());
 
-        for (const auto& [edgeId, isSource] : connections) {
+        // Determine which edges to process
+        std::vector<std::pair<EdgeId, bool>> edgesToProcess;
+        if (needsRedistribution) {
+            // Process ALL edges on this node-edge when redistribution needed
+            for (EdgeId edgeId : allConnections.incoming) {
+                edgesToProcess.push_back(std::make_pair(edgeId, false));  // incoming = target side
+            }
+            for (EdgeId edgeId : allConnections.outgoing) {
+                edgesToProcess.push_back(std::make_pair(edgeId, true));   // outgoing = source side
+            }
+        } else {
+            // Only process affected edges, but use totalCount from all connections
+            edgesToProcess = connections;
+        }
+
+        // Move self-loop endpoints to corner positions
+        SelfLoopRouter::applySelfLoopCornerPositioning(edgesToProcess, edgeLayouts, nodeEdge);
+
+        for (size_t connIdx = 0; connIdx < edgesToProcess.size(); ++connIdx) {
+            auto [edgeId, isSource] = edgesToProcess[connIdx];
             EdgeLayout& layout = edgeLayouts[edgeId];
 
-            // Use existing snap index
-            int snapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
-            if (snapIdx < 0 || snapIdx >= totalCount) {  // includes SNAP_INDEX_UNASSIGNED
-                // Fallback: find index based on current position in connections
-                snapIdx = 0;
-                for (size_t i = 0; i < connections.size(); ++i) {
-                    if (connections[i].first == edgeId) {
-                        snapIdx = static_cast<int>(i);
-                        break;
-                    }
+            int snapIdx;
+            if (needsRedistribution) {
+                // When redistribution is needed (duplicates or -1 values),
+                // assign new indices based on position in edgesToProcess
+                snapIdx = static_cast<int>(connIdx);
+            } else {
+                // Use existing snap index if valid
+                snapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+                if (snapIdx < 0 || snapIdx >= totalCount) {
+                    snapIdx = static_cast<int>(connIdx);
                 }
             }
 
@@ -1199,8 +1181,30 @@ void EdgeRouting::updateSnapPositions(
                 layout.targetPoint = snapPoint;
                 layout.targetSnapIndex = snapIdx;
             }
+
+            // Track edges that were updated during redistribution
+            // These need recalculateBendPoints even if not in affectedEdges
+            if (needsRedistribution) {
+                result.redistributedEdges.insert(edgeId);
+            }
         }
     }
+
+    // === Phase 3: Merge affected edges and redistributed edges for processing ===
+    // When snap redistribution occurs, edges not in affectedEdges may have
+    // their snap positions changed. These edges also need recalculateBendPoints.
+    result.processedEdges.insert(affectedEdges.begin(), affectedEdges.end());
+    result.processedEdges.insert(result.redistributedEdges.begin(), result.redistributedEdges.end());
+
+#if EDGE_ROUTING_DEBUG
+    if (!result.redistributedEdges.empty()) {
+        std::cout << "[EdgeRouting] updateSnapPositions: redistributedEdges=" << result.redistributedEdges.size()
+                  << ", processedEdges=" << result.processedEdges.size() << std::endl;
+        if (result.hasIndirectUpdates(affectedEdges)) {
+            std::cout << "  WARNING: Edges outside affectedEdges were updated due to redistribution" << std::endl;
+        }
+    }
+#endif
 
     // Check which edges are bidirectional (have a reverse edge)
     // O(N) algorithm using unordered_map for O(1) lookup
@@ -1209,8 +1213,7 @@ void EdgeRouting::updateSnapPositions(
     // Build edge lookup map using helper function
     auto edgeMap = buildEdgeMapFromLayouts<PairHash>(edgeLayouts);
 
-    // Check affected edges for bidirectionality (O(1) lookup per edge)
-    for (EdgeId edgeId : affectedEdges) {
+    for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
 
@@ -1224,9 +1227,8 @@ void EdgeRouting::updateSnapPositions(
         }
     }
 
-    // Recalculate bend points for affected edges
-    // Note: Snap points are already on grid from quantized calculation (if gridSize > 0)
-    for (EdgeId edgeId : affectedEdges) {
+    // === Phase 4: Recalculate bend points for all processed edges ===
+    for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
 
@@ -1240,6 +1242,10 @@ void EdgeRouting::updateSnapPositions(
 
         recalculateBendPoints(it->second, nodeLayouts, effectiveGridSize);
 
+#if EDGE_ROUTING_DEBUG
+        size_t bendsBeforeCleanup = it->second.bendPoints.size();
+#endif
+
         // Grid mode: bend points are already orthogonal from quantized routing.
         // Remove spikes/duplicates for path cleanup.
         std::vector<Point> fullPath;
@@ -1249,15 +1255,31 @@ void EdgeRouting::updateSnapPositions(
         }
         fullPath.push_back(it->second.targetPoint);
 
-        removeSpikesAndDuplicates(fullPath);
+        PathCleanup::removeSpikesAndDuplicates(fullPath);
 
         it->second.bendPoints.clear();
         for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
             it->second.bendPoints.push_back({fullPath[i]});
         }
 
+#if EDGE_ROUTING_DEBUG
+        if (bendsBeforeCleanup != it->second.bendPoints.size()) {
+            std::cout << "[EdgeRouting] updateSnapPositions: PathCleanup changed bendPoints for edge " << edgeId
+                      << " from " << bendsBeforeCleanup << " to " << it->second.bendPoints.size() << std::endl;
+        }
+        // Check for diagonal after cleanup
+        float dx = std::abs(it->second.targetPoint.x - it->second.sourcePoint.x);
+        float dy = std::abs(it->second.targetPoint.y - it->second.sourcePoint.y);
+        if (dx > 0.1f && dy > 0.1f && it->second.bendPoints.empty()) {
+            std::cout << "[EdgeRouting] updateSnapPositions: WARNING! Edge " << edgeId
+                      << " has DIAGONAL after PathCleanup! dx=" << dx << " dy=" << dy << std::endl;
+        }
+#endif
+
         it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
     }
+
+    return result;
 }
 
 void EdgeRouting::updateEdgeRoutingWithOptimization(
@@ -1266,6 +1288,22 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
     const std::vector<EdgeId>& affectedEdges,
     const LayoutOptions& options,
     const std::unordered_set<NodeId>& movedNodes) {
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "\n[EdgeRouting] updateEdgeRoutingWithOptimization called" << std::endl;
+    std::cout << "  affectedEdges: " << affectedEdges.size() << std::endl;
+    std::cout << "  movedNodes: " << movedNodes.size() << std::endl;
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it != edgeLayouts.end()) {
+            const auto& e = it->second;
+            std::cout << "  Edge " << edgeId << " BEFORE: "
+                      << "src=(" << e.sourcePoint.x << "," << e.sourcePoint.y << ") "
+                      << "tgt=(" << e.targetPoint.x << "," << e.targetPoint.y << ") "
+                      << "bends=" << e.bendPoints.size() << std::endl;
+        }
+    }
+#endif
 
     float gridSize = options.gridConfig.cellSize;
 
@@ -1332,158 +1370,61 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
         // No optimizer: just update snap positions
         updateSnapPositions(edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
     }
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[EdgeRouting] updateEdgeRoutingWithOptimization DONE" << std::endl;
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it != edgeLayouts.end()) {
+            const auto& e = it->second;
+            float dx = std::abs(e.targetPoint.x - e.sourcePoint.x);
+            float dy = std::abs(e.targetPoint.y - e.sourcePoint.y);
+            bool needsBend = (dx > 0.1f && dy > 0.1f);
+            bool hasBend = !e.bendPoints.empty();
+            std::cout << "  Edge " << edgeId << " AFTER: "
+                      << "src=(" << e.sourcePoint.x << "," << e.sourcePoint.y << ") "
+                      << "tgt=(" << e.targetPoint.x << "," << e.targetPoint.y << ") "
+                      << "bends=" << e.bendPoints.size();
+            if (needsBend && !hasBend) {
+                std::cout << " [WARNING: DIAGONAL! dx=" << dx << " dy=" << dy << "]";
+            }
+            std::cout << std::endl;
+            for (size_t i = 0; i < e.bendPoints.size(); ++i) {
+                std::cout << "    bend[" << i << "]: (" << e.bendPoints[i].position.x
+                          << "," << e.bendPoints[i].position.y << ")" << std::endl;
+            }
+        }
+    }
+#endif
 }
 
 // =============================================================================
-// Edge Layout Validation
+// Edge Layout Validation (delegated to EdgeValidator)
 // =============================================================================
 
 std::string EdgeRouting::ValidationResult::getErrorDescription() const {
-    if (valid) return "Valid";
-
-    std::string desc;
-    if (!orthogonal) desc += "Non-orthogonal segments; ";
-    if (!noNodeIntersection) desc += "Segments pass through nodes; ";
-    if (!sourceDirectionOk) desc += "First segment direction violates sourceEdge; ";
-    if (!targetDirectionOk) desc += "Last segment direction violates targetEdge; ";
-
-    if (!desc.empty() && desc.back() == ' ') {
-        desc.pop_back();
-        desc.pop_back();  // Remove trailing "; "
-    }
-    return desc;
+    // Create equivalent EdgeValidator result for delegation
+    EdgeValidator::ValidationResult evResult;
+    evResult.valid = valid;
+    evResult.orthogonal = orthogonal;
+    evResult.noNodeIntersection = noNodeIntersection;
+    evResult.sourceDirectionOk = sourceDirectionOk;
+    evResult.targetDirectionOk = targetDirectionOk;
+    return evResult.getErrorDescription();
 }
 
 EdgeRouting::ValidationResult EdgeRouting::validateEdgeLayout(
     const EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    // Delegate to EdgeValidator and convert result
+    auto evResult = EdgeValidator::validate(layout, nodeLayouts);
 
     ValidationResult result;
-
-    // Build path points
-    std::vector<Point> path;
-    path.push_back(layout.sourcePoint);
-    for (const auto& bp : layout.bendPoints) {
-        path.push_back(bp.position);
-    }
-    path.push_back(layout.targetPoint);
-
-    // Need at least 2 points
-    if (path.size() < 2) {
-        result.valid = false;
-        result.orthogonal = false;
-        return result;
-    }
-
-    // === Check 1: Source direction constraint ===
-    // First segment must exit in the direction indicated by sourceEdge
-    {
-        float dx = path[1].x - path[0].x;
-        float dy = path[1].y - path[0].y;
-
-        switch (layout.sourceEdge) {
-            case NodeEdge::Top:    result.sourceDirectionOk = (dy < -0.1f); break;
-            case NodeEdge::Bottom: result.sourceDirectionOk = (dy > 0.1f);  break;
-            case NodeEdge::Left:   result.sourceDirectionOk = (dx < -0.1f); break;
-            case NodeEdge::Right:  result.sourceDirectionOk = (dx > 0.1f);  break;
-        }
-    }
-
-    // === Check 2: Target direction constraint ===
-    // Last segment must enter in the direction indicated by targetEdge
-    {
-        size_t last = path.size() - 1;
-        float dx = path[last].x - path[last - 1].x;
-        float dy = path[last].y - path[last - 1].y;
-
-        switch (layout.targetEdge) {
-            case NodeEdge::Top:    result.targetDirectionOk = (dy > 0.1f);  break;  // Enter from above
-            case NodeEdge::Bottom: result.targetDirectionOk = (dy < -0.1f); break;  // Enter from below
-            case NodeEdge::Left:   result.targetDirectionOk = (dx > 0.1f);  break;  // Enter from left
-            case NodeEdge::Right:  result.targetDirectionOk = (dx < -0.1f); break;  // Enter from right
-        }
-    }
-
-    // === Check 3: Orthogonality and node intersection ===
-    constexpr float TOLERANCE = 1.0f;
-
-    for (size_t i = 0; i + 1 < path.size(); ++i) {
-        const Point& p1 = path[i];
-        const Point& p2 = path[i + 1];
-
-        bool isHoriz = std::abs(p1.y - p2.y) < 0.1f;
-        bool isVert = std::abs(p1.x - p2.x) < 0.1f;
-
-        // Orthogonality check
-        if (!isHoriz && !isVert) {
-            result.orthogonal = false;
-        }
-
-        // Node intersection check
-        bool isFirstSeg = (i == 0);
-        bool isLastSeg = (i == path.size() - 2);
-
-        for (const auto& [nodeId, node] : nodeLayouts) {
-            // Skip source node at first segment start, target node at last segment end
-            bool skipAtP1 = (isFirstSeg && nodeId == layout.from);
-            bool skipAtP2 = (isLastSeg && nodeId == layout.to);
-
-            // Check if segment passes through node interior
-            float xmin = node.position.x;
-            float xmax = node.position.x + node.size.width;
-            float ymin = node.position.y;
-            float ymax = node.position.y + node.size.height;
-
-            bool intersects = false;
-
-            if (isHoriz) {
-                float y = p1.y;
-                float segXmin = std::min(p1.x, p2.x);
-                float segXmax = std::max(p1.x, p2.x);
-
-                // Shrink segment if endpoints should be excluded
-                if (skipAtP1) {
-                    if (segXmin == p1.x) segXmin += TOLERANCE;
-                    else segXmax -= TOLERANCE;
-                }
-                if (skipAtP2) {
-                    if (segXmax == p2.x) segXmax -= TOLERANCE;
-                    else segXmin += TOLERANCE;
-                }
-
-                // Check if y is strictly inside node and x ranges overlap
-                intersects = (y > ymin && y < ymax && segXmin < xmax && segXmax > xmin);
-            } else if (isVert) {
-                float x = p1.x;
-                float segYmin = std::min(p1.y, p2.y);
-                float segYmax = std::max(p1.y, p2.y);
-
-                // Shrink segment if endpoints should be excluded
-                if (skipAtP1) {
-                    if (segYmin == p1.y) segYmin += TOLERANCE;
-                    else segYmax -= TOLERANCE;
-                }
-                if (skipAtP2) {
-                    if (segYmax == p2.y) segYmax -= TOLERANCE;
-                    else segYmin += TOLERANCE;
-                }
-
-                // Check if x is strictly inside node and y ranges overlap
-                intersects = (x > xmin && x < xmax && segYmin < ymax && segYmax > ymin);
-            }
-
-            if (intersects) {
-                result.noNodeIntersection = false;
-            }
-        }
-    }
-
-    // Final validity
-    result.valid = result.orthogonal &&
-                   result.noNodeIntersection &&
-                   result.sourceDirectionOk &&
-                   result.targetDirectionOk;
-
+    result.valid = evResult.valid;
+    result.orthogonal = evResult.orthogonal;
+    result.noNodeIntersection = evResult.noNodeIntersection;
+    result.sourceDirectionOk = evResult.sourceDirectionOk;
+    result.targetDirectionOk = evResult.targetDirectionOk;
     return result;
 }
 
@@ -2001,81 +1942,8 @@ EdgeLayout EdgeRouting::routeSelfLoop(
     const NodeLayout& nodeLayout,
     int loopIndex,
     const LayoutOptions& options) {
-
-    EdgeLayout layout;
-    layout.id = edge.id;
-    layout.from = edge.from;
-    layout.to = edge.to;
-
-    const auto& config = options.channelRouting.selfLoop;
-    float offset = config.loopOffset + static_cast<float>(loopIndex) * config.stackSpacing;
-
-    // Determine direction based on config or auto-detect
-    SelfLoopDirection dir = config.preferredDirection;
-
-    // For auto, default to Right (most common for state diagrams)
-    if (dir == SelfLoopDirection::Auto) {
-        dir = SelfLoopDirection::Right;
-    }
-
-    Point center = nodeLayout.center();
-    float gridSize = options.gridConfig.cellSize;
-    float spacing = getSelfLoopSpacing(gridSize);
-
-    switch (dir) {
-        case SelfLoopDirection::Right:
-            layout.sourcePoint = {nodeLayout.position.x + nodeLayout.size.width,
-                                  center.y + spacing};
-            layout.targetPoint = {nodeLayout.position.x + nodeLayout.size.width,
-                                  center.y - spacing};
-            layout.sourceEdge = NodeEdge::Right;
-            layout.targetEdge = NodeEdge::Right;
-            layout.bendPoints.push_back({{nodeLayout.position.x + nodeLayout.size.width + offset,
-                                          layout.sourcePoint.y}});
-            layout.bendPoints.push_back({{nodeLayout.position.x + nodeLayout.size.width + offset,
-                                          layout.targetPoint.y}});
-            break;
-
-        case SelfLoopDirection::Left:
-            layout.sourcePoint = {nodeLayout.position.x, center.y - spacing};
-            layout.targetPoint = {nodeLayout.position.x, center.y + spacing};
-            layout.sourceEdge = NodeEdge::Left;
-            layout.targetEdge = NodeEdge::Left;
-            layout.bendPoints.push_back({{nodeLayout.position.x - offset, layout.sourcePoint.y}});
-            layout.bendPoints.push_back({{nodeLayout.position.x - offset, layout.targetPoint.y}});
-            break;
-
-        case SelfLoopDirection::Top:
-            layout.sourcePoint = {center.x - spacing, nodeLayout.position.y};
-            layout.targetPoint = {center.x + spacing, nodeLayout.position.y};
-            layout.sourceEdge = NodeEdge::Top;
-            layout.targetEdge = NodeEdge::Top;
-            layout.bendPoints.push_back({{layout.sourcePoint.x, nodeLayout.position.y - offset}});
-            layout.bendPoints.push_back({{layout.targetPoint.x, nodeLayout.position.y - offset}});
-            break;
-
-        case SelfLoopDirection::Bottom:
-            layout.sourcePoint = {center.x + spacing,
-                                  nodeLayout.position.y + nodeLayout.size.height};
-            layout.targetPoint = {center.x - spacing,
-                                  nodeLayout.position.y + nodeLayout.size.height};
-            layout.sourceEdge = NodeEdge::Bottom;
-            layout.targetEdge = NodeEdge::Bottom;
-            layout.bendPoints.push_back({{layout.sourcePoint.x,
-                                          nodeLayout.position.y + nodeLayout.size.height + offset}});
-            layout.bendPoints.push_back({{layout.targetPoint.x,
-                                          nodeLayout.position.y + nodeLayout.size.height + offset}});
-            break;
-
-        case SelfLoopDirection::Auto:
-            // Auto is converted to Right above, this case should never be reached
-            break;
-    }
-
-    // Calculate label position
-    layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
-
-    return layout;
+    // Delegate to SelfLoopRouter
+    return SelfLoopRouter::route(edge.id, edge.from, nodeLayout, loopIndex, options);
 }
 
 

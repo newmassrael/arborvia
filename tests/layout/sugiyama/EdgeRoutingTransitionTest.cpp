@@ -3476,3 +3476,649 @@ TEST(EdgeRoutingTransitionTest, FuzzTest_DragSimulation_AllConstraints) {
 
     EXPECT_EQ(violations.size(), 0u) << "Found " << violations.size() << " violations!";
 }
+
+// =============================================================================
+// Snap Index Uniqueness Tests
+// =============================================================================
+
+// Bug reproduction: Two edges on same node edge have identical snap indices
+// after drag operation, causing overlapping snap points.
+TEST(EdgeRoutingTransitionTest, SnapIndices_Node0RightEdge_TwoTransitions) {
+    // Bug: Node 0 (idle) right edge has two transitions with same snapIndex=0
+    // Edge 0: from=0 (outgoing), sourceEdge=right, sourceSnapIndex=0
+    // Edge 6: to=0 (incoming), targetEdge=right, targetSnapIndex=0
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Setup nodes from user's JSON
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {-20, 60}, {200, 100}, 0, 0};    // idle
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {280, 560}, {200, 100}, 1, 0};   // running
+    nodeLayouts[NodeId{4}] = {NodeId{4}, {360, 180}, {200, 100}, 3, 1};   // paused
+
+    // Edge 0: idle -> running (outgoing from node 0's RIGHT edge)
+    EdgeLayout e0;
+    e0.id = EdgeId{0};
+    e0.from = NodeId{0};
+    e0.to = NodeId{1};
+    e0.sourceEdge = NodeEdge::Right;  // Node 0's RIGHT edge
+    e0.targetEdge = NodeEdge::Left;
+    e0.sourceSnapIndex = 0;  // Bug: same as Edge 6
+    e0.targetSnapIndex = 1;
+    e0.sourcePoint = {180, 100};
+    e0.targetPoint = {280, 620};
+    edgeLayouts[EdgeId{0}] = e0;
+
+    // Edge 6: paused -> idle (incoming to node 0's RIGHT edge)
+    EdgeLayout e6;
+    e6.id = EdgeId{6};
+    e6.from = NodeId{4};
+    e6.to = NodeId{0};
+    e6.sourceEdge = NodeEdge::Left;
+    e6.targetEdge = NodeEdge::Right;  // Node 0's RIGHT edge
+    e6.sourceSnapIndex = 0;
+    e6.targetSnapIndex = 0;  // Bug: same as Edge 0
+    e6.sourcePoint = {360, 240};
+    e6.targetPoint = {180, 100};  // Same as e0.sourcePoint!
+    edgeLayouts[EdgeId{6}] = e6;
+
+    std::cout << "\n===== NODE 0 RIGHT EDGE BUG TEST =====\n";
+    std::cout << "Initial state (both have snapIndex=0 - this is the bug!):\n";
+    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
+    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
+              << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
+    std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
+              << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
+
+    // DO NOT manually set -1 - the system should detect duplicates automatically
+    std::vector<EdgeId> allEdges = {EdgeId{0}, EdgeId{6}};
+    std::unordered_set<NodeId> movedNodes;
+
+    // This should detect the duplicate and redistribute
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    std::cout << "After redistribution:\n";
+    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
+    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
+              << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
+    std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
+              << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
+    std::cout << "======================================\n";
+
+    EXPECT_NE(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
+        << "Edge 0 and Edge 6 should have different snap indices on node 0's right edge!";
+
+    // Also verify the points are different
+    bool samePosition = (std::abs(edgeLayouts[EdgeId{0}].sourcePoint.x - edgeLayouts[EdgeId{6}].targetPoint.x) < 0.1f &&
+                        std::abs(edgeLayouts[EdgeId{0}].sourcePoint.y - edgeLayouts[EdgeId{6}].targetPoint.y) < 0.1f);
+    EXPECT_FALSE(samePosition) << "Edge 0 sourcePoint and Edge 6 targetPoint should be different!";
+}
+
+TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge_UserScenario) {
+    // Exact reproduction of user's JSON scenario:
+    // Edge 2: from=2, to=1, targetEdge=right, targetSnapIndex=0
+    // Edge 5: from=1, to=4, sourceEdge=right, sourceSnapIndex=0
+    // Both use node 1's RIGHT edge with snapIndex=0 - this is the bug!
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Setup nodes with user's exact positions
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {0, 20}, {200, 100}, 0, 0};
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {-80, 500}, {200, 100}, 1, 0};  // running
+    nodeLayouts[NodeId{2}] = {NodeId{2}, {580, 580}, {200, 100}, 2, 0};
+    nodeLayouts[NodeId{3}] = {NodeId{3}, {620, 20}, {200, 100}, 3, 0};
+    nodeLayouts[NodeId{4}] = {NodeId{4}, {480, 280}, {200, 100}, 3, 1};
+
+    // Setup edges with user's exact configuration
+    // Edge 2: complete -> running (incoming to node 1's RIGHT edge)
+    EdgeLayout e2;
+    e2.id = EdgeId{2};
+    e2.from = NodeId{2};
+    e2.to = NodeId{1};
+    e2.sourceEdge = NodeEdge::Left;
+    e2.targetEdge = NodeEdge::Right;  // Node 1's RIGHT edge
+    e2.sourceSnapIndex = 0;
+    e2.targetSnapIndex = 0;  // This is the problematic duplicate!
+    e2.sourcePoint = {580, 620};
+    e2.targetPoint = {120, 520};
+    edgeLayouts[EdgeId{2}] = e2;
+
+    // Edge 5: running -> paused (outgoing from node 1's RIGHT edge)
+    EdgeLayout e5;
+    e5.id = EdgeId{5};
+    e5.from = NodeId{1};
+    e5.to = NodeId{4};
+    e5.sourceEdge = NodeEdge::Right;  // Node 1's RIGHT edge
+    e5.targetEdge = NodeEdge::Bottom;
+    e5.sourceSnapIndex = 0;  // This is the problematic duplicate!
+    e5.targetSnapIndex = 0;
+    e5.sourcePoint = {120, 520};  // Same position as e2.targetPoint!
+    e5.targetPoint = {580, 380};
+    edgeLayouts[EdgeId{5}] = e5;
+
+    // Check: both edges use the same snap point on node 1's right edge
+    EXPECT_EQ(e2.targetPoint.x, e5.sourcePoint.x)
+        << "Test setup: Both edges should have same X coordinate (on node 1's right edge)";
+    EXPECT_EQ(e2.targetPoint.y, e5.sourcePoint.y)
+        << "Test setup: Both edges have same Y coordinate - THIS IS THE BUG!";
+
+    // Now update edge positions to see if the bug gets fixed
+    std::vector<EdgeId> allEdges = {EdgeId{2}, EdgeId{5}};
+    std::unordered_set<NodeId> movedNodes;  // All nodes
+
+    // Force redistribution by setting snap indices to -1
+    edgeLayouts[EdgeId{2}].targetSnapIndex = -1;
+    edgeLayouts[EdgeId{5}].sourceSnapIndex = -1;
+
+    float gridSize = 20.0f;
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, gridSize);
+
+    // After update, snap indices should be different
+    int e2TargetIdx = edgeLayouts[EdgeId{2}].targetSnapIndex;
+    int e5SourceIdx = edgeLayouts[EdgeId{5}].sourceSnapIndex;
+
+    std::cout << "\n===== AFTER UPDATE =====\n";
+    std::cout << "Edge 2 targetSnapIndex: " << e2TargetIdx << "\n";
+    std::cout << "Edge 5 sourceSnapIndex: " << e5SourceIdx << "\n";
+    std::cout << "Edge 2 targetPoint: (" << edgeLayouts[EdgeId{2}].targetPoint.x << ", "
+              << edgeLayouts[EdgeId{2}].targetPoint.y << ")\n";
+    std::cout << "Edge 5 sourcePoint: (" << edgeLayouts[EdgeId{5}].sourcePoint.x << ", "
+              << edgeLayouts[EdgeId{5}].sourcePoint.y << ")\n";
+    std::cout << "========================\n";
+
+    EXPECT_NE(e2TargetIdx, e5SourceIdx)
+        << "Edge 2 and Edge 5 should have different snap indices on node 1's right edge!";
+
+    // Also verify the points are now at different positions
+    bool samePosition = (std::abs(edgeLayouts[EdgeId{2}].targetPoint.x - edgeLayouts[EdgeId{5}].sourcePoint.x) < 0.1f &&
+                        std::abs(edgeLayouts[EdgeId{2}].targetPoint.y - edgeLayouts[EdgeId{5}].sourcePoint.y) < 0.1f);
+    EXPECT_FALSE(samePosition)
+        << "Edge 2 targetPoint and Edge 5 sourcePoint should be at different positions!";
+}
+
+TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge) {
+    // Reproduces scenario from user's JSON:
+    // Node 1's right edge has two connections:
+    //   - Edge 2: incoming (target on right edge), targetSnapIndex=0
+    //   - Edge 5: outgoing (source on right edge), sourceSnapIndex=0
+    // Both have index 0 - this is the bug!
+
+    Graph graph;
+
+    // Create nodes similar to interactive_demo
+    NodeId n0 = graph.addNode(Size{200, 100}, "idle");     // Layer 0
+    NodeId n1 = graph.addNode(Size{200, 100}, "running");  // Layer 1
+    NodeId n2 = graph.addNode(Size{200, 100}, "complete"); // Layer 2
+    NodeId n3 = graph.addNode(Size{200, 100}, "error");    // Layer 3
+    NodeId n4 = graph.addNode(Size{200, 100}, "paused");   // Layer 3
+
+    // Create edges - specifically Edge 2 and 5 that share node 1's right edge
+    EdgeId e0 = graph.addEdge(n0, n1);  // idle -> running
+    EdgeId e1 = graph.addEdge(n1, n2);  // running -> complete
+    EdgeId e2 = graph.addEdge(n2, n1);  // complete -> running (INCOMING to n1)
+    EdgeId e3 = graph.addEdge(n1, n3);  // running -> error
+    EdgeId e4 = graph.addEdge(n2, n3);  // complete -> error
+    EdgeId e5 = graph.addEdge(n1, n4);  // running -> paused (OUTGOING from n1)
+    EdgeId e6 = graph.addEdge(n4, n0);  // paused -> idle
+    EdgeId e7 = graph.addEdge(n4, n4);  // self-loop
+
+    (void)e0; (void)e1; (void)e3; (void)e4; (void)e6; (void)e7;  // Suppress warnings
+
+    // Run initial layout
+    SugiyamaLayout layoutAlgo;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    layoutAlgo.setOptions(options);
+    LayoutResult result = layoutAlgo.layout(graph);
+
+    // Move node 1 to position similar to user's scenario
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    for (NodeId nid : {n0, n1, n2, n3, n4}) {
+        const NodeLayout* nl = result.getNodeLayout(nid);
+        if (nl) nodeLayouts[nid] = *nl;
+    }
+    for (EdgeId eid : {e0, e1, e2, e3, e4, e5, e6, e7}) {
+        const EdgeLayout* el = result.getEdgeLayout(eid);
+        if (el) edgeLayouts[eid] = *el;
+    }
+
+    // Position nodes to match user's JSON approximately
+    nodeLayouts[n0].position = {0, 20};
+    nodeLayouts[n1].position = {-80, 500};  // running
+    nodeLayouts[n2].position = {580, 580};
+    nodeLayouts[n3].position = {620, 20};
+    nodeLayouts[n4].position = {480, 280};
+
+    // Update edge positions after moving
+    std::vector<EdgeId> allEdges;
+    for (const auto& [id, _] : edgeLayouts) {
+        allEdges.push_back(id);
+    }
+    std::unordered_set<NodeId> movedNodes = {n0, n1, n2, n3, n4};
+
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    // === Validate snap index uniqueness ===
+    // Build map: (nodeId, nodeEdge) -> list of snap indices
+    std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, int>>> snapIndexMap;
+
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        // Skip self-loops for this validation
+        if (layout.from == layout.to) continue;
+
+        // Source side
+        auto sourceKey = std::make_pair(layout.from, layout.sourceEdge);
+        snapIndexMap[sourceKey].push_back({edgeId, layout.sourceSnapIndex});
+
+        // Target side
+        auto targetKey = std::make_pair(layout.to, layout.targetEdge);
+        snapIndexMap[targetKey].push_back({edgeId, layout.targetSnapIndex});
+    }
+
+    // Check for duplicates
+    std::cout << "\n===== SNAP INDEX UNIQUENESS TEST =====\n";
+    int duplicateCount = 0;
+
+    for (const auto& [key, indexList] : snapIndexMap) {
+        if (indexList.size() <= 1) continue;
+
+        auto [nodeId, nodeEdge] = key;
+        const char* edgeName = nodeEdge == NodeEdge::Top ? "Top" :
+                              nodeEdge == NodeEdge::Bottom ? "Bottom" :
+                              nodeEdge == NodeEdge::Left ? "Left" : "Right";
+
+        std::cout << "Node " << nodeId << " " << edgeName << " edge:\n";
+
+        // Check for duplicate indices
+        std::map<int, std::vector<EdgeId>> indicesByValue;
+        for (const auto& [edgeId, idx] : indexList) {
+            indicesByValue[idx].push_back(edgeId);
+            std::cout << "  Edge " << edgeId << " -> snapIndex=" << idx << "\n";
+        }
+
+        for (const auto& [idx, edges] : indicesByValue) {
+            if (edges.size() > 1) {
+                std::cout << "  ** DUPLICATE: snapIndex=" << idx << " used by edges: ";
+                for (EdgeId eid : edges) std::cout << eid << " ";
+                std::cout << "\n";
+                duplicateCount++;
+            }
+        }
+    }
+
+    std::cout << "Total duplicate snap indices: " << duplicateCount << "\n";
+    std::cout << "======================================\n";
+
+    EXPECT_EQ(duplicateCount, 0)
+        << "Found " << duplicateCount << " duplicate snap indices on same node edge!";
+}
+
+// Bug: Node 0 (running) LEFT edge has two transitions with same snapIndex=0
+// Edge 0: from=0 (outgoing), sourceEdge=left, sourceSnapIndex=0
+// Edge 6: to=0 (incoming), targetEdge=left, targetSnapIndex=0
+TEST(EdgeRoutingTransitionTest, SnapIndices_Node0LeftEdge_TwoTransitions) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Setup nodes from user's JSON (exact positions)
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {540, 340}, {200, 100}, 0, 0};   // running (node 0)
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {-80, 500}, {200, 100}, 1, 0};   // node 1
+    nodeLayouts[NodeId{4}] = {NodeId{4}, {360, 620}, {200, 100}, 3, 1};   // stopped (node 4)
+
+    // Edge 0: running -> node1 (outgoing from node 0's LEFT edge)
+    EdgeLayout e0;
+    e0.id = EdgeId{0};
+    e0.from = NodeId{0};
+    e0.to = NodeId{1};
+    e0.sourceEdge = NodeEdge::Left;  // Node 0's LEFT edge
+    e0.targetEdge = NodeEdge::Right;
+    e0.sourceSnapIndex = 0;  // Bug: same as Edge 6
+    e0.targetSnapIndex = 0;
+    e0.sourcePoint = {540, 400};
+    e0.targetPoint = {120, 520};
+    edgeLayouts[EdgeId{0}] = e0;
+
+    // Edge 6: stopped -> running (incoming to node 0's LEFT edge)
+    EdgeLayout e6;
+    e6.id = EdgeId{6};
+    e6.from = NodeId{4};
+    e6.to = NodeId{0};
+    e6.sourceEdge = NodeEdge::Top;
+    e6.targetEdge = NodeEdge::Left;  // Node 0's LEFT edge
+    e6.sourceSnapIndex = 0;
+    e6.targetSnapIndex = 0;  // Bug: same as Edge 0
+    e6.sourcePoint = {460, 620};
+    e6.targetPoint = {540, 380};  // Same edge as e0.sourcePoint!
+    edgeLayouts[EdgeId{6}] = e6;
+
+    std::cout << "\n===== NODE 0 LEFT EDGE BUG TEST =====\n";
+    std::cout << "Initial state (both have snapIndex=0 - this is the bug!):\n";
+    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
+    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
+              << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
+    std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
+              << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
+
+    // Verify the bug exists before fix
+    EXPECT_EQ(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
+        << "Bug verification: both should initially have same snapIndex=0";
+
+    // Now call updateEdgePositions - should detect and fix duplicates automatically
+    std::vector<EdgeId> allEdges = {EdgeId{0}, EdgeId{6}};
+    std::unordered_set<NodeId> movedNodes;
+
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    std::cout << "After redistribution:\n";
+    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
+    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
+              << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
+    std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
+              << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
+    std::cout << "======================================\n";
+
+    // The core assertion: snap indices must be different
+    EXPECT_NE(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
+        << "Edge 0 and Edge 6 should have different snap indices on node 0's LEFT edge!";
+
+    // Also verify the points are different
+    bool samePosition = (std::abs(edgeLayouts[EdgeId{0}].sourcePoint.x - edgeLayouts[EdgeId{6}].targetPoint.x) < 0.1f &&
+                        std::abs(edgeLayouts[EdgeId{0}].sourcePoint.y - edgeLayouts[EdgeId{6}].targetPoint.y) < 0.1f);
+    EXPECT_FALSE(samePosition) << "Edge 0 sourcePoint and Edge 6 targetPoint should be different!";
+}
+
+// Helper function to check if two points form an orthogonal segment
+static bool isOrthogonalSegment(const Point& a, const Point& b) {
+    const float EPSILON = 0.1f;
+    bool sameX = std::abs(a.x - b.x) < EPSILON;
+    bool sameY = std::abs(a.y - b.y) < EPSILON;
+    return sameX || sameY;
+}
+
+// Bug: Edge path has non-orthogonal segment
+// This test uses the EXACT scenario from user's JSON dump
+// Path was: Source(100,100) -> Bend(100,180) -> Bend(60,180) -> Target(20,200)
+// Last segment (60,180) -> (20,200) is diagonal! (dx=-40, dy=+20)
+// Expected: All segments should be orthogonal
+TEST(EdgeRoutingTransitionTest, OrthogonalRouting_BottomToTop_AllSegmentsOrthogonal) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Setup nodes from user's exact JSON data
+    // idle node at (80, 80), size (40, 20) - source
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {80, 80}, {40, 20}, 0, 0};
+    
+    // running node at (0, 180), size (40, 40) - target  
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {0, 180}, {40, 40}, 1, 0};
+
+    // Edge: idle(Bottom) -> running(Top)
+    // But the bug was that targetPoint was at node CENTER (20,200) not TOP edge (20,180)
+    EdgeLayout edge;
+    edge.id = EdgeId{0};
+    edge.from = NodeId{0};
+    edge.to = NodeId{1};
+    edge.sourceEdge = NodeEdge::Bottom;
+    edge.targetEdge = NodeEdge::Top;
+    edge.sourceSnapIndex = 0;
+    edge.targetSnapIndex = 0;
+    
+    // Source: bottom center of idle = (80+20, 80+20) = (100, 100)
+    edge.sourcePoint = {100.0f, 100.0f};
+    // Target: From user's JSON, targetPoint was (20, 200) - CENTER not TOP edge!
+    // This might be part of the bug - wrong targetPoint calculation
+    edge.targetPoint = {20.0f, 200.0f};
+    
+    edgeLayouts[EdgeId{0}] = edge;
+
+    std::cout << "\n===== ORTHOGONAL ROUTING TEST =====\n";
+    std::cout << "Source: (" << edge.sourcePoint.x << ", " << edge.sourcePoint.y << ")\n";
+    std::cout << "Target: (" << edge.targetPoint.x << ", " << edge.targetPoint.y << ")\n";
+
+    // Call updateEdgePositions to generate bend points
+    std::vector<EdgeId> allEdges = {EdgeId{0}};
+    std::unordered_set<NodeId> movedNodes;
+    
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    const EdgeLayout& result = edgeLayouts[EdgeId{0}];
+
+    // Build full path
+    std::vector<Point> path;
+    path.push_back(result.sourcePoint);
+    for (const auto& bend : result.bendPoints) {
+        path.push_back(bend.position);
+    }
+    path.push_back(result.targetPoint);
+
+    std::cout << "Full path (" << path.size() << " points):\n";
+    for (size_t i = 0; i < path.size(); ++i) {
+        std::cout << "  [" << i << "] (" << path[i].x << ", " << path[i].y << ")\n";
+    }
+
+    // Verify all segments are orthogonal
+    bool allOrthogonal = true;
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        float dx = path[i+1].x - path[i].x;
+        float dy = path[i+1].y - path[i].y;
+        bool ortho = isOrthogonalSegment(path[i], path[i+1]);
+        
+        std::cout << "Segment " << i << ": dx=" << dx << " dy=" << dy 
+                  << " -> " << (ortho ? "OK" : "DIAGONAL!") << "\n";
+        
+        EXPECT_TRUE(ortho) 
+            << "Segment " << i << " is diagonal: "
+            << "(" << path[i].x << "," << path[i].y << ") -> "
+            << "(" << path[i+1].x << "," << path[i+1].y << ") "
+            << "dx=" << dx << " dy=" << dy;
+        
+        if (!ortho) allOrthogonal = false;
+    }
+    
+    std::cout << "Result: " << (allOrthogonal ? "ALL ORTHOGONAL" : "HAS DIAGONAL SEGMENTS") << "\n";
+    std::cout << "======================================\n";
+}
+
+// Test that validateEdgeLayout correctly detects non-orthogonal paths
+// This simulates the bug where path has diagonal segment
+TEST(EdgeRoutingTransitionTest, OrthogonalValidation_DetectsDiagonalSegment) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+
+    // Setup minimal nodes
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {80, 80}, {40, 20}, 0, 0};
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {0, 180}, {40, 40}, 1, 0};
+
+    // Create edge layout with the EXACT buggy path from user's report:
+    // (100,100) -> (100,180) -> (60,180) -> (20,200)
+    // Last segment is DIAGONAL!
+    EdgeLayout buggyEdge;
+    buggyEdge.id = EdgeId{0};
+    buggyEdge.from = NodeId{0};
+    buggyEdge.to = NodeId{1};
+    buggyEdge.sourceEdge = NodeEdge::Bottom;
+    buggyEdge.targetEdge = NodeEdge::Top;
+    buggyEdge.sourcePoint = {100.0f, 100.0f};
+    buggyEdge.targetPoint = {20.0f, 200.0f};  // Wrong! Should be (20, 180) for Top edge
+    
+    // Manually set bend points to reproduce the buggy path
+    buggyEdge.bendPoints.push_back({{100.0f, 180.0f}});
+    buggyEdge.bendPoints.push_back({{60.0f, 180.0f}});
+    
+    std::cout << "\n===== VALIDATION TEST: DIAGONAL SEGMENT =====\n";
+    std::cout << "Path: (100,100) -> (100,180) -> (60,180) -> (20,200)\n";
+    std::cout << "Last segment (60,180)->(20,200) has dx=-40, dy=20 - DIAGONAL!\n";
+
+    // Validate this buggy layout
+    auto validation = EdgeRouting::validateEdgeLayout(buggyEdge, nodeLayouts);
+    
+    std::cout << "Validation result:\n";
+    std::cout << "  valid: " << (validation.valid ? "true" : "false") << "\n";
+    std::cout << "  orthogonal: " << (validation.orthogonal ? "true" : "false") << "\n";
+    std::cout << "  Error: " << validation.getErrorDescription() << "\n";
+    std::cout << "============================================\n";
+
+    // The validation MUST detect this as non-orthogonal
+    EXPECT_FALSE(validation.orthogonal) 
+        << "Validation should detect the diagonal segment (60,180)->(20,200)!";
+    EXPECT_FALSE(validation.valid)
+        << "Edge with diagonal segment should be invalid!";
+}
+
+// Bug: Edge from paused(bottom) to stopped(top) has empty bendPoints
+// Path is direct (100,500) -> (60,600) which is DIAGONAL!
+// Should have bend points like (100,500) -> (100,600) -> (60,600)
+TEST(EdgeRoutingTransitionTest, OrthogonalRouting_EmptyBendPoints_DirectDiagonal) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // From interactive_demo JSON:
+    // paused (node 2): position (0, 400), size (200, 100)
+    nodeLayouts[NodeId{2}] = {NodeId{2}, {0, 400}, {200, 100}, 2, 0};
+    
+    // stopped (node 3): position (0, 600), size (200, 100)
+    nodeLayouts[NodeId{3}] = {NodeId{3}, {0, 600}, {200, 100}, 3, 0};
+
+    // Edge 4: paused(bottom) -> stopped(top)
+    EdgeLayout edge;
+    edge.id = EdgeId{4};
+    edge.from = NodeId{2};
+    edge.to = NodeId{3};
+    edge.sourceEdge = NodeEdge::Bottom;
+    edge.targetEdge = NodeEdge::Top;
+    edge.sourceSnapIndex = 0;
+    edge.targetSnapIndex = 0;
+    
+    // From JSON: sourcePoint (100, 500), targetPoint (60, 600)
+    edge.sourcePoint = {100.0f, 500.0f};
+    edge.targetPoint = {60.0f, 600.0f};
+    
+    edgeLayouts[EdgeId{4}] = edge;
+
+    std::cout << "\n===== EMPTY BENDPOINTS BUG TEST =====\n";
+    std::cout << "Before: Source(" << edge.sourcePoint.x << "," << edge.sourcePoint.y << ")"
+              << " -> Target(" << edge.targetPoint.x << "," << edge.targetPoint.y << ")\n";
+    std::cout << "Direct path dx=" << (edge.targetPoint.x - edge.sourcePoint.x) 
+              << " dy=" << (edge.targetPoint.y - edge.sourcePoint.y) << " - DIAGONAL!\n";
+
+    // Call updateEdgePositions - should generate bend points
+    std::vector<EdgeId> allEdges = {EdgeId{4}};
+    std::unordered_set<NodeId> movedNodes;
+    
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    const EdgeLayout& result = edgeLayouts[EdgeId{4}];
+
+    std::cout << "After updateEdgePositions:\n";
+    std::cout << "  Source: (" << result.sourcePoint.x << ", " << result.sourcePoint.y << ")\n";
+    for (size_t i = 0; i < result.bendPoints.size(); ++i) {
+        std::cout << "  Bend " << i << ": (" << result.bendPoints[i].position.x 
+                  << ", " << result.bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  Target: (" << result.targetPoint.x << ", " << result.targetPoint.y << ")\n";
+
+    // Build full path and check orthogonality
+    std::vector<Point> path;
+    path.push_back(result.sourcePoint);
+    for (const auto& bend : result.bendPoints) {
+        path.push_back(bend.position);
+    }
+    path.push_back(result.targetPoint);
+
+    // If source and target X differ, we MUST have bend points
+    float dx = std::abs(result.targetPoint.x - result.sourcePoint.x);
+    float dy = std::abs(result.targetPoint.y - result.sourcePoint.y);
+    
+    if (dx > 0.1f && dy > 0.1f) {
+        // Different X AND Y means we need bend points for orthogonal path
+        EXPECT_FALSE(result.bendPoints.empty())
+            << "Edge needs bend points when source and target have different X and Y!";
+    }
+
+    // Verify all segments are orthogonal
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        bool ortho = isOrthogonalSegment(path[i], path[i+1]);
+        float segDx = path[i+1].x - path[i].x;
+        float segDy = path[i+1].y - path[i].y;
+        
+        std::cout << "Segment " << i << ": dx=" << segDx << " dy=" << segDy 
+                  << " -> " << (ortho ? "OK" : "DIAGONAL!") << "\n";
+        
+        EXPECT_TRUE(ortho) 
+            << "Segment " << i << " is diagonal!";
+    }
+    std::cout << "======================================\n";
+}
+
+// Bug reproduction with EXACT interactive_demo layout
+// Edge 4: paused(bottom) -> stopped(top) has empty bendPoints causing diagonal
+TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge4_PausedToStopped_Diagonal) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Exact node layouts from interactive_demo JSON
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {0, 0}, {200, 100}, 0, 0};       // layer 0
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {100, 200}, {200, 100}, 1, 0};   // layer 1
+    nodeLayouts[NodeId{2}] = {NodeId{2}, {0, 400}, {200, 100}, 2, 0};     // paused, layer 2
+    nodeLayouts[NodeId{3}] = {NodeId{3}, {0, 600}, {200, 100}, 3, 0};     // stopped, layer 3
+    nodeLayouts[NodeId{4}] = {NodeId{4}, {300, 600}, {200, 100}, 3, 1};   // layer 3
+
+    // Edge 4: paused(bottom) -> stopped(top) - the buggy edge
+    EdgeLayout edge4;
+    edge4.id = EdgeId{4};
+    edge4.from = NodeId{2};  // paused
+    edge4.to = NodeId{3};    // stopped
+    edge4.sourceEdge = NodeEdge::Bottom;
+    edge4.targetEdge = NodeEdge::Top;
+    edge4.sourceSnapIndex = 0;
+    edge4.targetSnapIndex = 0;
+    edge4.sourcePoint = {100.0f, 500.0f};  // bottom center of paused
+    edge4.targetPoint = {60.0f, 600.0f};   // WRONG: should be aligned or have bends
+    // bendPoints is empty - THIS IS THE BUG
+    
+    edgeLayouts[EdgeId{4}] = edge4;
+
+    std::cout << "\n===== INTERACTIVE_DEMO EDGE 4 BUG =====\n";
+    std::cout << "Edge 4: paused(bottom) -> stopped(top)\n";
+    std::cout << "Before: (" << edge4.sourcePoint.x << "," << edge4.sourcePoint.y << ")"
+              << " -> (" << edge4.targetPoint.x << "," << edge4.targetPoint.y << ")\n";
+    std::cout << "bendPoints: " << edge4.bendPoints.size() << " (empty!)\n";
+    std::cout << "Direct path is DIAGONAL: dx=" << (edge4.targetPoint.x - edge4.sourcePoint.x)
+              << " dy=" << (edge4.targetPoint.y - edge4.sourcePoint.y) << "\n";
+
+    // Validate BEFORE update - should detect diagonal
+    auto validationBefore = EdgeRouting::validateEdgeLayout(edge4, nodeLayouts);
+    std::cout << "Validation before: orthogonal=" << (validationBefore.orthogonal ? "true" : "false") << "\n";
+    
+    EXPECT_FALSE(validationBefore.orthogonal)
+        << "Empty bendPoints with misaligned source/target should be detected as non-orthogonal!";
+
+    // Now try to fix with updateEdgePositions
+    std::vector<EdgeId> allEdges = {EdgeId{4}};
+    std::unordered_set<NodeId> movedNodes;
+    
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
+
+    const EdgeLayout& result = edgeLayouts[EdgeId{4}];
+
+    std::cout << "\nAfter updateEdgePositions:\n";
+    std::cout << "  Source: (" << result.sourcePoint.x << ", " << result.sourcePoint.y << ")\n";
+    for (size_t i = 0; i < result.bendPoints.size(); ++i) {
+        std::cout << "  Bend " << i << ": (" << result.bendPoints[i].position.x 
+                  << ", " << result.bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  Target: (" << result.targetPoint.x << ", " << result.targetPoint.y << ")\n";
+
+    // Validate AFTER update
+    auto validationAfter = EdgeRouting::validateEdgeLayout(result, nodeLayouts);
+    std::cout << "Validation after: orthogonal=" << (validationAfter.orthogonal ? "true" : "false") << "\n";
+    std::cout << "======================================\n";
+
+    EXPECT_TRUE(validationAfter.orthogonal)
+        << "After updateEdgePositions, path should be orthogonal!";
+}

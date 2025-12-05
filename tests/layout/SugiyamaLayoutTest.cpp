@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
+#include "../src/layout/sugiyama/SelfLoopRouter.h"
 
 using namespace arborvia;
 
@@ -329,7 +330,6 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_SelfLoop_RoutesCorrectly) {
 
     LayoutOptions options;
 
-
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
 
@@ -349,6 +349,43 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_SelfLoop_RoutesCorrectly) {
         std::pow(edgeLayout->sourcePoint.y - edgeLayout->targetPoint.y, 2)
     );
     EXPECT_GT(distance, 5.0f);  // Should be separated
+
+    // CONSTRAINT: Self-loop must use adjacent edges (not same or opposite)
+    EXPECT_TRUE(SelfLoopRouter::isValidSelfLoopCombination(
+        edgeLayout->sourceEdge, edgeLayout->targetEdge))
+        << "Self-loop must use adjacent edges! "
+        << "sourceEdge=" << static_cast<int>(edgeLayout->sourceEdge)
+        << " targetEdge=" << static_cast<int>(edgeLayout->targetEdge);
+
+    // CONSTRAINT: Arrow direction must be correct
+    // The last bend point before target must approach from outside the node
+    const NodeLayout* nodeLayout = result.getNodeLayout(n1);
+    ASSERT_NE(nodeLayout, nullptr);
+
+    if (edgeLayout->bendPoints.size() >= 1) {
+        Point lastBend = edgeLayout->bendPoints.back().position;
+        Point target = edgeLayout->targetPoint;
+
+        // Check arrow comes from correct direction based on target edge
+        switch (edgeLayout->targetEdge) {
+            case NodeEdge::Top:
+                EXPECT_LT(lastBend.y, nodeLayout->position.y)
+                    << "Arrow to top edge must come from above (y < nodeTop)";
+                break;
+            case NodeEdge::Bottom:
+                EXPECT_GT(lastBend.y, nodeLayout->position.y + nodeLayout->size.height)
+                    << "Arrow to bottom edge must come from below (y > nodeBottom)";
+                break;
+            case NodeEdge::Left:
+                EXPECT_LT(lastBend.x, nodeLayout->position.x)
+                    << "Arrow to left edge must come from left (x < nodeLeft)";
+                break;
+            case NodeEdge::Right:
+                EXPECT_GT(lastBend.x, nodeLayout->position.x + nodeLayout->size.width)
+                    << "Arrow to right edge must come from right (x > nodeRight)";
+                break;
+        }
+    }
 }
 
 TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleSelfLoops_Stacked) {
@@ -358,7 +395,6 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleSelfLoops_Stacked) {
     EdgeId loop2 = graph.addEdge(n1, n1);
 
     LayoutOptions options;
-
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -377,6 +413,14 @@ TEST(SugiyamaLayoutTest, ChannelOrthogonal_MultipleSelfLoops_Stacked) {
     // Both should have bend points
     EXPECT_GE(edge1->bendPoints.size(), 2);
     EXPECT_GE(edge2->bendPoints.size(), 2);
+
+    // CONSTRAINT: Both self-loops must use adjacent edges
+    EXPECT_TRUE(SelfLoopRouter::isValidSelfLoopCombination(
+        edge1->sourceEdge, edge1->targetEdge))
+        << "Self-loop 1 must use adjacent edges!";
+    EXPECT_TRUE(SelfLoopRouter::isValidSelfLoopCombination(
+        edge2->sourceEdge, edge2->targetEdge))
+        << "Self-loop 2 must use adjacent edges!";
 
     // The loops should be at different offsets (stacked)
     // Check that bend points are different

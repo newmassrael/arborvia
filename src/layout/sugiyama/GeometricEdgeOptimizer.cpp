@@ -129,6 +129,15 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     candidate.sourceEdge = sourceEdge;
     candidate.targetEdge = targetEdge;
 
+    // When edge routing changes, mark snap indices for redistribution
+    // This prevents duplicate snap indices on the same node edge
+    if (sourceEdge != base.sourceEdge) {
+        candidate.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
+    }
+    if (targetEdge != base.targetEdge) {
+        candidate.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
+    }
+
     auto srcIt = nodeLayouts.find(base.from);
     auto tgtIt = nodeLayouts.find(base.to);
 
