@@ -3,7 +3,6 @@
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "arborvia/layout/IPathFinder.h"
 #include "arborvia/layout/ValidRegionCalculator.h"
-#include "EdgeScorer.h"
 
 #include <memory>
 #include <vector>
@@ -26,17 +25,12 @@ class ObstacleMap;
 /// when scoring intersections.
 class AStarEdgeOptimizer : public IEdgeOptimizer {
 public:
-    /// Constructor with optional pathfinder and scoring weights
+    /// Constructor with optional pathfinder
     /// @param pathFinder Pathfinder for calculating orthogonal routes (uses AStarPathFinder if null)
-    /// @param weights Scoring weights for optimization
     /// @param gridSize Grid cell size for pathfinding (0 = use default)
     explicit AStarEdgeOptimizer(
         std::shared_ptr<IPathFinder> pathFinder = nullptr,
-        const ScoringWeights& weights = {},
         float gridSize = 0.0f);
-
-    /// Legacy constructor for backward compatibility
-    explicit AStarEdgeOptimizer(const ScoringWeights& weights);
 
     /// Optimize edge routing by evaluating all 16 combinations per edge
     /// Uses A* pathfinding for each combination to find optimal paths
@@ -51,11 +45,12 @@ public:
 
     const char* algorithmName() const override { return "AStar"; }
 
-    /// Set scoring weights
-    void setWeights(const ScoringWeights& weights);
-
-    /// Get current scoring weights
-    const ScoringWeights& weights() const;
+    /// Regenerate bendPoints using A* pathfinding
+    /// Preserves existing sourceEdge/targetEdge, only recreates path geometry
+    void regenerateBendPoints(
+        const std::vector<EdgeId>& edges,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
 
     /// Set pathfinder
     void setPathFinder(std::shared_ptr<IPathFinder> pathFinder);
@@ -64,7 +59,6 @@ public:
     void setGridSize(float gridSize);
 
 private:
-    EdgeScorer scorer_;
     std::shared_ptr<IPathFinder> pathFinder_;
     float gridSize_ = 0.0f;
 
@@ -144,6 +138,48 @@ private:
     std::vector<ForbiddenZone> calculateForbiddenZones(
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize) const;
+
+    /// Result of cooperative rerouting for an edge pair
+    struct EdgePairResult {
+        EdgeLayout layoutA;
+        EdgeLayout layoutB;
+        int combinedScore;
+        bool valid = false;
+    };
+
+    /// Resolve overlapping edge pair by cooperative rerouting
+    /// Removes both edges from obstacle map and evaluates 16×16 = 256 combinations
+    /// to find the best non-overlapping (pathA, pathB) pair.
+    /// @param edgeIdA First edge
+    /// @param edgeIdB Second edge
+    /// @param layoutA Current layout for first edge
+    /// @param layoutB Current layout for second edge
+    /// @param assignedLayouts All currently assigned layouts
+    /// @param nodeLayouts Node positions
+    /// @param forbiddenZones Pre-calculated forbidden zones
+    /// @return Best non-overlapping pair result (valid=false if none found)
+    EdgePairResult resolveOverlappingPair(
+        EdgeId edgeIdA, EdgeId edgeIdB,
+        const EdgeLayout& layoutA, const EdgeLayout& layoutB,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones);
+
+    /// Evaluate self-loop combinations for a single edge
+    /// Tries all 4 directions (Right, Left, Top, Bottom) and returns
+    /// sorted results based on penalty scores.
+    /// @param edgeId Edge being optimized
+    /// @param baseLayout Original layout
+    /// @param assignedLayouts Layouts already assigned (for overlap checking)
+    /// @param nodeLayouts Node positions
+    /// @param forbiddenZones Pre-calculated forbidden zones
+    /// @return Vector of valid combination results, sorted by score (best first)
+    std::vector<CombinationResult> evaluateSelfLoopCombinations(
+        EdgeId edgeId,
+        const EdgeLayout& baseLayout,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones);
 };
 
 

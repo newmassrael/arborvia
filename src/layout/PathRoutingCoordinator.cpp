@@ -77,6 +77,15 @@ void PathRoutingCoordinator::onDragEnd() {
     }
 }
 
+void PathRoutingCoordinator::addPendingEdges(const std::vector<EdgeId>& edges) {
+    for (const auto& edgeId : edges) {
+        // Add only if not already in pending list
+        if (std::find(pendingEdges_.begin(), pendingEdges_.end(), edgeId) == pendingEdges_.end()) {
+            pendingEdges_.push_back(edgeId);
+        }
+    }
+}
+
 void PathRoutingCoordinator::update(uint64_t currentTimeMs) {
     if (state_ != RoutingState::Pending) {
         return;  // Nothing to do

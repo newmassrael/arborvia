@@ -1,8 +1,10 @@
 #pragma once
 
 #include "arborvia/layout/IObstacleProvider.h"
+#include "arborvia/layout/MoveDirection.h"
 #include "arborvia/layout/LayoutResult.h"
 
+#include <array>
 #include <unordered_map>
 #include <vector>
 #include <limits>
@@ -21,6 +23,21 @@ public:
     struct GridCell {
         bool blocked = false;
         std::vector<NodeId> blockingNodes;  ///< All nodes that block this cell
+
+        // Direction-aware edge segment blocking:
+        // These flags indicate that existing edge segments occupy this cell
+        // with specific orientations. Paths can cross at right angles but
+        // cannot overlap parallel segments.
+        bool horizontalSegment = false;  ///< Horizontal edge segment exists
+        bool verticalSegment = false;    ///< Vertical edge segment exists
+    };
+
+    /// Visualization info for a cell (for GUI rendering)
+    struct CellVisInfo {
+        bool isNodeBlocked = false;
+        bool hasHorizontalSegment = false;
+        bool hasVerticalSegment = false;
+        std::vector<NodeId> blockingNodes;
     };
 
     ObstacleMap() = default;
@@ -45,6 +62,32 @@ public:
     /// Clear edge segment obstacles (keeps node obstacles)
     void clearEdgeSegments();
 
+    // === Per-Edge Path Tracking (for Rip-up and Reroute) ===
+
+    /// Mark an edge's path on the grid with cost overlay
+    /// This increases the cost for cells along the path (but doesn't block them)
+    /// @param edgeId The edge ID
+    /// @param path Grid coordinates of the path
+    void markEdgePath(EdgeId edgeId, const std::vector<GridPoint>& path);
+
+    /// Clear a specific edge's path from the cost overlay
+    /// @param edgeId The edge ID to clear
+    void clearEdgePath(EdgeId edgeId);
+
+    /// Clear all edge paths from the cost overlay
+    void clearAllEdgePaths();
+
+    /// Get all registered edge paths
+    /// @return Map of edge ID to grid path
+    const std::unordered_map<EdgeId, std::vector<GridPoint>>& getEdgePaths() const {
+        return edgePaths_;
+    }
+
+    /// Check if an edge path is registered
+    bool hasEdgePath(EdgeId edgeId) const {
+        return edgePaths_.find(edgeId) != edgePaths_.end();
+    }
+
     /// Check if a grid coordinate is blocked
     /// @param gridX Grid X coordinate
     /// @param gridY Grid Y coordinate
@@ -58,6 +101,18 @@ public:
     /// @return True if blocked by a node not in exclude set
     bool isBlocked(int gridX, int gridY, 
                    const std::unordered_set<NodeId>& exclude) const override;
+
+    /// Check if a grid coordinate is blocked for a specific movement direction
+    /// Node obstacles block all directions. Edge segment obstacles only block
+    /// parallel movement (horizontal segments block horizontal movement, etc.)
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @param moveDir The direction of movement to check
+    /// @param exclude Nodes to exclude from blocking check
+    /// @return True if movement in the specified direction is blocked
+    bool isBlockedForDirection(int gridX, int gridY,
+                               MoveDirection moveDir,
+                               const std::unordered_set<NodeId>& exclude) const override;
 
     /// Check if an orthogonal segment is blocked
     /// Segment must be axis-aligned (horizontal or vertical)
@@ -85,8 +140,17 @@ public:
     int offsetX() const { return offsetX_; }
     int offsetY() const { return offsetY_; }
 
+    /// Get grid offset as Point (pixel coordinates)
+    Point getOffset() const { return { offsetX_ * gridSize_, offsetY_ * gridSize_ }; }
+
     /// Get grid size in pixels
     float gridSize() const { return gridSize_; }
+
+    /// Get cell visualization info (for GUI rendering)
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @return CellVisInfo with blocking details
+    CellVisInfo getCellVisInfo(int gridX, int gridY) const;
 
     /// Convert pixel coordinate to grid coordinate
     GridPoint pixelToGrid(const Point& p) const override;
@@ -97,6 +161,27 @@ public:
     /// Check if grid coordinates are within bounds
     bool inBounds(int gridX, int gridY) const override;
 
+    // === Cost-based Pathfinding Support ===
+
+    /// Get movement cost for a cell (overrides IObstacleProvider default)
+    /// Returns accumulated cost from node blocking and edge paths
+    int getCost(int gridX, int gridY) const override;
+
+    /// Get movement cost for a specific direction
+    /// Allows direction-aware costing (parallel to existing edge = higher cost)
+    int getCostForDirection(int gridX, int gridY, MoveDirection moveDir) const override;
+
+    /// Get movement cost with exclusions and proximity penalty
+    /// Includes gradient penalty for cells near unrelated nodes (not in exclude set)
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @param moveDir The direction of movement
+    /// @param exclude Nodes to exclude from proximity penalty (typically source/target)
+    /// @return Cost value including proximity penalty for unrelated nodes
+    int getCostForDirectionWithExcludes(int gridX, int gridY,
+                                         MoveDirection moveDir,
+                                         const std::unordered_set<NodeId>& exclude) const override;
+
 private:
     /// Convert grid coordinates to internal array index
     /// @return -1 if out of bounds
@@ -104,6 +189,10 @@ private:
 
     /// Mark a line segment on the grid as blocked
     void markSegmentBlocked(const Point& p1, const Point& p2, bool isEdgeSegment);
+    
+    /// Mark a line segment as blocked, skipping first and last cells
+    /// This allows multiple edges to share entry/exit points near nodes
+    void markSegmentBlockedSkipEndpoints(const Point& p1, const Point& p2);
 
     std::vector<GridCell> grid_;
     std::vector<bool> edgeSegmentCells_;  ///< Track cells blocked by edge segments
@@ -113,6 +202,28 @@ private:
     int offsetY_ = 0;
     float gridSize_ = 1.0f;
     SafeZones safeZones_;
+
+    // === Per-Edge Path Tracking ===
+    std::unordered_map<EdgeId, std::vector<GridPoint>> edgePaths_;  ///< Edge ID -> grid path
+    std::unordered_map<int, int> edgeCostOverlay_;  ///< Cell index -> accumulated edge cost
+    std::unordered_map<int, std::vector<EdgeId>> cellToEdges_;  ///< Cell index -> edges using this cell
+
+    // === Pre-calculated Proximity Map ===
+    static constexpr int PROXIMITY_RADIUS = 3;  ///< Grid cells beyond node boundary to apply proximity penalty
+    static constexpr int MAX_PROXIMITY_ENTRIES = 3;  ///< Max nodes to track per cell for proximity
+
+    /// Entry for a node within proximity range of a cell
+    struct ProximityEntry {
+        NodeId nodeId = INVALID_NODE;
+        int distance = PROXIMITY_RADIUS + 1;  ///< Distance to node boundary (0 = adjacent)
+    };
+
+    /// Pre-calculated proximity info for each cell
+    /// Stores up to MAX_PROXIMITY_ENTRIES closest nodes
+    std::vector<std::array<ProximityEntry, MAX_PROXIMITY_ENTRIES>> proximityMap_;
+
+    /// Build proximity map during buildFromNodes
+    void buildProximityMap();
 };
 
 

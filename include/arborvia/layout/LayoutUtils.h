@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arborvia/core/Types.h"
+#include "arborvia/core/Graph.h"
 #include "arborvia/layout/LayoutResult.h"
 #include "arborvia/layout/LayoutOptions.h"
 #include "arborvia/layout/ConstraintManager.h"
@@ -10,58 +11,62 @@
 #include <unordered_set>
 #include <vector>
 #include <memory>
+#include <string>
+
+#include "arborvia/layout/MoveDirection.h"
 
 namespace arborvia {
 
 class PathRoutingCoordinator;
 
+/// Result of node move operation
+struct MoveResult {
+    bool success = false;           ///< True if move was successful
+    Point actualPosition{0, 0};     ///< Actual position after move (may be clamped)
+    std::string reason;             ///< Failure reason if !success
+    std::vector<EdgeId> affectedEdges;  ///< Edges that were re-routed
+};
+
 /// Utility functions for interactive layout manipulation
 class LayoutUtils {
 public:
-    /// Update edge positions when nodes move (for interactive drag)
-    /// Preserves edge routing (sourceEdge, targetEdge) but recalculates snap positions
-    /// @param edgeLayouts The edge layouts to update (modified in place)
-    /// @param nodeLayouts Current node positions
-    /// @param affectedEdges Edges that need updating (connected to moved nodes)
-    /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
-    ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
-    /// @param gridSize Grid size for snapping (0 = no snapping)
-    static void updateEdgePositions(
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<EdgeId>& affectedEdges,
-        const std::unordered_set<NodeId>& movedNodes = {},
-        float gridSize = 0.0f);
+    // ========== Primary API (use these) ==========
 
-    /// Update edge positions using a routing coordinator for algorithm selection
-    /// The coordinator determines which pathfinder to use based on drag state
-    /// @param edgeLayouts The edge layouts to update (modified in place)
-    /// @param nodeLayouts Current node positions
-    /// @param affectedEdges Edges that need updating (connected to moved nodes)
-    /// @param coordinator Routing coordinator for pathfinder selection
-    /// @param movedNodes Optional set of nodes that actually moved
-    /// @param gridSize Grid size for snapping (0 = no snapping)
-    static void updateEdgePositions(
+    /// Move a node with full validation and edge re-routing
+    /// This is the main API for interactive node dragging
+    /// @param nodeId Node to move
+    /// @param newPosition Desired new position
+    /// @param nodeLayouts Node layouts (modified in place if successful)
+    /// @param edgeLayouts Edge layouts (modified in place for re-routing)
+    /// @param graph Graph for edge connectivity
+    /// @param options Layout options for edge routing
+    /// @return MoveResult indicating success/failure and affected edges
+    static MoveResult moveNode(
+        NodeId nodeId,
+        Point newPosition,
+        std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<EdgeId>& affectedEdges,
-        PathRoutingCoordinator& coordinator,
-        const std::unordered_set<NodeId>& movedNodes = {},
-        float gridSize = 0.0f);
+        const Graph& graph,
+        const LayoutOptions& options);
 
-    /// Update edge positions with full layout options (supports greedy optimization)
-    /// Use this when you want greedy optimization during drag for better path quality
-    /// @param edgeLayouts The edge layouts to update (modified in place)
-    /// @param nodeLayouts Current node positions
-    /// @param affectedEdges Edges that need updating (connected to moved nodes)
-    /// @param options Layout options including optimization settings
-    /// @param movedNodes Optional set of nodes that actually moved
-    static void updateEdgePositions(
+    /// Move a node with pre-calculated forbidden zones (faster for continuous drag)
+    /// Use this when drag starts - calculate zones once, then use for all moves
+    /// @param nodeId Node to move
+    /// @param newPosition Desired new position
+    /// @param nodeLayouts Node layouts (modified in place if successful)
+    /// @param edgeLayouts Edge layouts (modified in place for re-routing)
+    /// @param graph Graph for edge connectivity
+    /// @param options Layout options for edge routing
+    /// @param preCalculatedZones Forbidden zones calculated at drag start
+    /// @return MoveResult indicating success/failure and affected edges
+    static MoveResult moveNode(
+        NodeId nodeId,
+        Point newPosition,
+        std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<EdgeId>& affectedEdges,
+        const Graph& graph,
         const LayoutOptions& options,
-        const std::unordered_set<NodeId>& movedNodes = {});
+        const std::vector<ForbiddenZone>& preCalculatedZones);
 
     /// Result of edge hit test with insertion info
     struct EdgeHitResult {
@@ -119,71 +124,89 @@ public:
     /// @return Optimal label position
     static Point calculateEdgeLabelPosition(const EdgeLayout& edge);
 
-    /// Result of drag validation check
-    struct DragValidation {
-        bool valid = true;              ///< True if node can be moved to this position
-        std::vector<EdgeId> invalidEdges;  ///< Edges that would have invalid routing
+    // ========== Direction Helpers ==========
+
+    /// Get required exit direction from source node edge
+    /// @param sourceEdge Which edge the connection exits from
+    /// @return Direction the path must initially move in
+    static MoveDirection getRequiredSourceDirection(NodeEdge sourceEdge);
+
+    /// Get required arrival direction to target node edge
+    /// @param targetEdge Which edge the connection enters
+    /// @return Direction the path must arrive from
+    static MoveDirection getRequiredTargetArrivalDirection(NodeEdge targetEdge);
+
+    /// Get the direction of the first segment in an edge path
+    /// @param edge The edge layout
+    /// @return Direction of the first segment, or None if empty
+    static MoveDirection getFirstSegmentDirection(const EdgeLayout& edge);
+
+    /// Get the direction of the last segment in an edge path
+    /// @param edge The edge layout
+    /// @return Direction of the last segment, or None if empty
+    static MoveDirection getLastSegmentDirection(const EdgeLayout& edge);
+
+    // ========== Snap Point Manipulation API ==========
+
+    /// Result of snap point move operation
+    struct SnapMoveResult {
+        bool success = false;           ///< True if move was successful
+        Point actualPosition{0, 0};     ///< Actual snap point position after move
+        NodeEdge newEdge = NodeEdge::Top;  ///< Edge the snap point is now on
+        int newSnapIndex = 0;           ///< New snap index on that edge
+        std::vector<EdgeId> redistributedEdges;  ///< Other edges that were pushed/redistributed
+        std::string reason;             ///< Failure reason if !success
     };
 
-    /// Check if a node can be moved to a specific position
-    /// Uses ValidRegionCalculator to check forbidden zones based on edge counts
-    /// @param nodeId Node being moved
-    /// @param newPosition Proposed new position
-    /// @param nodeLayouts Current node layouts
-    /// @param edgeLayouts Current edge layouts (used to count edges per direction)
-    /// @param gridSize Grid size for margin calculations
-    /// @return DragValidation indicating if move is valid
-    static DragValidation canMoveNodeTo(
-        NodeId nodeId,
+    /// Move an edge's snap point to a new position on the node
+    /// This will:
+    /// 1. Calculate which edge and position the new point falls on
+    /// 2. Redistribute other snap points on that edge to make room
+    /// 3. Re-route the edge path
+    /// @param edgeId Edge whose snap point to move
+    /// @param isSource True to move source snap, false to move target snap
+    /// @param newPosition Desired new position (will be snapped to node edge)
+    /// @param nodeLayouts Node layouts
+    /// @param edgeLayouts Edge layouts (modified in place)
+    /// @param graph Graph for connectivity
+    /// @param options Layout options
+    /// @return SnapMoveResult with actual position and redistributed edges
+    static SnapMoveResult moveSnapPoint(
+        EdgeId edgeId,
+        bool isSource,
         Point newPosition,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        float gridSize = 20.0f);
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const Graph& graph,
+        const LayoutOptions& options);
 
-    /// Check if a node can be moved to a specific position with custom constraints
-    /// @param nodeId Node being moved
-    /// @param newPosition Proposed new position
-    /// @param nodeLayouts Current node layouts
-    /// @param edgeLayouts Current edge layouts
-    /// @param constraintManager Custom constraint manager to use
-    /// @param gridSize Grid size for routing calculations
-    /// @return DragValidation indicating if move is valid
-    static DragValidation canMoveNodeTo(
-        NodeId nodeId,
-        Point newPosition,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const ConstraintManager& constraintManager,
-        float gridSize = 20.0f);
+    /// Calculate which node edge a point is closest to
+    /// @param point The query point
+    /// @param node The node layout
+    /// @return Pair of (edge, relative position 0-1 along that edge)
+    static std::pair<NodeEdge, float> findClosestNodeEdge(
+        const Point& point,
+        const NodeLayout& node);
 
-    /// Check if a node can be moved to a specific position using ConstraintConfig
-    /// @param nodeId Node being moved
-    /// @param newPosition Proposed new position
-    /// @param nodeLayouts Current node layouts
-    /// @param edgeLayouts Current edge layouts
-    /// @param config Constraint configuration
-    /// @param gridSize Grid size for routing calculations
-    /// @return DragValidation indicating if move is valid
-    static DragValidation canMoveNodeTo(
+    /// Redistribute snap points on a node edge to accommodate a fixed position
+    /// @param nodeId The node whose edge to redistribute
+    /// @param edge Which edge (Top, Bottom, Left, Right)
+    /// @param fixedEdgeId Edge that has a fixed position (won't be moved)
+    /// @param fixedPosition The fixed relative position (0-1) for that edge
+    /// @param nodeLayouts Node layouts
+    /// @param edgeLayouts Edge layouts (modified in place)
+    /// @param graph Graph for connectivity
+    /// @param options Layout options
+    /// @return List of edge IDs that were redistributed
+    static std::vector<EdgeId> redistributeSnapPoints(
         NodeId nodeId,
-        Point newPosition,
+        NodeEdge edge,
+        EdgeId fixedEdgeId,
+        float fixedPosition,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const ConstraintConfig& config,
-        float gridSize = 20.0f);
-
-    /// Check if a node can be moved using pre-calculated forbidden zones
-    /// Use this for consistent validation with visualization during drag
-    /// @param nodeId Node being moved
-    /// @param newPosition Proposed new position
-    /// @param nodeLayouts Current node layouts (for node size lookup)
-    /// @param preCalculatedZones Forbidden zones calculated at drag start
-    /// @return DragValidation indicating if move is valid
-    static DragValidation canMoveNodeTo(
-        NodeId nodeId,
-        Point newPosition,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& preCalculatedZones);
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const Graph& graph,
+        const LayoutOptions& options);
 
     /// Get edges connected to a node
     /// @param nodeId The node to query
@@ -194,7 +217,7 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts);
 
     /// Fast check if a node position would overlap with other nodes
-    /// Much faster than canMoveNodeTo - use for real-time drag feedback
+    /// Much faster than full validation - use for real-time drag feedback
     /// @param nodeId Node being moved
     /// @param newPosition Proposed new position
     /// @param nodeLayouts Current node layouts
@@ -205,6 +228,74 @@ public:
         Point newPosition,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float margin = 0.0f);
+
+    // ========== Internal API (for advanced use) ==========
+    // These are exposed for cases where you need fine-grained control
+    // Prefer using moveNode() for most use cases
+
+    /// Result of drag validation check
+    struct DragValidation {
+        bool valid = true;              ///< True if node can be moved to this position
+        std::vector<EdgeId> invalidEdges;  ///< Edges that would have invalid routing
+    };
+
+    /// Update edge positions when nodes move (internal - prefer moveNode())
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
+
+    /// Update edge positions using a routing coordinator (internal)
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        PathRoutingCoordinator& coordinator,
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
+
+    /// Update edge positions with full layout options (internal)
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const LayoutOptions& options,
+        const std::unordered_set<NodeId>& movedNodes = {});
+
+    /// Check if a node can be moved to a specific position (internal)
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        float gridSize = 20.0f);
+
+    /// Check if a node can be moved with custom constraints (internal)
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const ConstraintManager& constraintManager,
+        float gridSize = 20.0f);
+
+    /// Check if a node can be moved using ConstraintConfig (internal)
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const ConstraintConfig& config,
+        float gridSize = 20.0f);
+
+    /// Check if a node can be moved using pre-calculated zones (internal)
+    static DragValidation canMoveNodeTo(
+        NodeId nodeId,
+        Point newPosition,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& preCalculatedZones);
 };
 
 }  // namespace arborvia

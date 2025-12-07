@@ -2,7 +2,7 @@
 
 #include "../core/Types.h"
 #include "LayoutResult.h"
-#include "EdgeConstraintManager.h"
+#include "EdgePenaltySystem.h"
 
 #include <memory>
 #include <string>
@@ -17,30 +17,36 @@ namespace arborvia {
 /// - Constraints: Boolean validation ("Can we do this?")
 /// - Optimizer: Numeric optimization ("Which option is best?")
 ///
-/// Edge constraints (IEdgeConstraint) are integrated through EdgeConstraintManager:
-/// - All optimizers share the same constraint manager
-/// - Adding a constraint to the manager applies to ALL optimizers automatically
-/// - Constraints filter invalid candidates before scoring
+/// Edge constraints are now integrated through EdgePenaltySystem:
+/// - All optimizers share the same penalty system
+/// - Adding a penalty to the system applies to ALL optimizers automatically
+/// - Hard constraint penalties (weight >= 200,000) filter invalid candidates
 ///
 /// Execution flow:
 /// 1. ConstraintManager validates position (early return on failure)
-/// 2. EdgeOptimizer finds best edge combinations (runs only if valid)
-/// 3. EdgeConstraintManager filters invalid candidates during optimization
+/// 2. EdgeOptimizer evaluates combinations using penalty system
+/// 3. Hard constraints filter invalid candidates, soft penalties rank options
 ///
 /// Example usage:
 /// @code
 /// auto optimizer = std::make_shared<AStarEdgeOptimizer>();
-/// optimizer->setConstraintManager(EdgeConstraintManager::createDefault());
+/// optimizer->setPenaltySystem(EdgePenaltySystem::createDefault());
 /// auto optimized = optimizer->optimize(edges, edgeLayouts, nodeLayouts);
 /// @endcode
 class IEdgeOptimizer {
 public:
     virtual ~IEdgeOptimizer() = default;
 
-    /// Set the constraint manager for filtering invalid edge combinations
-    /// @param manager Shared constraint manager (same instance across all optimizers)
-    virtual void setConstraintManager(std::shared_ptr<EdgeConstraintManager> manager) {
-        constraintManager_ = std::move(manager);
+    /// Set the penalty system for scoring edge layouts
+    /// @param system Shared penalty system (replaces EdgeScorer and EdgeConstraintManager)
+    virtual void setPenaltySystem(std::shared_ptr<EdgePenaltySystem> system) {
+        penaltySystem_ = std::move(system);
+    }
+
+    /// Get the current penalty system
+    /// @return Shared pointer to penalty system, or nullptr if not set
+    std::shared_ptr<EdgePenaltySystem> penaltySystem() const {
+        return penaltySystem_;
     }
 
     /// Enable direction preservation mode
@@ -54,12 +60,6 @@ public:
     /// Check if direction preservation is enabled
     bool preserveDirections() const {
         return preserveDirections_;
-    }
-
-    /// Get the current constraint manager
-    /// @return Shared pointer to constraint manager, or nullptr if not set
-    std::shared_ptr<EdgeConstraintManager> constraintManager() const {
-        return constraintManager_;
     }
 
     /// Optimize edge routing by selecting best source/target edge combinations
@@ -76,21 +76,52 @@ public:
     /// @return Algorithm identifier (e.g., "Greedy", "SimulatedAnnealing")
     virtual const char* algorithmName() const = 0;
 
+    /// Regenerate bendPoints for edges while preserving sourceEdge/targetEdge
+    ///
+    /// This method creates new bendPoints using the optimizer's path generation
+    /// algorithm, respecting the already-decided source/target edges.
+    /// Used when snap positions change after optimization (e.g., redistribution).
+    ///
+    /// Each optimizer implements this with its own path generation strategy:
+    /// - GeometricEdgeOptimizer: Uses geometric path with obstacle avoidance
+    /// - AStarEdgeOptimizer: Uses A* pathfinding
+    ///
+    /// @param edges List of edge IDs to regenerate bendPoints for
+    /// @param edgeLayouts Edge layouts to modify (in-place)
+    /// @param nodeLayouts Node positions for path calculation
+    virtual void regenerateBendPoints(
+        const std::vector<EdgeId>& edges,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) = 0;
+
 protected:
-    /// Check if a candidate layout passes all constraints
+    /// Check if a candidate layout passes all hard constraints via penalty system
     /// @param candidate The edge layout to validate
-    /// @param assignedLayouts Already assigned edge layouts
-    /// @return true if all constraints pass (or no manager set)
-    bool passesConstraints(
+    /// @param context Penalty context with assigned layouts and forbidden zones
+    /// @return true if all hard constraints pass (or no penalty system set)
+    bool passesHardConstraints(
         const EdgeLayout& candidate,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts) const {
-        if (!constraintManager_) {
-            return true;  // No constraints = always valid
+        const PenaltyContext& context) const {
+        if (!penaltySystem_) {
+            return true;  // No penalty system = always valid
         }
-        return constraintManager_->isValid(candidate, assignedLayouts);
+        return penaltySystem_->passesHardConstraints(candidate, context);
     }
 
-    std::shared_ptr<EdgeConstraintManager> constraintManager_;
+    /// Calculate total penalty score for a candidate layout
+    /// @param candidate The edge layout to score
+    /// @param context Penalty context with assigned layouts and forbidden zones
+    /// @return Total penalty score (0 = perfect, higher = worse)
+    int calculatePenalty(
+        const EdgeLayout& candidate,
+        const PenaltyContext& context) const {
+        if (!penaltySystem_) {
+            return 0;  // No penalty system = no penalty
+        }
+        return penaltySystem_->calculateTotalPenalty(candidate, context);
+    }
+
+    std::shared_ptr<EdgePenaltySystem> penaltySystem_;
     bool preserveDirections_ = false;
 };
 

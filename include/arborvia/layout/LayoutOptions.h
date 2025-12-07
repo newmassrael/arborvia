@@ -119,8 +119,10 @@ struct ScoringWeights {
 /// Algorithm selection for real-time drag feedback
 /// Used when nodes are being dragged for immediate visual feedback
 enum class DragAlgorithm {
-    None,       ///< No optimization during drag (use existing routing)
-    Geometric   ///< Fast geometric path prediction (no A* pathfinding)
+    None,           ///< No optimization during drag (use existing routing)
+    Geometric,      ///< Fast geometric path prediction (no A* pathfinding)
+    AStar,          ///< A* pathfinding for optimal obstacle-avoiding paths
+    HideUntilDrop   ///< Hide edges during drag, calculate with A* on drop
 };
 
 /// Algorithm selection for post-drag optimization
@@ -137,7 +139,7 @@ enum class PostDragAlgorithm {
 struct OptimizationOptions {
     /// Algorithm to use during drag operations (real-time feedback)
     /// Geometric is fast but produces approximate paths
-    DragAlgorithm dragAlgorithm = DragAlgorithm::Geometric;
+    DragAlgorithm dragAlgorithm = DragAlgorithm::HideUntilDrop;
 
     /// Algorithm to use after drag completes (final optimization)
     /// AStar produces optimal paths but is slower
@@ -150,6 +152,23 @@ struct OptimizationOptions {
 
     /// Scoring weights for optimization algorithms
     ScoringWeights scoringWeights;
+
+    /// Enable Rip-up and Reroute for overlap elimination
+    /// When true, edges that overlap after initial routing are re-routed
+    bool enableRipUpAndReroute = true;
+
+    /// Maximum iterations for Rip-up and Reroute
+    int maxRipUpIterations = 3;
+
+    /// Enable post-processing nudging for visual separation
+    /// Applies small offset to visually separate overlapping segments
+    bool enablePostNudging = true;
+
+    /// Pixel offset for nudging overlapping segments
+    float nudgeOffset = 2.0f;
+
+    /// Minimum segment length to consider for nudging
+    float minNudgeSegmentLength = 10.0f;
 };
 
 /// Crossing minimization strategy
@@ -264,6 +283,22 @@ struct LayoutOptions {
     }
     LayoutOptions& setOptimizationOptions(const OptimizationOptions& opts) {
         optimizationOptions = opts;
+        return *this;
+    }
+    LayoutOptions& setEnableRipUpAndReroute(bool enabled) {
+        optimizationOptions.enableRipUpAndReroute = enabled;
+        return *this;
+    }
+    LayoutOptions& setMaxRipUpIterations(int iterations) {
+        optimizationOptions.maxRipUpIterations = iterations;
+        return *this;
+    }
+    LayoutOptions& setEnablePostNudging(bool enabled) {
+        optimizationOptions.enablePostNudging = enabled;
+        return *this;
+    }
+    LayoutOptions& setNudgeOffset(float offset) {
+        optimizationOptions.nudgeOffset = offset;
         return *this;
     }
 };

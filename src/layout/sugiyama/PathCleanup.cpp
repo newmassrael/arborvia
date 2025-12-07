@@ -47,7 +47,31 @@ void PathCleanup::removeSpikesAndDuplicates(std::vector<Point>& points) {
         if (modified) continue;
 
         // Remove spike points (direction reversal on same line)
-        for (size_t i = 0; i + 2 < points.size(); ++i) {
+        // Priority 1: Remove boundary spikes (involving source/target points)
+        // These are critical because they indicate a path going back on itself at the endpoints
+        // A spike at the boundary is WORSE than a direction constraint violation
+        
+        // Check source boundary spike: points[0], points[1], points[2]
+        if (points.size() >= 3 && isSpike(points[0], points[1], points[2])) {
+            // Remove the first bend (points[1]) to fix the spike
+            points.erase(points.begin() + 1);
+            modified = true;
+        }
+        if (modified) continue;
+        
+        // Check target boundary spike: points[n-3], points[n-2], points[n-1]
+        if (points.size() >= 3 && isSpike(points[points.size() - 3], points[points.size() - 2], points[points.size() - 1])) {
+            // Remove the last bend (points[n-2]) to fix the spike
+            points.erase(points.begin() + static_cast<long>(points.size() - 2));
+            modified = true;
+        }
+        if (modified) continue;
+        
+        // Priority 2: Remove interior spikes (protected first/last bends)
+        // BUT protect first bend (points[1]) and last bend (points[n-2]) for direction constraints
+        // First bend determines if first segment goes in correct direction from sourceEdge
+        // Last bend determines if last segment arrives in correct direction to targetEdge
+        for (size_t i = 1; i + 3 < points.size(); ++i) {
             if (isSpike(points[i], points[i + 1], points[i + 2])) {
                 points.erase(points.begin() + static_cast<long>(i + 1));
                 modified = true;
@@ -59,7 +83,8 @@ void PathCleanup::removeSpikesAndDuplicates(std::vector<Point>& points) {
         // Remove redundant collinear intermediate points
         // If three consecutive points are on the same line (vertical or horizontal),
         // the middle point can be removed as it doesn't affect the path
-        for (size_t i = 0; i + 2 < points.size(); ++i) {
+        // BUT protect first and last bends (required for direction constraints)
+        for (size_t i = 1; i + 3 < points.size(); ++i) {
             const Point& a = points[i];
             const Point& b = points[i + 1];
             const Point& c = points[i + 2];

@@ -285,18 +285,24 @@ void SugiyamaLayout::assignCoordinates() {
 void SugiyamaLayout::routeEdges() {
     // Create EdgeRouting with injected pathfinder if available
     EdgeRouting routing(pathFinder_);
+
+    // === Integrated Pipeline for Constraint Satisfaction ===
+    // 1. Create initial layouts WITHOUT optimization (snap positions not final yet)
     auto result = routing.route(*state_->graph,
                                state_->result.nodeLayouts(),
                                state_->reversedEdges,
-                               options_);
+                               options_,
+                               true);  // skipOptimization=true
 
-    // Apply auto snap point distribution if enabled
-    // This distributes snap points on grid vertices and recalculates bend points
+    // 2. Distribute snap points (this finalizes source/target positions)
     if (options_.autoSnapPoints) {
         routing.distributeAutoSnapPoints(
             result, state_->result.nodeLayouts(),
             options_.gridConfig.cellSize);
     }
+
+    // 3. Run optimizer on final snap positions to satisfy all constraints
+    routing.optimizeRouting(result, state_->result.nodeLayouts(), options_);
 
     for (auto& [id, layout] : result.edgeLayouts) {
         state_->result.setEdgeLayout(id, layout);

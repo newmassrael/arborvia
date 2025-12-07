@@ -4,6 +4,11 @@
 #include <cmath>
 #include <algorithm>
 #include <climits>
+#include <iostream>
+
+#ifndef EDGE_ROUTING_DEBUG
+#define EDGE_ROUTING_DEBUG 1
+#endif
 
 namespace arborvia {
 
@@ -91,6 +96,9 @@ PathResult AStarPathFinder::findPath(
     // Check if start cell is accessible (blocked only by excluded nodes is OK)
     if (obstacles.isBlocked(start.x, start.y, startExcludes)) {
         // Start is blocked by a non-excluded node - can't route from here
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[A* DEBUG] START BLOCKED at (" << start.x << "," << start.y << ")" << std::endl;
+#endif
         return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                    sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
     }
@@ -98,6 +106,9 @@ PathResult AStarPathFinder::findPath(
     // Check if goal cell is accessible
     if (obstacles.isBlocked(goal.x, goal.y, goalExcludes)) {
         // Goal is blocked by a non-excluded node - can't route to here
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[A* DEBUG] GOAL BLOCKED at (" << goal.x << "," << goal.y << ")" << std::endl;
+#endif
         return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                    sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
     }
@@ -173,6 +184,7 @@ PathResult AStarPathFinder::findPath(
 
             // Per-cell exclusion logic:
             // - Start cell: exclude sourceNode + extraStartExcludes
+            // - First move from start: also exclude sourceNode (edge starts from node boundary)
             // - Goal cell: exclude targetNode + extraGoalExcludes
             // - All other cells: no exclusions
             std::unordered_set<NodeId> cellExclude;
@@ -180,17 +192,40 @@ PathResult AStarPathFinder::findPath(
                 cellExclude = startExcludes;
             } else if (neighborPos == goal) {
                 cellExclude = goalExcludes;
+            } else if (current.pos == start && current.lastDir == MoveDirection::None) {
+                // First move from start: the neighboring cell might still overlap
+                // with source node since we start at the node's edge
+                cellExclude = startExcludes;
             }
             // else: empty exclude set for intermediate cells
 
-            if (obstacles.isBlocked(neighborPos.x, neighborPos.y, cellExclude)) {
-                continue;
+            // Get cost for this cell including proximity penalty
+            // For proximity calculation, always exclude source and target nodes
+            std::unordered_set<NodeId> excludeForProximity = {sourceNode, targetNode};
+            int cellCost = obstacles.getCostForDirectionWithExcludes(
+                neighborPos.x, neighborPos.y, moveDir, excludeForProximity);
+
+            // Check if blocked (considering per-cell exclusions for node blocking)
+            if (cellCost >= IObstacleProvider::COST_BLOCKED) {
+                // Even if COST_BLOCKED from proximity, check if actually passable via cellExclude
+                if (obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, cellExclude)) {
+#if EDGE_ROUTING_DEBUG
+                    if (current.pos == start && current.lastDir == MoveDirection::None) {
+                        std::cout << "[A* DEBUG] FIRST MOVE BLOCKED: from (" << start.x << "," << start.y
+                                  << ") dir=" << static_cast<int>(moveDir)
+                                  << " to (" << neighborPos.x << "," << neighborPos.y << ")" << std::endl;
+                    }
+#endif
+                    continue;
+                }
+                // Cell is passable with exclusions, use base cost
+                cellCost = IObstacleProvider::COST_FREE;
             }
 
-            // Calculate cost
+            // Calculate total cost including bend penalty
             int bendCost = (current.lastDir != MoveDirection::None &&
                            current.lastDir != moveDir) ? BEND_COST : 0;
-            int newG = current.g + MOVE_COST + bendCost;
+            int newG = current.g + cellCost + bendCost;
 
             SearchKey neighborKey = {neighborPos, moveDir};
 
@@ -210,6 +245,11 @@ PathResult AStarPathFinder::findPath(
     }
 
     // A* failed, try safe zone fallback
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[A* DEBUG] A* EXHAUSTED after " << iterations << " iterations, openSet empty="
+              << openSet.empty() << " srcDir=" << static_cast<int>(requiredSourceDir)
+              << " tgtDir=" << static_cast<int>(requiredTargetDir) << std::endl;
+#endif
     return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
 }
@@ -480,6 +520,13 @@ bool AStarPathFinder::validateSegmentWithEndpoints(
     int dx = (to.x > from.x) ? 1 : (to.x < from.x) ? -1 : 0;
     int dy = (to.y > from.y) ? 1 : (to.y < from.y) ? -1 : 0;
 
+    // Determine move direction for direction-aware blocking
+    MoveDirection moveDir = MoveDirection::None;
+    if (dx > 0) moveDir = MoveDirection::Right;
+    else if (dx < 0) moveDir = MoveDirection::Left;
+    else if (dy > 0) moveDir = MoveDirection::Down;
+    else if (dy < 0) moveDir = MoveDirection::Up;
+
     int x = from.x;
     int y = from.y;
 
@@ -499,7 +546,8 @@ bool AStarPathFinder::validateSegmentWithEndpoints(
             }
         }
 
-        if (obstacles.isBlocked(x, y, cellExclude)) {
+        // Use direction-aware blocking: allows orthogonal crossing of edge segments
+        if (obstacles.isBlockedForDirection(x, y, moveDir, cellExclude)) {
             return false;
         }
 

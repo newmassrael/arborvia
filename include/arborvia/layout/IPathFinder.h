@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IObstacleProvider.h"
+#include "MoveDirection.h"
 #include "../core/Types.h"
 #include "LayoutEnums.h"
 
@@ -9,15 +10,6 @@
 #include <memory>
 
 namespace arborvia {
-
-/// Direction of movement in the grid
-enum class MoveDirection {
-    None,
-    Up,
-    Down,
-    Left,
-    Right
-};
 
 /// Result of pathfinding operation
 struct PathResult {

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "arborvia/layout/IEdgeOptimizer.h"
-#include "EdgeScorer.h"
 #include "PathIntersection.h"
 
 #include <unordered_map>
@@ -14,10 +13,7 @@ namespace arborvia {
 /// Ideal for real-time feedback during drag operations.
 class GeometricEdgeOptimizer : public IEdgeOptimizer {
 public:
-    explicit GeometricEdgeOptimizer(const ScoringWeights& weights = {});
-
-    void setWeights(const ScoringWeights& weights);
-    [[nodiscard]] const ScoringWeights& weights() const;
+    explicit GeometricEdgeOptimizer(float gridSize = 20.0f);
 
     std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
@@ -25,6 +21,13 @@ public:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
 
     const char* algorithmName() const override { return "Geometric"; }
+
+    /// Regenerate bendPoints using geometric path with obstacle avoidance
+    /// Preserves existing sourceEdge/targetEdge, only recreates path geometry
+    void regenerateBendPoints(
+        const std::vector<EdgeId>& edges,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
 
 private:
     struct CombinationResult {
@@ -38,6 +41,14 @@ private:
     /// When preserveDirections() is true, only evaluates the existing combination.
     /// Otherwise, evaluates all 16 combinations (4 source × 4 target edges).
     std::vector<CombinationResult> evaluateCombinations(
+        EdgeId edgeId,
+        const EdgeLayout& baseLayout,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Evaluate self-loop combinations (4 directions)
+    /// Uses penalty system to select the best direction that avoids segment overlap
+    std::vector<CombinationResult> evaluateSelfLoopCombinations(
         EdgeId edgeId,
         const EdgeLayout& baseLayout,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
@@ -142,7 +153,34 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         float gridSpacing = 20.0f);
 
-    EdgeScorer scorer_;
+    /// Create self-loop path with collision avoidance against other nodes
+    /// Tries different offsets if collision is detected
+    std::vector<BendPoint> createSelfLoopPath(
+        const EdgeLayout& layout,
+        const NodeLayout& selfNode,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Check if a self-loop path has collision with other nodes
+    bool selfLoopHasCollision(
+        const std::vector<BendPoint>& bends,
+        const Point& source,
+        const Point& target,
+        NodeId selfNodeId,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Try alternative mid-point strategies for path with collision
+    /// Returns the best path based on penalty scoring
+    std::vector<BendPoint> tryAlternativeMidPoints(
+        const Point& source,
+        const Point& target,
+        NodeEdge sourceEdge,
+        NodeEdge targetEdge,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        NodeId sourceNodeId,
+        NodeId targetNodeId);
+
+    float gridSize_ = 20.0f;
 };
 
 }  // namespace arborvia

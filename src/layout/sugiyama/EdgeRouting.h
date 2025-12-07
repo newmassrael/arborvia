@@ -37,6 +37,43 @@ struct ChannelRegion {
     std::vector<EdgeId> edges;  // Edges routed through this region
 };
 
+/// Configuration for A* retry when initial pathfinding fails
+struct SnapRetryConfig {
+    int maxSnapRetries = 5;              ///< Maximum snap index attempts per NodeEdge
+    bool enableNodeEdgeSwitch = true;    ///< Allow switching to different NodeEdge
+    bool preserveDirections = false;     ///< If true, disables NodeEdge switching
+};
+
+/// Result of A* retry attempt
+struct SnapRetryResult {
+    bool success = false;
+    std::vector<BendPoint> bendPoints;
+
+    // Snap Index change info
+    bool snapIndexChanged = false;
+    int newSourceSnapIndex = -1;
+    int newTargetSnapIndex = -1;
+    Point newSourcePoint;  // Exact source point used during retry
+
+    // Neighbor Adjustment info
+    bool neighborAdjusted = false;
+    EdgeId adjustedNeighborId = 0;
+
+    // NodeEdge change info
+    bool nodeEdgeChanged = false;
+    NodeEdge newSourceEdge = NodeEdge::Bottom;
+    NodeEdge newTargetEdge = NodeEdge::Top;
+
+    // Full re-route flag: when true, all affected edges need re-routing
+    // because retry was done without other edge segments as obstacles
+    bool needsFullReroute = false;
+
+    // Debug info
+    int snapRetryCount = 0;
+    int neighborAdjustCount = 0;
+    int edgeCombinationCount = 0;
+};
+
 /// Routes edges with appropriate bend points
 class EdgeRouting {
 public:
@@ -79,10 +116,26 @@ public:
     IEdgeOptimizer* edgeOptimizer() const;
 
     /// Route edges based on node positions
+    /// @param graph The graph containing edges to route
+    /// @param nodeLayouts Node positions
+    /// @param reversedEdges Edges that need reversed routing
+    /// @param options Layout options
+    /// @param skipOptimization If true, skip optimizer (use when optimizer will be called later)
     Result route(const Graph& graph,
                 const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
                 const std::unordered_set<EdgeId>& reversedEdges,
-                const LayoutOptions& options);
+                const LayoutOptions& options,
+                bool skipOptimization = false);
+
+    /// Optimize edge routing after snap distribution
+    /// Runs optimizer on edges with their final snap positions to satisfy all constraints
+    /// @param result The routing result to optimize (modified in place)
+    /// @param nodeLayouts Node positions
+    /// @param options Layout options
+    void optimizeRouting(
+        Result& result,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const LayoutOptions& options);
 
     /// Distribute snap points evenly for edges connecting to same node edge (Auto mode)
     /// @param result The routing result to modify
@@ -100,6 +153,8 @@ public:
     struct SnapUpdateResult {
         std::unordered_set<EdgeId> processedEdges;      ///< All edges that had bendPoints recalculated
         std::unordered_set<EdgeId> redistributedEdges;  ///< Edges affected by snap redistribution (may include edges not in affectedEdges)
+        bool needsFullReroute = false;                  ///< True if retry required full re-routing
+        std::vector<EdgeId> edgesNeedingReroute;        ///< Edges that need full re-routing
 
         /// Check if any edges outside affectedEdges were processed due to redistribution
         bool hasIndirectUpdates(const std::vector<EdgeId>& affectedEdges) const {
@@ -126,13 +181,15 @@ public:
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
+    /// @param skipBendPointRecalc If true, skip bend point recalculation (use existing bendPoints)
     /// @return SnapUpdateResult showing which edges were actually processed
     SnapUpdateResult updateSnapPositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
         const std::unordered_set<NodeId>& movedNodes = {},
-        float gridSize = 0.0f);
+        float gridSize = 0.0f,
+        bool skipBendPointRecalc = false);
 
     /// Update edge routing with optimization (for interactive drag)
     /// Runs edge optimizer to potentially change sourceEdge/targetEdge,
@@ -211,21 +268,12 @@ private:
     /// @param layout The edge layout to recalculate bend points for
     /// @param nodeLayouts All node layouts for intersection checking
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
+    /// @param otherEdges Other edge layouts to avoid overlapping with (optional)
     void recalculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize = 0.0f);
-
-    /// Recalculate bend points with overlap avoidance
-    /// @param layout The edge layout to recalculate bend points for
-    /// @param nodeLayouts All node layouts for intersection checking
-    /// @param otherEdges Other edge layouts to avoid overlapping with
-    /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
-    void recalculateBendPointsWithOverlapAvoidance(
-        EdgeLayout& layout,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
-        float gridSize = 0.0f);
+        float gridSize = 0.0f,
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges = nullptr);
 
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from
@@ -236,6 +284,44 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         NodeId nodeId,
         NodeEdge nodeEdge);
+
+    // === A* Retry Methods ===
+
+    /// Main retry orchestrator when A* fails
+    /// Tries: Snap Index Retry → Neighbor Adjustment → NodeEdge Switch
+    SnapRetryResult tryAStarRetry(
+        EdgeLayout& layout,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const SnapRetryConfig& config);
+
+    /// Layer 1: Try alternative snap indices on same NodeEdge (concentric expansion)
+    SnapRetryResult trySnapIndexRetry(
+        EdgeLayout& layout,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const SnapRetryConfig& config);
+
+    /// Layer 2: Try adjusting neighbor transition coordinates
+    SnapRetryResult tryNeighborAdjustment(
+        EdgeLayout& layout,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const SnapRetryConfig& config);
+
+    /// Layer 3: Try different NodeEdge combinations (16 total)
+    SnapRetryResult tryNodeEdgeSwitch(
+        EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const SnapRetryConfig& config);
 
     // === Channel-based routing methods ===
 

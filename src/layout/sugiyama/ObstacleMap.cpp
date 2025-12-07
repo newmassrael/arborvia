@@ -1,6 +1,11 @@
 #include "ObstacleMap.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+
+#ifndef EDGE_ROUTING_DEBUG
+#define EDGE_ROUTING_DEBUG 1
+#endif
 
 namespace arborvia {
 
@@ -74,6 +79,9 @@ void ObstacleMap::buildFromNodes(
     safeZones_.yBelow = static_cast<int>(std::ceil(maxY / gridSize)) + margin + 1;
     safeZones_.xLeft = static_cast<int>(std::floor(minX / gridSize)) - margin - 1;
     safeZones_.xRight = static_cast<int>(std::ceil(maxX / gridSize)) + margin + 1;
+
+    // Pre-calculate proximity map for O(1) lookup
+    buildProximityMap();
 }
 
 bool ObstacleMap::isBlocked(int gridX, int gridY) const {
@@ -216,20 +224,33 @@ void ObstacleMap::addEdgeSegments(
         edgeSegmentCells_.resize(grid_.size(), false);
     }
 
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] addEdgeSegments: excluding=" << excludeEdgeId 
+              << " total=" << edgeLayouts.size() << std::endl;
+#endif
+
     for (const auto& [edgeId, layout] : edgeLayouts) {
         if (edgeId == excludeEdgeId) {
             continue;  // Skip the edge being routed
         }
+        // Note: Self-loops are NOT skipped - they should block other edges too
 
-        // Skip self-loops
-        if (layout.from == layout.to) {
-            continue;
-        }
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[ObstacleMap] Adding edge " << edgeId << " segments" << std::endl;
+#endif
 
-        // Mark each segment of the edge path
-        layout.forEachSegment([this](const Point& p1, const Point& p2) {
-            markSegmentBlocked(p1, p2, true);
+        // Build segments from edge layout
+        std::vector<std::pair<Point, Point>> segments;
+        layout.forEachSegment([&](const Point& p1, const Point& p2) {
+            segments.emplace_back(p1, p2);
         });
+
+        // Skip first and last segments to prevent FIRST MOVE BLOCKED issues
+        // The source/target snap points may overlap with other edges' snap points
+        // SegmentOverlapPenalty will handle those cases
+        for (size_t i = 1; i + 1 < segments.size(); ++i) {
+            markSegmentBlocked(segments[i].first, segments[i].second, true);
+        }
     }
 }
 
@@ -241,6 +262,9 @@ void ObstacleMap::clearEdgeSegments() {
             if (grid_[i].blockingNodes.empty()) {
                 grid_[i].blocked = false;
             }
+            // Clear direction-aware edge segment flags
+            grid_[i].horizontalSegment = false;
+            grid_[i].verticalSegment = false;
             edgeSegmentCells_[i] = false;
         }
     }
@@ -253,33 +277,42 @@ void ObstacleMap::markSegmentBlocked(const Point& p1, const Point& p2, bool isEd
 
     // Determine if horizontal or vertical
     if (g1.y == g2.y) {
-        // Horizontal segment
+        // Horizontal segment - set horizontalSegment flag for direction-aware blocking
         int minX = std::min(g1.x, g2.x);
         int maxX = std::max(g1.x, g2.x);
         for (int gx = minX; gx <= maxX; ++gx) {
             int idx = toIndex(gx, g1.y);
             if (idx >= 0) {
-                grid_[idx].blocked = true;
                 if (isEdgeSegment) {
+                    // Edge segments use direction-aware blocking
+                    grid_[idx].horizontalSegment = true;
                     edgeSegmentCells_[idx] = true;
+                } else {
+                    // Non-edge segments still use full blocking
+                    grid_[idx].blocked = true;
                 }
             }
         }
     } else if (g1.x == g2.x) {
-        // Vertical segment
+        // Vertical segment - set verticalSegment flag for direction-aware blocking
         int minY = std::min(g1.y, g2.y);
         int maxY = std::max(g1.y, g2.y);
         for (int gy = minY; gy <= maxY; ++gy) {
             int idx = toIndex(g1.x, gy);
             if (idx >= 0) {
-                grid_[idx].blocked = true;
                 if (isEdgeSegment) {
+                    // Edge segments use direction-aware blocking
+                    grid_[idx].verticalSegment = true;
                     edgeSegmentCells_[idx] = true;
+                } else {
+                    // Non-edge segments still use full blocking
+                    grid_[idx].blocked = true;
                 }
             }
         }
     } else {
         // Diagonal segment - use Bresenham-like line drawing
+        // For diagonal segments, set both direction flags (shouldn't happen in orthogonal routing)
         int dx = std::abs(g2.x - g1.x);
         int dy = std::abs(g2.y - g1.y);
         int sx = (g1.x < g2.x) ? 1 : -1;
@@ -290,9 +323,13 @@ void ObstacleMap::markSegmentBlocked(const Point& p1, const Point& p2, bool isEd
         while (true) {
             int idx = toIndex(cx, cy);
             if (idx >= 0) {
-                grid_[idx].blocked = true;
                 if (isEdgeSegment) {
+                    // Diagonal segments block both directions
+                    grid_[idx].horizontalSegment = true;
+                    grid_[idx].verticalSegment = true;
                     edgeSegmentCells_[idx] = true;
+                } else {
+                    grid_[idx].blocked = true;
                 }
             }
             if (cx == g2.x && cy == g2.y) {
@@ -309,6 +346,438 @@ void ObstacleMap::markSegmentBlocked(const Point& p1, const Point& p2, bool isEd
             }
         }
     }
+}
+
+void ObstacleMap::markSegmentBlockedSkipEndpoints(const Point& p1, const Point& p2) {
+    // Convert to grid coordinates
+    GridPoint g1 = pixelToGrid(p1);
+    GridPoint g2 = pixelToGrid(p2);
+
+    // Skip very short segments (1 or 2 cells)
+    int segmentLength = 0;
+    if (g1.y == g2.y) {
+        segmentLength = std::abs(g2.x - g1.x) + 1;
+    } else if (g1.x == g2.x) {
+        segmentLength = std::abs(g2.y - g1.y) + 1;
+    }
+    
+    if (segmentLength <= 2) {
+        // Too short to skip endpoints - don't block at all
+        return;
+    }
+
+    // Determine if horizontal or vertical
+    if (g1.y == g2.y) {
+        // Horizontal segment - skip first and last cell
+        int minX = std::min(g1.x, g2.x);
+        int maxX = std::max(g1.x, g2.x);
+        for (int gx = minX + 1; gx < maxX; ++gx) {  // Skip endpoints
+            int idx = toIndex(gx, g1.y);
+            if (idx >= 0) {
+                grid_[idx].horizontalSegment = true;
+                edgeSegmentCells_[idx] = true;
+            }
+        }
+    } else if (g1.x == g2.x) {
+        // Vertical segment - skip first and last cell
+        int minY = std::min(g1.y, g2.y);
+        int maxY = std::max(g1.y, g2.y);
+        for (int gy = minY + 1; gy < maxY; ++gy) {  // Skip endpoints
+            int idx = toIndex(g1.x, gy);
+            if (idx >= 0) {
+                grid_[idx].verticalSegment = true;
+                edgeSegmentCells_[idx] = true;
+            }
+        }
+    }
+    // Diagonal segments are not handled - they shouldn't exist in orthogonal routing
+}
+
+bool ObstacleMap::isBlockedForDirection(int gridX, int gridY,
+                                         MoveDirection moveDir,
+                                         const std::unordered_set<NodeId>& exclude) const {
+    int idx = toIndex(gridX, gridY);
+    if (idx < 0) {
+        return false;  // Out of bounds = not blocked
+    }
+
+    const GridCell& cell = grid_[idx];
+
+    // First check node blocking (always blocks all directions)
+    if (cell.blocked) {
+        // If blocked by nodes, check exclusion list
+        if (cell.blockingNodes.empty()) {
+            return true;  // Blocked but no specific nodes (shouldn't happen)
+        }
+        // Check if any blocking node is not excluded
+        for (NodeId blockingNode : cell.blockingNodes) {
+            if (exclude.find(blockingNode) == exclude.end()) {
+#if EDGE_ROUTING_DEBUG
+                static int debugCount = 0;
+                if (debugCount < 20) {
+                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
+                              << ") blocked by NODE " << blockingNode << std::endl;
+                    debugCount++;
+                }
+#endif
+                return true;  // Found non-excluded blocking node
+            }
+        }
+    }
+
+    // Now check direction-aware edge segment blocking
+    // Edge segments only block movement parallel to them
+    switch (moveDir) {
+        case MoveDirection::Left:
+        case MoveDirection::Right:
+            // Horizontal movement blocked by horizontal segments
+#if EDGE_ROUTING_DEBUG
+            if (cell.horizontalSegment) {
+                static int hDebugCount = 0;
+                if (hDebugCount < 20) {
+                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
+                              << ") blocked by HORIZONTAL segment for dir=" << static_cast<int>(moveDir) << std::endl;
+                    hDebugCount++;
+                }
+            }
+#endif
+            return cell.horizontalSegment;
+
+        case MoveDirection::Up:
+        case MoveDirection::Down:
+            // Vertical movement blocked by vertical segments
+#if EDGE_ROUTING_DEBUG
+            if (cell.verticalSegment) {
+                static int vDebugCount = 0;
+                if (vDebugCount < 20) {
+                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
+                              << ") blocked by VERTICAL segment for dir=" << static_cast<int>(moveDir) << std::endl;
+                    vDebugCount++;
+                }
+            }
+#endif
+            return cell.verticalSegment;
+
+        case MoveDirection::None:
+        default:
+            // No specific direction - not blocked by direction flags
+            return false;
+    }
+}
+
+ObstacleMap::CellVisInfo ObstacleMap::getCellVisInfo(int gridX, int gridY) const {
+    CellVisInfo info;
+
+    int idx = toIndex(gridX, gridY);
+    if (idx < 0) {
+        return info;  // Out of bounds - return default (all false)
+    }
+
+    const GridCell& cell = grid_[idx];
+    info.isNodeBlocked = !cell.blockingNodes.empty();
+    info.hasHorizontalSegment = cell.horizontalSegment;
+    info.hasVerticalSegment = cell.verticalSegment;
+    info.blockingNodes = cell.blockingNodes;
+
+    return info;
+}
+
+// === Cost-based Pathfinding Support ===
+
+int ObstacleMap::getCost(int gridX, int gridY) const {
+    int idx = toIndex(gridX, gridY);
+    if (idx < 0) {
+        return COST_FREE;  // Out of bounds = free (infinite space)
+    }
+
+    const GridCell& cell = grid_[idx];
+
+    // Node blocking = completely blocked
+    if (cell.blocked && !cell.blockingNodes.empty()) {
+        return COST_BLOCKED;
+    }
+
+    // Base cost
+    int cost = COST_FREE;
+
+    // Add edge path overlay cost
+    auto overlayIt = edgeCostOverlay_.find(idx);
+    if (overlayIt != edgeCostOverlay_.end()) {
+        cost += overlayIt->second;
+    }
+
+    return cost;
+}
+
+int ObstacleMap::getCostForDirection(int gridX, int gridY, MoveDirection moveDir) const {
+    int idx = toIndex(gridX, gridY);
+    if (idx < 0) {
+        return COST_FREE;  // Out of bounds = free
+    }
+
+    const GridCell& cell = grid_[idx];
+
+    // Node blocking = completely blocked (all directions)
+    if (cell.blocked && !cell.blockingNodes.empty()) {
+        return COST_BLOCKED;
+    }
+
+    // Base cost
+    int cost = COST_FREE;
+
+    // Add edge path overlay cost
+    auto overlayIt = edgeCostOverlay_.find(idx);
+    if (overlayIt != edgeCostOverlay_.end()) {
+        cost += overlayIt->second;
+    }
+
+    // Direction-aware edge segment cost
+    // Parallel movement through existing segment = higher cost (discouraged but not blocked)
+    switch (moveDir) {
+        case MoveDirection::Left:
+        case MoveDirection::Right:
+            if (cell.horizontalSegment) {
+                cost += COST_EDGE_PATH;  // Moving parallel to existing horizontal segment
+            }
+            break;
+
+        case MoveDirection::Up:
+        case MoveDirection::Down:
+            if (cell.verticalSegment) {
+                cost += COST_EDGE_PATH;  // Moving parallel to existing vertical segment
+            }
+            break;
+
+        case MoveDirection::None:
+        default:
+            break;
+    }
+
+    return cost;
+}
+
+int ObstacleMap::getCostForDirectionWithExcludes(
+    int gridX, int gridY,
+    MoveDirection moveDir,
+    const std::unordered_set<NodeId>& exclude) const {
+
+    // First check if blocked (returns COST_BLOCKED if so)
+    if (isBlockedForDirection(gridX, gridY, moveDir, exclude)) {
+        return COST_BLOCKED;
+    }
+
+    // Get base cost from direction-aware calculation
+    int cost = getCostForDirection(gridX, gridY, moveDir);
+    if (cost >= COST_BLOCKED) {
+        return cost;  // Already blocked
+    }
+
+    // O(1) proximity lookup from pre-calculated map
+    int idx = toIndex(gridX, gridY);
+    if (idx >= 0 && static_cast<size_t>(idx) < proximityMap_.size()) {
+        const auto& entries = proximityMap_[idx];
+        
+        // Find minimum distance among nodes NOT in exclude set
+        for (const auto& entry : entries) {
+            if (entry.nodeId == INVALID_NODE) {
+                break;  // No more entries
+            }
+            
+            // Skip nodes in exclude set (source/target of this edge)
+            if (exclude.find(entry.nodeId) != exclude.end()) {
+                continue;
+            }
+            
+            // Found a non-excluded node - apply proximity penalty
+            if (entry.distance <= PROXIMITY_RADIUS && entry.distance > 0) {
+                float ratio = 1.0f - (static_cast<float>(entry.distance - 1) / PROXIMITY_RADIUS);
+                int proximityCost = static_cast<int>(ratio * COST_PROXIMITY_MAX);
+                cost += proximityCost;
+            }
+            break;  // Only consider closest non-excluded node
+        }
+    }
+
+    return cost;
+}
+
+void ObstacleMap::buildProximityMap() {
+    size_t totalCells = static_cast<size_t>(width_) * height_;
+    proximityMap_.clear();
+    proximityMap_.resize(totalCells);
+    
+    // Initialize all entries
+    for (auto& entries : proximityMap_) {
+        for (auto& entry : entries) {
+            entry.nodeId = INVALID_NODE;
+            entry.distance = PROXIMITY_RADIUS + 1;
+        }
+    }
+    
+    // Better approach: For each node, expand outward marking proximity
+    // We need to track node bounds - let's store them temporarily
+    struct NodeBounds {
+        NodeId nodeId;
+        int minX, minY, maxX, maxY;
+    };
+    std::vector<NodeBounds> nodeBounds;
+    
+    // Extract node bounds from grid (cells that are blocked by each node)
+    std::unordered_map<NodeId, NodeBounds> boundsMap;
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            int idx = y * width_ + x;
+            const auto& cell = grid_[idx];
+            for (NodeId blockingNode : cell.blockingNodes) {
+                int gridX = x + offsetX_;
+                int gridY = y + offsetY_;
+                
+                auto it = boundsMap.find(blockingNode);
+                if (it == boundsMap.end()) {
+                    boundsMap[blockingNode] = {blockingNode, gridX, gridY, gridX, gridY};
+                } else {
+                    it->second.minX = std::min(it->second.minX, gridX);
+                    it->second.minY = std::min(it->second.minY, gridY);
+                    it->second.maxX = std::max(it->second.maxX, gridX);
+                    it->second.maxY = std::max(it->second.maxY, gridY);
+                }
+            }
+        }
+    }
+    
+    // Convert to vector for easier iteration
+    for (const auto& [nodeId, bounds] : boundsMap) {
+        nodeBounds.push_back(bounds);
+    }
+    
+    // For each node, mark proximity in surrounding cells
+    for (const auto& bounds : nodeBounds) {
+        // Expand by PROXIMITY_RADIUS in each direction
+        int expandedMinX = bounds.minX - PROXIMITY_RADIUS;
+        int expandedMaxX = bounds.maxX + PROXIMITY_RADIUS;
+        int expandedMinY = bounds.minY - PROXIMITY_RADIUS;
+        int expandedMaxY = bounds.maxY + PROXIMITY_RADIUS;
+        
+        for (int gridY = expandedMinY; gridY <= expandedMaxY; ++gridY) {
+            for (int gridX = expandedMinX; gridX <= expandedMaxX; ++gridX) {
+                int idx = toIndex(gridX, gridY);
+                if (idx < 0) continue;
+                
+                // Calculate distance to node boundary
+                int dx = 0;
+                if (gridX < bounds.minX) dx = bounds.minX - gridX;
+                else if (gridX > bounds.maxX) dx = gridX - bounds.maxX;
+                
+                int dy = 0;
+                if (gridY < bounds.minY) dy = bounds.minY - gridY;
+                else if (gridY > bounds.maxY) dy = gridY - bounds.maxY;
+                
+                int distance = std::max(dx, dy);
+                
+                // Skip if outside proximity radius or inside node
+                if (distance > PROXIMITY_RADIUS || distance == 0) continue;
+                
+                // Insert into proximity map (keep sorted by distance)
+                auto& entries = proximityMap_[idx];
+                for (int i = 0; i < MAX_PROXIMITY_ENTRIES; ++i) {
+                    if (entries[i].nodeId == INVALID_NODE) {
+                        // Empty slot
+                        entries[i].nodeId = bounds.nodeId;
+                        entries[i].distance = distance;
+                        break;
+                    } else if (distance < entries[i].distance) {
+                        // Insert here, shift others down
+                        for (int j = MAX_PROXIMITY_ENTRIES - 1; j > i; --j) {
+                            entries[j] = entries[j-1];
+                        }
+                        entries[i].nodeId = bounds.nodeId;
+                        entries[i].distance = distance;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// === Per-Edge Path Tracking ===
+
+void ObstacleMap::markEdgePath(EdgeId edgeId, const std::vector<GridPoint>& path) {
+    // Clear existing path for this edge if any
+    clearEdgePath(edgeId);
+
+    if (path.empty()) {
+        return;
+    }
+
+    // Store the path
+    edgePaths_[edgeId] = path;
+
+    // Update cost overlay and cell-to-edge mapping
+    for (const auto& gp : path) {
+        int idx = toIndex(gp.x, gp.y);
+        if (idx >= 0) {
+            // Add edge cost to overlay
+            edgeCostOverlay_[idx] += COST_EDGE_PATH;
+
+            // Track which edges use this cell
+            cellToEdges_[idx].push_back(edgeId);
+        }
+    }
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] markEdgePath: edge=" << edgeId
+              << " path_size=" << path.size() << std::endl;
+#endif
+}
+
+void ObstacleMap::clearEdgePath(EdgeId edgeId) {
+    auto it = edgePaths_.find(edgeId);
+    if (it == edgePaths_.end()) {
+        return;  // No path registered for this edge
+    }
+
+    // Remove cost overlay for this edge's path
+    for (const auto& gp : it->second) {
+        int idx = toIndex(gp.x, gp.y);
+        if (idx >= 0) {
+            // Subtract edge cost from overlay
+            auto overlayIt = edgeCostOverlay_.find(idx);
+            if (overlayIt != edgeCostOverlay_.end()) {
+                overlayIt->second -= COST_EDGE_PATH;
+                if (overlayIt->second <= 0) {
+                    edgeCostOverlay_.erase(overlayIt);
+                }
+            }
+
+            // Remove edge from cell-to-edge mapping
+            auto cellIt = cellToEdges_.find(idx);
+            if (cellIt != cellToEdges_.end()) {
+                auto& edges = cellIt->second;
+                edges.erase(std::remove(edges.begin(), edges.end(), edgeId), edges.end());
+                if (edges.empty()) {
+                    cellToEdges_.erase(cellIt);
+                }
+            }
+        }
+    }
+
+    // Remove the path
+    edgePaths_.erase(it);
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] clearEdgePath: edge=" << edgeId << std::endl;
+#endif
+}
+
+void ObstacleMap::clearAllEdgePaths() {
+    edgePaths_.clear();
+    edgeCostOverlay_.clear();
+    cellToEdges_.clear();
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] clearAllEdgePaths" << std::endl;
+#endif
 }
 
 

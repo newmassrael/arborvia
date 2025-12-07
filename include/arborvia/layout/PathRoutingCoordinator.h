@@ -111,6 +111,11 @@ public:
     /// Transitions to Pending state and starts debounce timer
     void onDragEnd();
 
+    /// Add additional edges to the pending optimization queue
+    /// Useful for adding edges that penetrate a newly positioned node
+    /// @param edges Additional edges to optimize
+    void addPendingEdges(const std::vector<EdgeId>& edges);
+
     /// Call each frame to check debounce timer and execute pending optimization
     /// @param currentTimeMs Current time in milliseconds
     void update(uint64_t currentTimeMs);

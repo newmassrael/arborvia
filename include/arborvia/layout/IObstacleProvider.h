@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/Types.h"
+#include "MoveDirection.h"
 
 #include <unordered_set>
 
@@ -43,6 +44,19 @@ public:
     virtual bool isBlocked(int gridX, int gridY, 
                           const std::unordered_set<NodeId>& exclude) const = 0;
 
+    /// Check if a grid coordinate is blocked for a specific movement direction
+    /// This enables direction-aware obstacle detection:
+    /// - Node obstacles block all movement directions
+    /// - Edge segment obstacles only block parallel movement (not perpendicular)
+    /// @param gridX Grid X coordinate  
+    /// @param gridY Grid Y coordinate
+    /// @param moveDir The direction of movement to check
+    /// @param exclude Nodes to exclude from blocking check
+    /// @return True if movement in the specified direction is blocked
+    virtual bool isBlockedForDirection(int gridX, int gridY,
+                                       MoveDirection moveDir,
+                                       const std::unordered_set<NodeId>& exclude) const = 0;
+
     /// Check if an orthogonal segment is blocked
     /// Segment must be axis-aligned (horizontal or vertical)
     /// @param x1, y1 Start grid coordinates
@@ -63,6 +77,49 @@ public:
 
     /// Check if grid coordinates are within bounds
     virtual bool inBounds(int gridX, int gridY) const = 0;
+
+    // === Cost Queries (for dynamic cost-based pathfinding) ===
+
+    /// Cost constants for pathfinding
+    static constexpr int COST_FREE = 1;           ///< Empty cell (base cost)
+    static constexpr int COST_EDGE_PATH = 50;     ///< Existing edge path
+    static constexpr int COST_PROXIMITY_MAX = 30; ///< Maximum proximity penalty (closest to unrelated node)
+    static constexpr int COST_BLOCKED = 999999;   ///< Completely blocked (node interior)
+
+    /// Get movement cost for a cell
+    /// Returns COST_BLOCKED for node-blocked cells, or accumulated cost from edge paths
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @return Cost value (lower is better, COST_BLOCKED means impassable)
+    virtual int getCost(int gridX, int gridY) const {
+        return isBlocked(gridX, gridY) ? COST_BLOCKED : COST_FREE;
+    }
+
+    /// Get movement cost for a specific direction
+    /// Allows direction-aware costing (e.g., parallel to existing edge = higher cost)
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @param moveDir The direction of movement
+    /// @return Cost value for moving in that direction
+    virtual int getCostForDirection(int gridX, int gridY, MoveDirection moveDir) const {
+        std::unordered_set<NodeId> empty;
+        return isBlockedForDirection(gridX, gridY, moveDir, empty) ? COST_BLOCKED : COST_FREE;
+    }
+
+    /// Get movement cost for a specific direction with exclusions
+    /// Includes proximity penalty for cells near unrelated nodes (not in exclude set)
+    /// This encourages paths to stay away from nodes they're not connected to
+    /// @param gridX Grid X coordinate
+    /// @param gridY Grid Y coordinate
+    /// @param moveDir The direction of movement
+    /// @param exclude Nodes to exclude from proximity penalty (typically source/target)
+    /// @return Cost value including proximity penalty for unrelated nodes
+    virtual int getCostForDirectionWithExcludes(int gridX, int gridY, 
+                                                 MoveDirection moveDir,
+                                                 const std::unordered_set<NodeId>& exclude) const {
+        // Default implementation: just check blocking, no proximity
+        return isBlockedForDirection(gridX, gridY, moveDir, exclude) ? COST_BLOCKED : COST_FREE;
+    }
 
     // === Coordinate Conversion ===
 

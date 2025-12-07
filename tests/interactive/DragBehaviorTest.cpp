@@ -2,6 +2,7 @@
 #include <arborvia/arborvia.h>
 #include <iostream>
 #include <unordered_map>
+#include <random>
 
 using namespace arborvia;
 
@@ -84,6 +85,65 @@ protected:
                   << "src=" << edgeSideName(info.sourceEdge) << "[" << info.sourceSnapIndex << "], "
                   << "tgt=" << edgeSideName(info.targetEdge) << "[" << info.targetSnapIndex << "]"
                   << std::endl;
+    }
+
+    // Helper: check if orthogonal segment penetrates node interior
+    static bool segmentPenetratesNode(const Point& p1, const Point& p2,
+                                      const NodeLayout& node) {
+        float left = node.position.x;
+        float right = node.position.x + node.size.width;
+        float top = node.position.y;
+        float bottom = node.position.y + node.size.height;
+
+        // Vertical segment
+        if (std::abs(p1.x - p2.x) < 0.1f) {
+            float x = p1.x;
+            float minY = std::min(p1.y, p2.y);
+            float maxY = std::max(p1.y, p2.y);
+            // Check if x is inside node's horizontal bounds (excluding boundary)
+            if (x > left + 1 && x < right - 1) {
+                // Check if segment overlaps node's vertical bounds
+                if (minY < bottom - 1 && maxY > top + 1) {
+                    return true;
+                }
+            }
+        }
+        // Horizontal segment
+        else if (std::abs(p1.y - p2.y) < 0.1f) {
+            float y = p1.y;
+            float minX = std::min(p1.x, p2.x);
+            float maxX = std::max(p1.x, p2.x);
+            // Check if y is inside node's vertical bounds (excluding boundary)
+            if (y > top + 1 && y < bottom - 1) {
+                // Check if segment overlaps node's horizontal bounds
+                if (minX < right - 1 && maxX > left + 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Helper: check if edge penetrates any node (excluding source/target)
+    static bool edgePenetratesAnyNode(const EdgeLayout& edge,
+                                      const std::unordered_map<NodeId, NodeLayout>& nodes) {
+        std::vector<Point> path;
+        path.push_back(edge.sourcePoint);
+        for (const auto& bp : edge.bendPoints) {
+            path.push_back(bp.position);
+        }
+        path.push_back(edge.targetPoint);
+
+        for (size_t i = 0; i + 1 < path.size(); ++i) {
+            for (const auto& [nodeId, node] : nodes) {
+                // Skip source and target nodes
+                if (nodeId == edge.from || nodeId == edge.to) continue;
+                if (segmentPenetratesNode(path[i], path[i+1], node)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     Graph graph_;
@@ -1462,4 +1522,297 @@ TEST_F(DragBehaviorTest, Drag_OrthogonalityMaintained) {
     }
 
     std::cout << "\n=== Orthogonality test complete ===" << std::endl;
+}
+
+// =============================================================================
+// Node Penetration Tests - Verify edges don't pass through other nodes
+// =============================================================================
+
+// Test: Edge 6 (error->idle) should not penetrate any node after various drags
+TEST_F(DragBehaviorTest, Edge6_ErrorToIdle_ShouldNotPenetrateNodes) {
+    // Setup layout with larger nodes (like interactive demo)
+    Graph graph;
+    auto idle = graph.addNode(Size{200, 100}, "Idle");
+    auto running = graph.addNode(Size{200, 100}, "Running");
+    auto paused = graph.addNode(Size{200, 100}, "Paused");
+    auto stopped = graph.addNode(Size{200, 100}, "Stopped");
+    auto error = graph.addNode(Size{200, 100}, "Error");
+
+    graph.addEdge(idle, running, "start");
+    graph.addEdge(running, paused, "pause");
+    graph.addEdge(paused, running, "resume");
+    graph.addEdge(running, stopped, "stop");
+    graph.addEdge(paused, stopped, "stop");
+    graph.addEdge(running, error, "fail");
+    auto e_reset = graph.addEdge(error, idle, "reset");
+
+    LayoutOptions options;
+    options.direction = Direction::TopToBottom;
+    options.nodeSpacingHorizontal = 100.0f;
+    options.nodeSpacingVertical = 100.0f;
+    options.gridConfig.cellSize = 20.0f;
+    options.autoSnapPoints = true;
+
+    auto manager = std::make_shared<ManualLayoutManager>();
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    layout.setManualLayoutManager(manager);
+
+    auto result = layout.layout(graph);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (const auto& [id, nl] : result.nodeLayouts()) {
+        nodeLayouts[id] = nl;
+    }
+    for (const auto& [id, el] : result.edgeLayouts()) {
+        edgeLayouts[id] = el;
+    }
+
+    // Initial state should be valid
+    for (const auto& [edgeId, el] : edgeLayouts) {
+        EXPECT_FALSE(edgePenetratesAnyNode(el, nodeLayouts))
+            << "Initial: Edge " << edgeId << " penetrates a node";
+    }
+
+    // Test various drag directions for error node
+    std::vector<Point> dragOffsets = {
+        {-60, 0},    // left
+        {60, 0},     // right
+        {0, -40},    // up
+        {0, 40},     // down
+        {-60, -40},  // left-up
+        {60, 40},    // right-down
+        {-100, 0},   // far left
+        {100, 0},    // far right
+    };
+
+    for (const auto& offset : dragOffsets) {
+        // Save state
+        auto savedNodeLayouts = nodeLayouts;
+        auto savedEdgeLayouts = edgeLayouts;
+
+        // Apply drag
+        nodeLayouts[error].position.x += offset.x;
+        nodeLayouts[error].position.y += offset.y;
+        manager->setNodePosition(error, nodeLayouts[error].position);
+
+        std::vector<EdgeId> affected = graph.getConnectedEdges(error);
+
+        LayoutUtils::updateEdgePositions(
+            edgeLayouts, nodeLayouts, affected,
+            options, {error});
+
+        // Verify no penetration
+        for (const auto& [edgeId, el] : edgeLayouts) {
+            EXPECT_FALSE(edgePenetratesAnyNode(el, nodeLayouts))
+                << "After drag (" << offset.x << "," << offset.y << "): "
+                << "Edge " << edgeId << " penetrates a node";
+        }
+
+        // Restore
+        nodeLayouts = savedNodeLayouts;
+        edgeLayouts = savedEdgeLayouts;
+    }
+}
+
+// Test: All nodes dragged in all directions should not cause penetration
+TEST_F(DragBehaviorTest, AllNodes_DragInAllDirections_NoNodePenetration) {
+    // Setup
+    Graph graph;
+    auto idle = graph.addNode(Size{200, 100}, "Idle");
+    auto running = graph.addNode(Size{200, 100}, "Running");
+    auto paused = graph.addNode(Size{200, 100}, "Paused");
+    auto stopped = graph.addNode(Size{200, 100}, "Stopped");
+    auto error = graph.addNode(Size{200, 100}, "Error");
+
+    graph.addEdge(idle, running, "start");
+    graph.addEdge(running, paused, "pause");
+    graph.addEdge(paused, running, "resume");
+    graph.addEdge(running, stopped, "stop");
+    graph.addEdge(paused, stopped, "stop");
+    graph.addEdge(running, error, "fail");
+    graph.addEdge(error, idle, "reset");
+
+    LayoutOptions options;
+    options.direction = Direction::TopToBottom;
+    options.nodeSpacingHorizontal = 100.0f;
+    options.nodeSpacingVertical = 100.0f;
+    options.gridConfig.cellSize = 20.0f;
+    options.autoSnapPoints = true;
+
+    auto manager = std::make_shared<ManualLayoutManager>();
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    layout.setManualLayoutManager(manager);
+
+    auto result = layout.layout(graph);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (const auto& [id, nl] : result.nodeLayouts()) {
+        nodeLayouts[id] = nl;
+    }
+    for (const auto& [id, el] : result.edgeLayouts()) {
+        edgeLayouts[id] = el;
+    }
+
+    std::vector<Point> directions = {
+        {-40, 0}, {40, 0}, {0, -40}, {0, 40},
+        {-40, -40}, {40, -40}, {-40, 40}, {40, 40}
+    };
+
+    std::vector<NodeId> allNodes = {idle, running, paused, stopped, error};
+
+    for (NodeId nodeId : allNodes) {
+        for (const auto& dir : directions) {
+            auto savedNodeLayouts = nodeLayouts;
+            auto savedEdgeLayouts = edgeLayouts;
+
+            nodeLayouts[nodeId].position.x += dir.x;
+            nodeLayouts[nodeId].position.y += dir.y;
+            manager->setNodePosition(nodeId, nodeLayouts[nodeId].position);
+
+            std::vector<EdgeId> affected = graph.getConnectedEdges(nodeId);
+            LayoutUtils::updateEdgePositions(
+                edgeLayouts, nodeLayouts, affected,
+                options, {nodeId});
+
+            for (const auto& [edgeId, el] : edgeLayouts) {
+                EXPECT_FALSE(edgePenetratesAnyNode(el, nodeLayouts))
+                    << "Node " << nodeId << " drag (" << dir.x << "," << dir.y
+                    << "): Edge " << edgeId << " penetrates";
+            }
+
+            nodeLayouts = savedNodeLayouts;
+            edgeLayouts = savedEdgeLayouts;
+        }
+    }
+}
+
+// Test: Random drag stress test - 100 iterations
+TEST_F(DragBehaviorTest, RandomDrag_100Iterations_NoNodePenetration) {
+    // Setup
+    Graph graph;
+    auto idle = graph.addNode(Size{200, 100}, "Idle");
+    auto running = graph.addNode(Size{200, 100}, "Running");
+    auto paused = graph.addNode(Size{200, 100}, "Paused");
+    auto stopped = graph.addNode(Size{200, 100}, "Stopped");
+    auto error = graph.addNode(Size{200, 100}, "Error");
+
+    graph.addEdge(idle, running, "start");
+    graph.addEdge(running, paused, "pause");
+    graph.addEdge(paused, running, "resume");
+    graph.addEdge(running, stopped, "stop");
+    graph.addEdge(paused, stopped, "stop");
+    graph.addEdge(running, error, "fail");
+    graph.addEdge(error, idle, "reset");
+
+    LayoutOptions options;
+    options.direction = Direction::TopToBottom;
+    options.nodeSpacingHorizontal = 100.0f;
+    options.nodeSpacingVertical = 100.0f;
+    options.gridConfig.cellSize = 20.0f;
+    options.autoSnapPoints = true;
+
+    auto manager = std::make_shared<ManualLayoutManager>();
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    layout.setManualLayoutManager(manager);
+
+    auto result = layout.layout(graph);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (const auto& [id, nl] : result.nodeLayouts()) {
+        nodeLayouts[id] = nl;
+    }
+    for (const auto& [id, el] : result.edgeLayouts()) {
+        edgeLayouts[id] = el;
+    }
+
+    std::vector<NodeId> allNodes = {idle, running, paused, stopped, error};
+
+    std::mt19937 rng(42);  // Deterministic seed for reproducibility
+    std::uniform_int_distribution<size_t> nodeDist(0, allNodes.size() - 1);
+    std::uniform_real_distribution<float> offsetDist(-100.0f, 100.0f);
+
+    int penetrationCount = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        NodeId nodeId = allNodes[nodeDist(rng)];
+        float dx = offsetDist(rng);
+        float dy = offsetDist(rng);
+
+        // Grid snap
+        dx = std::round(dx / 20.0f) * 20.0f;
+        dy = std::round(dy / 20.0f) * 20.0f;
+
+        // Calculate proposed new position
+        Point newPos = {
+            nodeLayouts[nodeId].position.x + dx,
+            nodeLayouts[nodeId].position.y + dy
+        };
+
+        // Check if position is valid (no node overlap)
+        auto validation = LayoutUtils::canMoveNodeTo(
+            nodeId, newPos, nodeLayouts, edgeLayouts, options.gridConfig.cellSize);
+        
+        if (!validation.valid) {
+            // Skip this drag - would cause node overlap
+            continue;
+        }
+
+        nodeLayouts[nodeId].position = newPos;
+        manager->setNodePosition(nodeId, nodeLayouts[nodeId].position);
+
+        std::vector<EdgeId> affected = graph.getConnectedEdges(nodeId);
+        std::cout << "[TEST] Iteration " << i << " BEFORE updateEdgePositions" << std::endl;
+        LayoutUtils::updateEdgePositions(
+            edgeLayouts, nodeLayouts, affected,
+            options, {nodeId});
+        std::cout << "[TEST] Iteration " << i << " AFTER updateEdgePositions" << std::endl;
+
+        for (const auto& [edgeId, el] : edgeLayouts) {
+            if (edgePenetratesAnyNode(el, nodeLayouts)) {
+                penetrationCount++;
+                std::cout << "Iteration " << i << ", Node " << nodeId
+                          << " drag (" << dx << "," << dy << "): "
+                          << "Edge " << edgeId << " penetrates" << std::endl;
+                
+                // Detailed debug: print path and check which node is penetrated
+                std::cout << "  Path: src=(" << el.sourcePoint.x << "," << el.sourcePoint.y << ")";
+                for (const auto& bp : el.bendPoints) {
+                    std::cout << " -> (" << bp.position.x << "," << bp.position.y << ")";
+                }
+                std::cout << " -> tgt=(" << el.targetPoint.x << "," << el.targetPoint.y << ")" << std::endl;
+                
+                // Find which node is penetrated
+                std::vector<Point> path;
+                path.push_back(el.sourcePoint);
+                for (const auto& bp : el.bendPoints) path.push_back(bp.position);
+                path.push_back(el.targetPoint);
+                
+                for (size_t seg = 0; seg + 1 < path.size(); ++seg) {
+                    for (const auto& [nid, node] : nodeLayouts) {
+                        if (nid == el.from || nid == el.to) continue;
+                        if (segmentPenetratesNode(path[seg], path[seg+1], node)) {
+                            std::cout << "  Segment " << seg << " penetrates Node " << nid
+                                      << " at (" << node.position.x << "," << node.position.y
+                                      << " " << node.size.width << "x" << node.size.height << ")" << std::endl;
+                        }
+                    }
+                }
+                
+                // Print all node positions
+                std::cout << "  Node positions:" << std::endl;
+                for (const auto& [nid, node] : nodeLayouts) {
+                    std::cout << "    N" << nid << ": (" << node.position.x << "," << node.position.y
+                              << " " << node.size.width << "x" << node.size.height << ")" << std::endl;
+                }
+            }
+        }
+    }
+
+    EXPECT_EQ(penetrationCount, 0) << "Total penetrations: " << penetrationCount;
 }

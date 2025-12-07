@@ -2209,7 +2209,7 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MaintainedAfterDrag) {
 
     Point originalPos = nodeLayouts[running].position;
 
-    // Helper to check direction constraint
+    // Helper to check direction constraint for BOTH sourceEdge and targetEdge
     auto checkDirectionConstraint = [](const EdgeLayout& edge, const std::string& name) {
         std::vector<Point> points;
         points.push_back(edge.sourcePoint);
@@ -2220,43 +2220,83 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MaintainedAfterDrag) {
 
         if (points.size() < 2) return true;
 
-        // Check last segment for targetEdge constraint
+        bool allOk = true;
+
+        // Check FIRST segment for sourceEdge constraint
+        const Point& p0 = points[0];
+        const Point& p1 = points[1];
+        float dxFirst = p1.x - p0.x;
+        float dyFirst = p1.y - p0.y;
+
+        bool firstOk = true;
+        std::string expectedFirst;
+
+        switch (edge.sourceEdge) {
+            case NodeEdge::Top:
+                expectedFirst = "Vertical (dy < 0)";  // Going UP (Y decreases)
+                firstOk = (std::abs(dxFirst) < 0.1f && dyFirst < 0);
+                break;
+            case NodeEdge::Bottom:
+                expectedFirst = "Vertical (dy > 0)";  // Going DOWN (Y increases)
+                firstOk = (std::abs(dxFirst) < 0.1f && dyFirst > 0);
+                break;
+            case NodeEdge::Left:
+                expectedFirst = "Horizontal (dx < 0)";  // Going LEFT (X decreases)
+                firstOk = (std::abs(dyFirst) < 0.1f && dxFirst < 0);
+                break;
+            case NodeEdge::Right:
+                expectedFirst = "Horizontal (dx > 0)";  // Going RIGHT (X increases)
+                firstOk = (std::abs(dyFirst) < 0.1f && dxFirst > 0);
+                break;
+        }
+
+        std::cout << "  " << name << ": sourceEdge=" << static_cast<int>(edge.sourceEdge)
+                  << " first=(" << p0.x << "," << p0.y << ")->(" << p1.x << "," << p1.y << ")"
+                  << " dx=" << dxFirst << " dy=" << dyFirst;
+        if (!firstOk) {
+            std::cout << " [SOURCE VIOLATION: expected " << expectedFirst << "]";
+            allOk = false;
+        }
+        std::cout << "\n";
+
+        // Check LAST segment for targetEdge constraint
         const Point& pN_1 = points[points.size() - 2];
         const Point& pN = points[points.size() - 1];
         float dxLast = pN.x - pN_1.x;
         float dyLast = pN.y - pN_1.y;
 
         bool lastOk = true;
-        std::string expected;
+        std::string expectedLast;
 
         switch (edge.targetEdge) {
             case NodeEdge::Top:
-                expected = "Vertical (dy > 0)";
+                expectedLast = "Vertical (dy > 0)";
                 lastOk = (std::abs(dxLast) < 0.1f && dyLast > 0);
                 break;
             case NodeEdge::Bottom:
-                expected = "Vertical (dy < 0)";
+                expectedLast = "Vertical (dy < 0)";
                 lastOk = (std::abs(dxLast) < 0.1f && dyLast < 0);
                 break;
             case NodeEdge::Left:
-                expected = "Horizontal (dx > 0)";
+                expectedLast = "Horizontal (dx > 0)";
                 lastOk = (std::abs(dyLast) < 0.1f && dxLast > 0);
                 break;
             case NodeEdge::Right:
-                expected = "Horizontal (dx < 0)";
+                expectedLast = "Horizontal (dx < 0)";
                 lastOk = (std::abs(dyLast) < 0.1f && dxLast < 0);
                 break;
         }
 
-        // Always print for debugging
-        std::cout << "  " << name << ": targetEdge=" << static_cast<int>(edge.targetEdge)
+        std::cout << "             targetEdge=" << static_cast<int>(edge.targetEdge)
                   << " last=(" << pN_1.x << "," << pN_1.y << ")->(" << pN.x << "," << pN.y << ")"
                   << " dx=" << dxLast << " dy=" << dyLast;
         if (!lastOk) {
-            std::cout << " [VIOLATION: expected " << expected << "]";
+            std::cout << " [TARGET VIOLATION: expected " << expectedLast << "]";
+            allOk = false;
         }
         std::cout << "\n";
-        return lastOk;
+
+        return allOk;
     };
 
     // Save initial edge directions (should be preserved during drag)
@@ -2273,19 +2313,36 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MaintainedAfterDrag) {
     }
 
     // Drag Running node to different positions (cumulative offsets)
+    // Including moving UP to test the user's scenario where Running is at same Y as Idle
     std::vector<Point> dragOffsets = {
         {100, 0},   // Right
         {100, 0},   // More right (cumulative)
         {0, 50},    // Down
+        {100, -200}, // UP and right - Running at same Y level as Idle (user's scenario)
+        {0, -50},   // More UP - Running above Idle
     };
 
     int violations = 0;
     int directionChanges = 0;
 
     for (size_t i = 0; i < dragOffsets.size(); i++) {
+        // Calculate proposed position
+        Point newPos = {
+            nodeLayouts[running].position.x + dragOffsets[i].x,
+            nodeLayouts[running].position.y + dragOffsets[i].y
+        };
+
+        // Check if position is valid (no node overlap)
+        auto validation = LayoutUtils::canMoveNodeTo(
+            running, newPos, nodeLayouts, edgeLayouts, options.gridConfig.cellSize);
+
+        if (!validation.valid) {
+            std::cout << "\n=== Drag position " << i << ": SKIPPED (would cause overlap) ===\n";
+            continue;
+        }
+
         // Apply drag offset
-        nodeLayouts[running].position.x += dragOffsets[i].x;
-        nodeLayouts[running].position.y += dragOffsets[i].y;
+        nodeLayouts[running].position = newPos;
 
         std::cout << "\n=== Drag position " << i << ": ("
                   << nodeLayouts[running].position.x << ", "
@@ -4288,4 +4345,817 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge4_PausedToStopped_Diagonal) 
 
     EXPECT_TRUE(validationAfter.orthogonal)
         << "After updateEdgePositions, path should be orthogonal!";
+}
+
+// Helper function to check if two segments from DIFFERENT edges overlap
+// Returns true if horizontal/vertical segments share the same line and overlap
+static bool segmentsOverlapBetweenEdges(const Point& a1, const Point& a2, 
+                                         const Point& b1, const Point& b2) {
+    constexpr float EPSILON = 0.1f;
+    
+    // Check if both are horizontal (same Y)
+    bool aHorizontal = std::abs(a1.y - a2.y) < EPSILON;
+    bool bHorizontal = std::abs(b1.y - b2.y) < EPSILON;
+    
+    if (aHorizontal && bHorizontal) {
+        // Check if on same Y line
+        if (std::abs(a1.y - b1.y) < EPSILON) {
+            // Check X range overlap
+            float aMinX = std::min(a1.x, a2.x);
+            float aMaxX = std::max(a1.x, a2.x);
+            float bMinX = std::min(b1.x, b2.x);
+            float bMaxX = std::max(b1.x, b2.x);
+            
+            float overlapStart = std::max(aMinX, bMinX);
+            float overlapEnd = std::min(aMaxX, bMaxX);
+            return (overlapEnd - overlapStart) > EPSILON;
+        }
+    }
+    
+    // Check if both are vertical (same X)
+    bool aVertical = std::abs(a1.x - a2.x) < EPSILON;
+    bool bVertical = std::abs(b1.x - b2.x) < EPSILON;
+    
+    if (aVertical && bVertical) {
+        // Check if on same X line
+        if (std::abs(a1.x - b1.x) < EPSILON) {
+            // Check Y range overlap
+            float aMinY = std::min(a1.y, a2.y);
+            float aMaxY = std::max(a1.y, a2.y);
+            float bMinY = std::min(b1.y, b2.y);
+            float bMaxY = std::max(b1.y, b2.y);
+            
+            float overlapStart = std::max(aMinY, bMinY);
+            float overlapEnd = std::min(aMaxY, bMaxY);
+            return (overlapEnd - overlapStart) > EPSILON;
+        }
+    }
+    
+    return false;
+}
+
+// Test: Edge 0 (start: idle→running) and Edge 1 (running→paused) must NOT overlap
+// This is the exact scenario from user's interactive_demo log
+TEST(EdgeRoutingTransitionTest, InteractiveDemo_StartAndPause_NoOverlap) {
+    Graph graph;
+    
+    // Recreate interactive_demo graph structure
+    NodeId idle = graph.addNode(Size{200, 100}, "idle");       // Node 0
+    NodeId running = graph.addNode(Size{200, 100}, "running"); // Node 1
+    NodeId paused = graph.addNode(Size{200, 100}, "paused");   // Node 2
+    NodeId stopped = graph.addNode(Size{200, 100}, "stopped"); // Node 3
+    NodeId complete = graph.addNode(Size{200, 100}, "complete"); // Node 4
+    
+    // Edges matching interactive_demo
+    EdgeId start = graph.addEdge(idle, running);      // Edge 0: start
+    EdgeId pause = graph.addEdge(running, paused);    // Edge 1: pause  
+    EdgeId resume = graph.addEdge(paused, running);   // Edge 2: resume
+    EdgeId stop1 = graph.addEdge(running, stopped);   // Edge 3
+    EdgeId stop2 = graph.addEdge(paused, stopped);    // Edge 4
+    EdgeId finish = graph.addEdge(running, complete); // Edge 5
+    EdgeId reset = graph.addEdge(complete, idle);     // Edge 6
+    EdgeId selfLoop = graph.addEdge(complete, complete); // Edge 7
+    
+    SugiyamaLayout layoutAlgo;
+    LayoutOptions options;
+    options.setGridCellSize(20.0f);
+    options.setNodeSpacing(100.0f, 100.0f);
+    layoutAlgo.setOptions(options);
+    
+    LayoutResult result = layoutAlgo.layout(graph);
+    
+    // Get Edge 0 (start) and Edge 1 (pause) layouts
+    const EdgeLayout* startLayout = result.getEdgeLayout(start);
+    const EdgeLayout* pauseLayout = result.getEdgeLayout(pause);
+    
+    ASSERT_NE(startLayout, nullptr) << "Start edge layout should exist";
+    ASSERT_NE(pauseLayout, nullptr) << "Pause edge layout should exist";
+    
+    std::cout << "\n===== START/PAUSE OVERLAP TEST =====\n";
+    std::cout << "Edge 0 (start): idle -> running\n";
+    std::cout << "  sourcePoint: (" << startLayout->sourcePoint.x << ", " 
+              << startLayout->sourcePoint.y << ")\n";
+    for (size_t i = 0; i < startLayout->bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << startLayout->bendPoints[i].position.x 
+                  << ", " << startLayout->bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  targetPoint: (" << startLayout->targetPoint.x << ", " 
+              << startLayout->targetPoint.y << ")\n";
+    std::cout << "  channelY: " << startLayout->channelY << "\n";
+    
+    std::cout << "Edge 1 (pause): running -> paused\n";
+    std::cout << "  sourcePoint: (" << pauseLayout->sourcePoint.x << ", " 
+              << pauseLayout->sourcePoint.y << ")\n";
+    for (size_t i = 0; i < pauseLayout->bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << pauseLayout->bendPoints[i].position.x 
+                  << ", " << pauseLayout->bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  targetPoint: (" << pauseLayout->targetPoint.x << ", " 
+              << pauseLayout->targetPoint.y << ")\n";
+    std::cout << "  channelY: " << pauseLayout->channelY << "\n";
+    
+    // Build full path for each edge
+    std::vector<Point> startPath;
+    startPath.push_back(startLayout->sourcePoint);
+    for (const auto& bp : startLayout->bendPoints) {
+        startPath.push_back(bp.position);
+    }
+    startPath.push_back(startLayout->targetPoint);
+    
+    std::vector<Point> pausePath;
+    pausePath.push_back(pauseLayout->sourcePoint);
+    for (const auto& bp : pauseLayout->bendPoints) {
+        pausePath.push_back(bp.position);
+    }
+    pausePath.push_back(pauseLayout->targetPoint);
+    
+    // Check all segment pairs between the two edges for overlap
+    int overlapCount = 0;
+    for (size_t i = 0; i + 1 < startPath.size(); ++i) {
+        for (size_t j = 0; j + 1 < pausePath.size(); ++j) {
+            if (segmentsOverlapBetweenEdges(startPath[i], startPath[i+1],
+                                            pausePath[j], pausePath[j+1])) {
+                overlapCount++;
+                std::cout << "OVERLAP DETECTED!\n";
+                std::cout << "  Start seg[" << i << "]: (" << startPath[i].x << "," 
+                          << startPath[i].y << ") -> (" << startPath[i+1].x << "," 
+                          << startPath[i+1].y << ")\n";
+                std::cout << "  Pause seg[" << j << "]: (" << pausePath[j].x << "," 
+                          << pausePath[j].y << ") -> (" << pausePath[j+1].x << "," 
+                          << pausePath[j+1].y << ")\n";
+            }
+        }
+    }
+    
+    std::cout << "Total overlapping segments between start and pause: " << overlapCount << "\n";
+    std::cout << "========================================\n";
+    
+    // channelY must be different for edges that could potentially overlap
+    if (startLayout->channelY > 0 && pauseLayout->channelY > 0) {
+        EXPECT_NE(startLayout->channelY, pauseLayout->channelY)
+            << "Start and Pause edges should have different channelY values!";
+    }
+    
+    EXPECT_EQ(overlapCount, 0) 
+        << "Start and Pause edges should NOT have overlapping segments!";
+}
+
+// Test: Edge 6 (reset: complete→idle) and Edge 1 (pause: running→paused) must NOT overlap
+// This is another overlap case from user's interactive_demo log
+TEST(EdgeRoutingTransitionTest, InteractiveDemo_ResetAndPause_NoOverlap) {
+    Graph graph;
+    
+    // Recreate interactive_demo graph structure
+    NodeId idle = graph.addNode(Size{200, 100}, "idle");       // Node 0
+    NodeId running = graph.addNode(Size{200, 100}, "running"); // Node 1
+    NodeId paused = graph.addNode(Size{200, 100}, "paused");   // Node 2
+    NodeId stopped = graph.addNode(Size{200, 100}, "stopped"); // Node 3
+    NodeId complete = graph.addNode(Size{200, 100}, "complete"); // Node 4
+    
+    // Edges matching interactive_demo
+    EdgeId start = graph.addEdge(idle, running);      // Edge 0
+    EdgeId pause = graph.addEdge(running, paused);    // Edge 1: pause  
+    EdgeId resume = graph.addEdge(paused, running);   // Edge 2
+    EdgeId stop1 = graph.addEdge(running, stopped);   // Edge 3
+    EdgeId stop2 = graph.addEdge(paused, stopped);    // Edge 4
+    EdgeId finish = graph.addEdge(running, complete); // Edge 5
+    EdgeId reset = graph.addEdge(complete, idle);     // Edge 6: reset
+    EdgeId selfLoop = graph.addEdge(complete, complete); // Edge 7
+    
+    SugiyamaLayout layoutAlgo;
+    LayoutOptions options;
+    options.setGridCellSize(20.0f);
+    options.setNodeSpacing(100.0f, 100.0f);
+    layoutAlgo.setOptions(options);
+    
+    LayoutResult result = layoutAlgo.layout(graph);
+    
+    const EdgeLayout* resetLayout = result.getEdgeLayout(reset);
+    const EdgeLayout* pauseLayout = result.getEdgeLayout(pause);
+    
+    ASSERT_NE(resetLayout, nullptr) << "Reset edge layout should exist";
+    ASSERT_NE(pauseLayout, nullptr) << "Pause edge layout should exist";
+    
+    std::cout << "\n===== RESET/PAUSE OVERLAP TEST =====\n";
+    std::cout << "Edge 6 (reset): complete -> idle\n";
+    std::cout << "  sourcePoint: (" << resetLayout->sourcePoint.x << ", " 
+              << resetLayout->sourcePoint.y << ")\n";
+    for (size_t i = 0; i < resetLayout->bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << resetLayout->bendPoints[i].position.x 
+                  << ", " << resetLayout->bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  targetPoint: (" << resetLayout->targetPoint.x << ", " 
+              << resetLayout->targetPoint.y << ")\n";
+    
+    std::cout << "Edge 1 (pause): running -> paused\n";
+    std::cout << "  sourcePoint: (" << pauseLayout->sourcePoint.x << ", " 
+              << pauseLayout->sourcePoint.y << ")\n";
+    for (size_t i = 0; i < pauseLayout->bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << pauseLayout->bendPoints[i].position.x 
+                  << ", " << pauseLayout->bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  targetPoint: (" << pauseLayout->targetPoint.x << ", " 
+              << pauseLayout->targetPoint.y << ")\n";
+    
+    // Build full path for each edge
+    std::vector<Point> resetPath;
+    resetPath.push_back(resetLayout->sourcePoint);
+    for (const auto& bp : resetLayout->bendPoints) {
+        resetPath.push_back(bp.position);
+    }
+    resetPath.push_back(resetLayout->targetPoint);
+    
+    std::vector<Point> pausePath;
+    pausePath.push_back(pauseLayout->sourcePoint);
+    for (const auto& bp : pauseLayout->bendPoints) {
+        pausePath.push_back(bp.position);
+    }
+    pausePath.push_back(pauseLayout->targetPoint);
+    
+    // Check all segment pairs between the two edges for overlap
+    int overlapCount = 0;
+    for (size_t i = 0; i + 1 < resetPath.size(); ++i) {
+        for (size_t j = 0; j + 1 < pausePath.size(); ++j) {
+            if (segmentsOverlapBetweenEdges(resetPath[i], resetPath[i+1],
+                                            pausePath[j], pausePath[j+1])) {
+                overlapCount++;
+                std::cout << "OVERLAP DETECTED!\n";
+                std::cout << "  Reset seg[" << i << "]: (" << resetPath[i].x << "," 
+                          << resetPath[i].y << ") -> (" << resetPath[i+1].x << "," 
+                          << resetPath[i+1].y << ")\n";
+                std::cout << "  Pause seg[" << j << "]: (" << pausePath[j].x << "," 
+                          << pausePath[j].y << ") -> (" << pausePath[j+1].x << "," 
+                          << pausePath[j+1].y << ")\n";
+            }
+        }
+    }
+    
+    std::cout << "Total overlapping segments between reset and pause: " << overlapCount << "\n";
+    std::cout << "========================================\n";
+    
+    EXPECT_EQ(overlapCount, 0) 
+        << "Reset and Pause edges should NOT have overlapping segments!";
+}
+
+// Test: Random drag simulation - check no edge overlaps after multiple random drags
+// This comprehensively tests edge routing under various drag scenarios
+TEST(EdgeRoutingTransitionTest, RandomDrag_NoEdgeOverlaps) {
+    Graph graph;
+    
+    // Create interactive_demo graph
+    NodeId idle = graph.addNode(Size{200, 100}, "idle");
+    NodeId running = graph.addNode(Size{200, 100}, "running");
+    NodeId paused = graph.addNode(Size{200, 100}, "paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "stopped");
+    NodeId complete = graph.addNode(Size{200, 100}, "complete");
+    
+    EdgeId e0 = graph.addEdge(idle, running);
+    EdgeId e1 = graph.addEdge(running, paused);
+    EdgeId e2 = graph.addEdge(paused, running);
+    EdgeId e3 = graph.addEdge(running, stopped);
+    EdgeId e4 = graph.addEdge(paused, stopped);
+    EdgeId e5 = graph.addEdge(running, complete);
+    EdgeId e6 = graph.addEdge(complete, idle);
+    EdgeId e7 = graph.addEdge(complete, complete);
+    
+    SugiyamaLayout layoutAlgo;
+    LayoutOptions options;
+    options.setGridCellSize(20.0f);
+    options.setNodeSpacing(100.0f, 100.0f);
+    layoutAlgo.setOptions(options);
+    
+    LayoutResult result = layoutAlgo.layout(graph);
+    
+    // Get mutable copies of layouts
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    
+    for (const auto& node : {idle, running, paused, stopped, complete}) {
+        const NodeLayout* nl = result.getNodeLayout(node);
+        if (nl) nodeLayouts[node] = *nl;
+    }
+    
+    for (const auto& edge : {e0, e1, e2, e3, e4, e5, e6, e7}) {
+        const EdgeLayout* el = result.getEdgeLayout(edge);
+        if (el) edgeLayouts[edge] = *el;
+    }
+    
+    std::vector<EdgeId> allEdges = {e0, e1, e2, e3, e4, e5, e6, e7};
+    std::vector<NodeId> draggableNodes = {idle, running, paused, stopped, complete};
+    
+    // Seed for reproducibility
+    std::srand(42);
+    
+    int totalOverlaps = 0;
+    int totalDrags = 0;
+    const int NUM_RANDOM_DRAGS = 50;
+    
+    std::cout << "\n===== RANDOM DRAG SIMULATION =====\n";
+    
+    for (int drag = 0; drag < NUM_RANDOM_DRAGS; ++drag) {
+        // Pick random node to drag
+        NodeId nodeToMove = draggableNodes[std::rand() % draggableNodes.size()];
+        
+        // Random offset (-200 to +200)
+        float dx = (std::rand() % 401) - 200;
+        float dy = (std::rand() % 201) - 100;
+        
+        // Apply drag
+        Point oldPos = nodeLayouts[nodeToMove].position;
+        nodeLayouts[nodeToMove].position.x += dx;
+        nodeLayouts[nodeToMove].position.y += dy;
+        
+        // Update edge positions with full optimizer
+        std::unordered_set<NodeId> movedNodes = {nodeToMove};
+        LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, options, movedNodes);
+        
+        // Check all edge pairs for overlap
+        int overlapsThisDrag = 0;
+        for (size_t i = 0; i < allEdges.size(); ++i) {
+            for (size_t j = i + 1; j < allEdges.size(); ++j) {
+                const EdgeLayout& edge1 = edgeLayouts[allEdges[i]];
+                const EdgeLayout& edge2 = edgeLayouts[allEdges[j]];
+                
+                // Build paths
+                std::vector<Point> path1, path2;
+                path1.push_back(edge1.sourcePoint);
+                for (const auto& bp : edge1.bendPoints) path1.push_back(bp.position);
+                path1.push_back(edge1.targetPoint);
+                
+                path2.push_back(edge2.sourcePoint);
+                for (const auto& bp : edge2.bendPoints) path2.push_back(bp.position);
+                path2.push_back(edge2.targetPoint);
+                
+                // Check segment overlaps
+                for (size_t s1 = 0; s1 + 1 < path1.size(); ++s1) {
+                    for (size_t s2 = 0; s2 + 1 < path2.size(); ++s2) {
+                        if (segmentsOverlapBetweenEdges(path1[s1], path1[s1+1],
+                                                       path2[s2], path2[s2+1])) {
+                            overlapsThisDrag++;
+                            if (overlapsThisDrag == 1) {
+                                std::cout << "Drag " << drag << ": Node " << nodeToMove 
+                                          << " moved by (" << dx << "," << dy << ")\n";
+                                // Print full paths for first overlap
+                                std::cout << "  Edge " << allEdges[i] << " path (" << path1.size() << " pts): ";
+                                for (const auto& p : path1) std::cout << "(" << p.x << "," << p.y << ") ";
+                                std::cout << "\n";
+                                std::cout << "  Edge " << allEdges[j] << " path (" << path2.size() << " pts): ";
+                                for (const auto& p : path2) std::cout << "(" << p.x << "," << p.y << ") ";
+                                std::cout << "\n";
+                            }
+                            std::cout << "  OVERLAP: Edge " << allEdges[i] << "[" << s1 << "]=(" 
+                                      << path1[s1].x << "," << path1[s1].y << ")->(" 
+                                      << path1[s1+1].x << "," << path1[s1+1].y << ") with Edge " 
+                                      << allEdges[j] << "[" << s2 << "]=("
+                                      << path2[s2].x << "," << path2[s2].y << ")->(" 
+                                      << path2[s2+1].x << "," << path2[s2+1].y << ")\n";
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (overlapsThisDrag > 0) {
+            totalOverlaps += overlapsThisDrag;
+        }
+        totalDrags++;
+        
+        // Restore position for next iteration (or keep for cumulative effect)
+        // Keep the new position for more realistic simulation
+    }
+    
+    std::cout << "Total drags: " << totalDrags << "\n";
+    std::cout << "Total overlaps detected: " << totalOverlaps << "\n";
+    std::cout << "==================================\n";
+    
+    EXPECT_EQ(totalOverlaps, 0) 
+        << "Found " << totalOverlaps << " edge overlaps during random drag simulation!";
+}
+
+// Test: After dragging idle node, start and pause edges must still not overlap
+TEST(EdgeRoutingTransitionTest, AfterDrag_StartAndPause_NoOverlap) {
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    
+    // Setup nodes - simulate user dragging idle node to position from log
+    // idle node moved right: position (180, 0) -> allows edge routing
+    nodeLayouts[NodeId{0}] = {NodeId{0}, {180, 0}, {200, 100}, 0, 0};     // idle (dragged)
+    nodeLayouts[NodeId{1}] = {NodeId{1}, {0, 200}, {200, 100}, 1, 0};     // running
+    nodeLayouts[NodeId{2}] = {NodeId{2}, {0, 400}, {200, 100}, 2, 0};     // paused
+    nodeLayouts[NodeId{3}] = {NodeId{3}, {0, 600}, {200, 100}, 3, 0};     // stopped
+    nodeLayouts[NodeId{4}] = {NodeId{4}, {300, 600}, {200, 100}, 3, 1};   // complete
+    
+    // Edge 0: start (idle -> running)
+    EdgeLayout e0;
+    e0.id = EdgeId{0};
+    e0.from = NodeId{0};
+    e0.to = NodeId{1};
+    e0.sourceEdge = NodeEdge::Bottom;
+    e0.targetEdge = NodeEdge::Top;
+    e0.sourceSnapIndex = -1;  // Force recalculation
+    e0.targetSnapIndex = -1;
+    e0.channelY = -1;
+    edgeLayouts[EdgeId{0}] = e0;
+    
+    // Edge 1: pause (running -> paused)
+    EdgeLayout e1;
+    e1.id = EdgeId{1};
+    e1.from = NodeId{1};
+    e1.to = NodeId{2};
+    e1.sourceEdge = NodeEdge::Top;  // Going UP first then around
+    e1.targetEdge = NodeEdge::Right;
+    e1.sourceSnapIndex = -1;
+    e1.targetSnapIndex = -1;
+    e1.channelY = -1;
+    edgeLayouts[EdgeId{1}] = e1;
+    
+    // Add other edges that might affect routing
+    EdgeLayout e2;
+    e2.id = EdgeId{2};
+    e2.from = NodeId{2};
+    e2.to = NodeId{1};
+    e2.sourceEdge = NodeEdge::Top;
+    e2.targetEdge = NodeEdge::Bottom;
+    e2.sourceSnapIndex = -1;
+    e2.targetSnapIndex = -1;
+    edgeLayouts[EdgeId{2}] = e2;
+    
+    std::vector<EdgeId> allEdges = {EdgeId{0}, EdgeId{1}, EdgeId{2}};
+    std::unordered_set<NodeId> movedNodes = {NodeId{0}};  // idle was dragged
+    
+    float gridSize = 20.0f;
+    LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, gridSize);
+    
+    const EdgeLayout& startLayout = edgeLayouts[EdgeId{0}];
+    const EdgeLayout& pauseLayout = edgeLayouts[EdgeId{1}];
+    
+    std::cout << "\n===== AFTER DRAG: START/PAUSE OVERLAP TEST =====\n";
+    std::cout << "Edge 0 (start):\n";
+    std::cout << "  src: (" << startLayout.sourcePoint.x << "," << startLayout.sourcePoint.y << ")\n";
+    for (size_t i = 0; i < startLayout.bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << startLayout.bendPoints[i].position.x 
+                  << "," << startLayout.bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  tgt: (" << startLayout.targetPoint.x << "," << startLayout.targetPoint.y << ")\n";
+    std::cout << "  channelY: " << startLayout.channelY << "\n";
+    
+    std::cout << "Edge 1 (pause):\n";
+    std::cout << "  src: (" << pauseLayout.sourcePoint.x << "," << pauseLayout.sourcePoint.y << ")\n";
+    for (size_t i = 0; i < pauseLayout.bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << pauseLayout.bendPoints[i].position.x 
+                  << "," << pauseLayout.bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  tgt: (" << pauseLayout.targetPoint.x << "," << pauseLayout.targetPoint.y << ")\n";
+    std::cout << "  channelY: " << pauseLayout.channelY << "\n";
+    
+    // Build paths
+    std::vector<Point> startPath;
+    startPath.push_back(startLayout.sourcePoint);
+    for (const auto& bp : startLayout.bendPoints) {
+        startPath.push_back(bp.position);
+    }
+    startPath.push_back(startLayout.targetPoint);
+    
+    std::vector<Point> pausePath;
+    pausePath.push_back(pauseLayout.sourcePoint);
+    for (const auto& bp : pauseLayout.bendPoints) {
+        pausePath.push_back(bp.position);
+    }
+    pausePath.push_back(pauseLayout.targetPoint);
+    
+    // Check for overlaps
+    int overlapCount = 0;
+    for (size_t i = 0; i + 1 < startPath.size(); ++i) {
+        for (size_t j = 0; j + 1 < pausePath.size(); ++j) {
+            if (segmentsOverlapBetweenEdges(startPath[i], startPath[i+1],
+                                            pausePath[j], pausePath[j+1])) {
+                overlapCount++;
+                std::cout << "OVERLAP: start[" << i << "] with pause[" << j << "]\n";
+            }
+        }
+    }
+    
+    std::cout << "Overlaps found: " << overlapCount << "\n";
+    std::cout << "================================================\n";
+
+    EXPECT_EQ(overlapCount, 0)
+        << "After drag, start and pause edges should NOT overlap!";
+}
+
+// TDD Test: Edge 0 (idle→running) must not penetrate idle node
+// Scenario: running is ABOVE and to the RIGHT of idle
+// Edge exits from idle's RIGHT side and must route around, not through
+TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge0_NoIdleNodePenetration) {
+    constexpr float gridSize = 20.0f;
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+
+    // Create nodes: idle at (0, 100), running at (300, 0) - running is UP and RIGHT
+    NodeId idle = 0;
+    NodeId running = 1;
+    NodeId paused = 2;
+    NodeId stopped = 3;
+    NodeId error = 4;
+
+    // Idle at (0, 100), size 200x100 → bounds X[0,200], Y[100,200]
+    nodeLayouts[idle] = NodeLayout{
+        .id = idle, .position = {0, 100}, .size = {200, 100}, .layer = 0, .order = 0
+    };
+    // Running at (300, 0), size 200x100 → bounds X[300,500], Y[0,100]
+    nodeLayouts[running] = NodeLayout{
+        .id = running, .position = {300, 0}, .size = {200, 100}, .layer = 1, .order = 0
+    };
+    // Other nodes for realistic edge count
+    nodeLayouts[paused] = NodeLayout{
+        .id = paused, .position = {600, 100}, .size = {200, 100}, .layer = 2, .order = 0
+    };
+    nodeLayouts[stopped] = NodeLayout{
+        .id = stopped, .position = {400, 300}, .size = {200, 100}, .layer = 3, .order = 0
+    };
+    nodeLayouts[error] = NodeLayout{
+        .id = error, .position = {0, 300}, .size = {200, 100}, .layer = 1, .order = 1
+    };
+
+    // Create Edge 0: idle → running, exits from RIGHT side
+    EdgeLayout e0Layout;
+    e0Layout.id = 0;
+    e0Layout.from = idle;
+    e0Layout.to = running;
+    e0Layout.sourceEdge = NodeEdge::Right;  // Exit from right side of idle
+    e0Layout.targetEdge = NodeEdge::Left;   // Enter left side of running
+    e0Layout.sourceSnapIndex = 0;
+    e0Layout.targetSnapIndex = 0;
+
+    // Calculate source/target points
+    // idle right edge at X=200, center Y=150
+    e0Layout.sourcePoint = {200, 150};
+    // running left edge at X=300, center Y=50
+    e0Layout.targetPoint = {300, 50};
+
+    // Initial path: right → up → right
+    e0Layout.bendPoints = {
+        {{260, 150}},   // Go right first
+        {{260, 50}}     // Then up to running's Y level
+    };
+    e0Layout.channelY = 100.0f;
+    edgeLayouts[0] = e0Layout;
+
+    // Create other edges for realistic scenario (affects overlap avoidance)
+    // Edge 1: running → paused
+    EdgeLayout e1Layout;
+    e1Layout.id = 1;
+    e1Layout.from = running;
+    e1Layout.to = paused;
+    e1Layout.sourceEdge = NodeEdge::Right;
+    e1Layout.targetEdge = NodeEdge::Left;
+    e1Layout.sourcePoint = {500, 50};
+    e1Layout.targetPoint = {600, 150};
+    e1Layout.bendPoints = {{{560, 50}}, {{560, 150}}};
+    edgeLayouts[1] = e1Layout;
+
+    // Edge 2: paused → running (reverse)
+    EdgeLayout e2Layout;
+    e2Layout.id = 2;
+    e2Layout.from = paused;
+    e2Layout.to = running;
+    e2Layout.sourceEdge = NodeEdge::Left;
+    e2Layout.targetEdge = NodeEdge::Right;
+    e2Layout.sourcePoint = {600, 150};
+    e2Layout.targetPoint = {500, 50};
+    e2Layout.bendPoints = {{{580, 150}}, {{580, 50}}};
+    edgeLayouts[2] = e2Layout;
+
+    // Edge 3: running → stopped
+    EdgeLayout e3Layout;
+    e3Layout.id = 3;
+    e3Layout.from = running;
+    e3Layout.to = stopped;
+    e3Layout.sourceEdge = NodeEdge::Bottom;
+    e3Layout.targetEdge = NodeEdge::Top;
+    e3Layout.sourcePoint = {400, 100};
+    e3Layout.targetPoint = {500, 300};
+    e3Layout.bendPoints = {{{400, 200}}, {{500, 200}}};
+    edgeLayouts[3] = e3Layout;
+
+    // Edge 5: running → error
+    EdgeLayout e5Layout;
+    e5Layout.id = 5;
+    e5Layout.from = running;
+    e5Layout.to = error;
+    e5Layout.sourceEdge = NodeEdge::Left;
+    e5Layout.targetEdge = NodeEdge::Top;
+    e5Layout.sourcePoint = {300, 50};
+    e5Layout.targetPoint = {100, 300};
+    e5Layout.bendPoints = {{{240, 50}}, {{240, 260}}, {{100, 260}}};
+    edgeLayouts[5] = e5Layout;
+
+    std::cout << "\n===== EDGE 0 NODE PENETRATION TEST =====\n";
+    std::cout << "Initial:\n";
+    std::cout << "  idle: (" << nodeLayouts[idle].position.x << ", "
+              << nodeLayouts[idle].position.y << ") bounds X[0,200] Y[100,200]\n";
+    std::cout << "  running: (" << nodeLayouts[running].position.x << ", "
+              << nodeLayouts[running].position.y << ") bounds X[300,500] Y[0,100]\n";
+    std::cout << "  Edge 0: src=" << (edgeLayouts[0].sourceEdge == NodeEdge::Right ? "Right" : "?")
+              << " tgt=" << (edgeLayouts[0].targetEdge == NodeEdge::Left ? "Left" : "?") << "\n";
+
+    EdgeRouting routing;
+    routing.setRoutingCoordinator(nullptr);
+
+    std::vector<EdgeId> affectedEdges = {0, 1, 2, 3, 5};
+
+    // Drag running LEFT toward idle
+    std::cout << "\nDragging running LEFT toward idle...\n";
+
+    int stepCount = 0;
+    while (nodeLayouts[running].position.x > 220 && stepCount < 10) {
+        nodeLayouts[running].position.x -= gridSize;
+        stepCount++;
+
+        std::unordered_set<NodeId> movedNodes = {running};
+        LayoutOptions options;
+        options.gridConfig.cellSize = gridSize;
+
+        routing.updateEdgeRoutingWithOptimization(
+            edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes);
+
+        // Log critical state
+        const EdgeLayout& e0 = edgeLayouts.at(0);
+        std::cout << "Step " << stepCount << ": running.x=" << nodeLayouts[running].position.x
+                  << " Edge0: bends=" << e0.bendPoints.size()
+                  << " srcEdge=" << (e0.sourceEdge == NodeEdge::Right ? "R" :
+                                     e0.sourceEdge == NodeEdge::Left ? "L" :
+                                     e0.sourceEdge == NodeEdge::Top ? "T" : "B") << "\n";
+    }
+
+    // Check final Edge 0 for penetration
+    const NodeLayout& idleNode = nodeLayouts.at(idle);
+    float idleXmin = idleNode.position.x;
+    float idleXmax = idleNode.position.x + idleNode.size.width;
+    float idleYmin = idleNode.position.y;
+    float idleYmax = idleNode.position.y + idleNode.size.height;
+
+    std::cout << "\nFinal state:\n";
+    std::cout << "idle bounds: X[" << idleXmin << "," << idleXmax
+              << "], Y[" << idleYmin << "," << idleYmax << "]\n";
+    std::cout << "running at: (" << nodeLayouts[running].position.x << ", "
+              << nodeLayouts[running].position.y << ")\n";
+
+    const EdgeLayout& edge0 = edgeLayouts.at(0);
+    std::cout << "\nEdge 0 (idle → running) path:\n";
+    std::cout << "  sourceEdge: " << (edge0.sourceEdge == NodeEdge::Top ? "Top" :
+                                      edge0.sourceEdge == NodeEdge::Bottom ? "Bottom" :
+                                      edge0.sourceEdge == NodeEdge::Left ? "Left" : "Right") << "\n";
+    std::cout << "  src: (" << edge0.sourcePoint.x << "," << edge0.sourcePoint.y << ")\n";
+    for (size_t i = 0; i < edge0.bendPoints.size(); ++i) {
+        std::cout << "  bend[" << i << "]: (" << edge0.bendPoints[i].position.x
+                  << "," << edge0.bendPoints[i].position.y << ")\n";
+    }
+    std::cout << "  tgt: (" << edge0.targetPoint.x << "," << edge0.targetPoint.y << ")\n";
+
+    // Build path and check for penetration
+    std::vector<Point> edge0Path;
+    edge0Path.push_back(edge0.sourcePoint);
+    for (const auto& bp : edge0.bendPoints) {
+        edge0Path.push_back(bp.position);
+    }
+    edge0Path.push_back(edge0.targetPoint);
+
+    int penetrationCount = 0;
+    constexpr float EPSILON = 0.1f;
+
+    for (size_t i = 0; i + 1 < edge0Path.size(); ++i) {
+        const Point& p1 = edge0Path[i];
+        const Point& p2 = edge0Path[i + 1];
+
+        // First segment starts at idle boundary, skip
+        if (i == 0) continue;
+
+        bool isHorizontal = (std::abs(p1.y - p2.y) < EPSILON);
+        bool isVertical = (std::abs(p1.x - p2.x) < EPSILON);
+
+        bool penetrates = false;
+
+        if (isHorizontal) {
+            float y = p1.y;
+            float segXmin = std::min(p1.x, p2.x);
+            float segXmax = std::max(p1.x, p2.x);
+            penetrates = (y > idleYmin + EPSILON && y < idleYmax - EPSILON &&
+                         segXmin < idleXmax - EPSILON && segXmax > idleXmin + EPSILON);
+        } else if (isVertical) {
+            float x = p1.x;
+            float segYmin = std::min(p1.y, p2.y);
+            float segYmax = std::max(p1.y, p2.y);
+            penetrates = (x > idleXmin + EPSILON && x < idleXmax - EPSILON &&
+                         segYmin < idleYmax - EPSILON && segYmax > idleYmin + EPSILON);
+        }
+
+        if (penetrates) {
+            std::cout << "!!! PENETRATION: segment[" << i << "] ("
+                      << p1.x << "," << p1.y << ") -> ("
+                      << p2.x << "," << p2.y << ") passes through idle node!\n";
+            penetrationCount++;
+        }
+    }
+
+    std::cout << "\nPenetration count: " << penetrationCount << "\n";
+    std::cout << "=========================================\n";
+
+    EXPECT_EQ(penetrationCount, 0)
+        << "Edge 0 (idle → running) must NOT penetrate the idle node!";
+}
+
+// TDD RED: Edge must remain orthogonal after node drag
+// Reproduces exact scenario from interactive_demo:
+// - idle at (0,0), running at (0,200), both size (200,100)
+// - Edge 0: idle(bottom) -> running(top)
+// - Initial path: source(100,100) -> bend(100,180) -> bend(60,180) -> target(60,200)
+// - After drag idle +20px right: source moves to (120,100) but bend stays at (100,180)
+// - Result: source(120,100) -> bend(100,180) is DIAGONAL!
+TEST(EdgeRoutingTransitionTest, DragNode_EdgeMustRemainOrthogonal) {
+    Graph graph;
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    EdgeId edge0 = graph.addEdge(idle, running);
+
+    // Setup exact node positions from demo
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    nodeLayouts[idle] = NodeLayout{idle, {0, 0}, {200, 100}, 0, 0};
+    nodeLayouts[running] = NodeLayout{running, {0, 200}, {200, 100}, 1, 0};
+
+    // Setup initial edge layout (from demo before drag)
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    EdgeLayout el;
+    el.id = edge0;
+    el.from = idle;
+    el.to = running;
+    el.sourceEdge = NodeEdge::Bottom;
+    el.targetEdge = NodeEdge::Top;
+    el.sourcePoint = {100, 100};  // bottom center of idle
+    el.targetPoint = {60, 200};   // top of running (snap index 0)
+    el.bendPoints = {
+        BendPoint{{100, 180}, false},
+        BendPoint{{60, 180}, false}
+    };
+    edgeLayouts[edge0] = el;
+
+    std::cout << "\n=== Initial Edge 0 ===" << std::endl;
+    std::cout << "source: (100, 100)" << std::endl;
+    std::cout << "bend[0]: (100, 180)" << std::endl;
+    std::cout << "bend[1]: (60, 180)" << std::endl;
+    std::cout << "target: (60, 200)" << std::endl;
+
+    // Drag idle right by 20 pixels
+    Point newIdlePos = {20, 0};
+
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+
+    MoveResult moveResult = LayoutUtils::moveNode(
+        idle, newIdlePos, nodeLayouts, edgeLayouts, graph, options);
+
+    ASSERT_TRUE(moveResult.success) << "Drag should succeed";
+
+    // Verify edge is still orthogonal
+    const EdgeLayout& updatedEdge = edgeLayouts[edge0];
+
+    std::vector<Point> path;
+    path.push_back(updatedEdge.sourcePoint);
+    for (const auto& bp : updatedEdge.bendPoints) {
+        path.push_back(bp.position);
+    }
+    path.push_back(updatedEdge.targetPoint);
+
+    std::cout << "\n=== Edge 0 After Drag ===" << std::endl;
+    for (size_t i = 0; i < path.size(); ++i) {
+        std::cout << "[" << i << "] (" << path[i].x << ", " << path[i].y << ")" << std::endl;
+    }
+
+    constexpr float EPSILON = 0.01f;
+    bool allOrthogonal = true;
+    std::ostringstream errorMsg;
+
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        const Point& p1 = path[i];
+        const Point& p2 = path[i + 1];
+
+        bool isHorizontal = std::abs(p1.y - p2.y) < EPSILON;
+        bool isVertical = std::abs(p1.x - p2.x) < EPSILON;
+
+        if (!isHorizontal && !isVertical) {
+            allOrthogonal = false;
+            errorMsg << "Segment[" << i << "]: (" << p1.x << "," << p1.y
+                     << ") -> (" << p2.x << "," << p2.y << ") is DIAGONAL!\n";
+        }
+    }
+
+    // Print path for debugging
+    std::cout << "Edge path after drag:\n";
+    for (size_t i = 0; i < path.size(); ++i) {
+        std::cout << "  [" << i << "] (" << path[i].x << ", " << path[i].y << ")\n";
+    }
+
+    EXPECT_TRUE(allOrthogonal)
+        << "All edge segments must be orthogonal after drag!\n"
+        << errorMsg.str();
 }

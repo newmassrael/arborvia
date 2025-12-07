@@ -22,15 +22,19 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/AStarPathFinder.cpp
     src/layout/sugiyama/LShapedPathFinder.cpp
     src/layout/sugiyama/PathIntersection.cpp
-    src/layout/sugiyama/EdgeScorer.cpp
     src/layout/sugiyama/SelfLoopRouter.cpp
     src/layout/sugiyama/PathCleanup.cpp
     src/layout/sugiyama/AStarEdgeOptimizer.cpp
     src/layout/sugiyama/GeometricEdgeOptimizer.cpp
-    src/layout/sugiyama/EdgeConstraintManager.cpp
-    src/layout/sugiyama/SegmentOverlapConstraint.cpp
+    src/layout/sugiyama/AStarOptimizerFactory.cpp
+    src/layout/sugiyama/GeometricOptimizerFactory.cpp
     src/layout/PathRoutingCoordinator.cpp
     src/layout/ValidRegionCalculator.cpp
+    src/layout/EdgePenaltySystem.cpp
+    src/layout/OptimizerConfig.cpp
+    src/layout/OptimizerRegistry.cpp
+    src/layout/BuiltinPenalties.cpp
+    src/layout/EdgeNudger.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS
@@ -51,7 +55,12 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/ConstraintConfig.h
     include/arborvia/layout/MinDistanceConstraint.h
     include/arborvia/layout/IEdgeOptimizer.h
-    include/arborvia/layout/IEdgeConstraint.h
-    include/arborvia/layout/EdgeConstraintManager.h
     include/arborvia/layout/ValidRegionCalculator.h
+    include/arborvia/layout/IEdgePenalty.h
+    include/arborvia/layout/EdgePenaltySystem.h
+    include/arborvia/layout/OptimizerConfig.h
+    include/arborvia/layout/IEdgeOptimizerFactory.h
+    include/arborvia/layout/OptimizerRegistry.h
+    include/arborvia/layout/BuiltinPenalties.h
+    include/arborvia/layout/EdgeNudger.h
 )

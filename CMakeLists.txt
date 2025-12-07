@@ -73,11 +73,20 @@ if(ARBORVIA_BUILD_TESTS)
         tests/export/SvgExportTest.cpp
         tests/interactive/DragBehaviorTest.cpp
         tests/layout/ValidRegionCalculatorTest.cpp
+        tests/integration/DiagonalReproductionTest.cpp
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)
 
+    # Integration tests (require running demo subprocess)
+    add_executable(arborvia_integration_tests
+        tests/integration/DemoApiTest.cpp
+    )
+    target_include_directories(arborvia_integration_tests PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    target_link_libraries(arborvia_integration_tests PRIVATE GTest::gtest_main)
+
     include(GoogleTest)
     gtest_discover_tests(arborvia_tests)
+    # Integration tests are not auto-discovered (require manual run with display)
 endif()
 
 # Examples (includes interactive demo with SDL3 + ImGui)

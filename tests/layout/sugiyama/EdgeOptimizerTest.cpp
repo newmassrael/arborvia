@@ -5,9 +5,10 @@
 #include "arborvia/layout/LayoutOptions.h"
 
 // Internal headers
-#include "../../../src/layout/sugiyama/EdgeScorer.h"
 #include "../../../src/layout/sugiyama/AStarEdgeOptimizer.h"
 #include "../../../src/layout/sugiyama/PathIntersection.h"
+#include "arborvia/layout/EdgePenaltySystem.h"
+#include "arborvia/layout/BuiltinPenalties.h"
 
 using namespace arborvia;
 
@@ -78,70 +79,108 @@ TEST(PathIntersectionTest, CountPathIntersections_OneIntersection) {
 }
 
 // =============================================================================
-// EdgeScorer Tests
+// EdgePenaltySystem Tests
 // =============================================================================
 
-class EdgeScorerTest : public ::testing::Test {
+class EdgePenaltySystemTest : public ::testing::Test {
 protected:
-    EdgeScorer scorer_;
+    std::shared_ptr<EdgePenaltySystem> penaltySystem_;
     std::unordered_map<NodeId, NodeLayout> nodeLayouts_;
     std::unordered_map<EdgeId, EdgeLayout> edgeLayouts_;
+    std::vector<ForbiddenZone> emptyZones_;
 
     void SetUp() override {
+        penaltySystem_ = EdgePenaltySystem::createDefault();
         // Create two nodes
         nodeLayouts_[0] = NodeLayout{0, Point{0, 0}, Size{100, 50}};
         nodeLayouts_[1] = NodeLayout{1, Point{200, 0}, Size{100, 50}};
     }
+
+    PenaltyContext createContext(const EdgeLayout& layout) {
+        PenaltyContext ctx{edgeLayouts_, nodeLayouts_, emptyZones_, 20.0f};
+        ctx.sourceNodeId = layout.from;
+        ctx.targetNodeId = layout.to;
+        return ctx;
+    }
 };
 
-TEST_F(EdgeScorerTest, CheckSnapPointProximity_FarApart_ReturnsZero) {
+TEST_F(EdgePenaltySystemTest, TooCloseSnapPenalty_FarApart_ReturnsZero) {
+    TooCloseSnapPenalty penalty;
+
     EdgeLayout layout;
+    layout.from = 0;
+    layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.targetPoint = Point{200, 25};
+    layout.sourceEdge = NodeEdge::Right;
+    layout.targetEdge = NodeEdge::Left;
 
-    EXPECT_EQ(0, scorer_.checkSnapPointProximity(layout));
+    auto ctx = createContext(layout);
+    EXPECT_EQ(0, penalty.calculatePenalty(layout, ctx));
 }
 
-TEST_F(EdgeScorerTest, CheckSnapPointProximity_TooClose_ReturnsOne) {
+TEST_F(EdgePenaltySystemTest, TooCloseSnapPenalty_TooClose_ReturnsPenalty) {
+    TooCloseSnapPenalty penalty;
+
     EdgeLayout layout;
+    layout.from = 0;
+    layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.targetPoint = Point{110, 25};  // Within default minSnapDistance (60)
+    layout.sourceEdge = NodeEdge::Left;
+    layout.targetEdge = NodeEdge::Left;
 
-    EXPECT_EQ(1, scorer_.checkSnapPointProximity(layout));
+    auto ctx = createContext(layout);
+    EXPECT_GT(penalty.calculatePenalty(layout, ctx), 0);
 }
 
-TEST_F(EdgeScorerTest, CheckSelfOverlap_NoOverlap_ReturnsZero) {
+TEST_F(EdgePenaltySystemTest, SelfOverlapPenalty_NoOverlap_ReturnsZero) {
+    SelfOverlapPenalty penalty;
+
     EdgeLayout layout;
+    layout.from = 0;
+    layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.sourceEdge = NodeEdge::Right;
     layout.targetPoint = Point{200, 25};
     layout.targetEdge = NodeEdge::Left;
 
-    EXPECT_EQ(0, scorer_.checkSelfOverlap(layout));
+    auto ctx = createContext(layout);
+    EXPECT_EQ(0, penalty.calculatePenalty(layout, ctx));
 }
 
-TEST_F(EdgeScorerTest, CheckSelfOverlap_WithOverlap_ReturnsOne) {
+TEST_F(EdgePenaltySystemTest, SelfOverlapPenalty_WithOverlap_ReturnsPenalty) {
+    SelfOverlapPenalty penalty;
+
     EdgeLayout layout;
+    layout.from = 0;
+    layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.sourceEdge = NodeEdge::Left;  // Exit left: x1 = 100 - 20 = 80
     layout.targetPoint = Point{50, 25};
     layout.targetEdge = NodeEdge::Left;  // Exit left: x2 = 50 - 20 = 30
     // x1(80) > x2(30) → overlap detected
 
-    EXPECT_EQ(1, scorer_.checkSelfOverlap(layout));
+    auto ctx = createContext(layout);
+    EXPECT_GT(penalty.calculatePenalty(layout, ctx), 0);
 }
 
-TEST_F(EdgeScorerTest, CountNodeCollisions_NoCollision) {
+TEST_F(EdgePenaltySystemTest, NodeCollisionPenalty_NoCollision) {
+    NodeCollisionPenalty penalty;
+
     EdgeLayout layout;
     layout.from = 0;
     layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.targetPoint = Point{200, 25};
 
-    EXPECT_EQ(0, scorer_.countNodeCollisions(layout, nodeLayouts_));
+    auto ctx = createContext(layout);
+    EXPECT_EQ(0, penalty.calculatePenalty(layout, ctx));
 }
 
-TEST_F(EdgeScorerTest, CountNodeCollisions_WithCollision) {
+TEST_F(EdgePenaltySystemTest, NodeCollisionPenalty_WithCollision) {
+    NodeCollisionPenalty penalty;
+
     // Add a node in the middle
     nodeLayouts_[2] = NodeLayout{2, Point{140, 10}, Size{30, 30}};
 
@@ -151,10 +190,11 @@ TEST_F(EdgeScorerTest, CountNodeCollisions_WithCollision) {
     layout.sourcePoint = Point{100, 25};
     layout.targetPoint = Point{200, 25};
 
-    EXPECT_EQ(1, scorer_.countNodeCollisions(layout, nodeLayouts_));
+    auto ctx = createContext(layout);
+    EXPECT_GT(penalty.calculatePenalty(layout, ctx), 0);
 }
 
-TEST_F(EdgeScorerTest, CalculateScore_CombinesAllComponents) {
+TEST_F(EdgePenaltySystemTest, CalculateTotalPenalty_NoViolations) {
     EdgeLayout layout;
     layout.from = 0;
     layout.to = 1;
@@ -163,48 +203,24 @@ TEST_F(EdgeScorerTest, CalculateScore_CombinesAllComponents) {
     layout.targetPoint = Point{200, 25};
     layout.targetEdge = NodeEdge::Left;
 
-    int score = scorer_.calculateScore(layout, edgeLayouts_, nodeLayouts_);
+    auto ctx = createContext(layout);
+    int score = penaltySystem_->calculateTotalPenalty(layout, ctx);
 
-    // Score should be roughly the distance (100 pixels) since no penalties
-    EXPECT_GT(score, 0);
-    EXPECT_LT(score, 200);
+    // Should be 0 since no violations
+    EXPECT_EQ(0, score);
 }
 
-TEST_F(EdgeScorerTest, CalculateScore_HighPenaltyForTooClose) {
+TEST_F(EdgePenaltySystemTest, PassesHardConstraints_ValidLayout) {
     EdgeLayout layout;
     layout.from = 0;
     layout.to = 1;
     layout.sourcePoint = Point{100, 25};
     layout.sourceEdge = NodeEdge::Right;
-    layout.targetPoint = Point{110, 25};  // Too close
+    layout.targetPoint = Point{200, 25};
     layout.targetEdge = NodeEdge::Left;
 
-    int score = scorer_.calculateScore(layout, edgeLayouts_, nodeLayouts_);
-
-    EXPECT_GE(score, 100000);
-}
-
-TEST_F(EdgeScorerTest, CustomWeights_AffectScore) {
-    ScoringWeights customWeights;
-    customWeights.tooCloseSnap = 50000;
-
-    EdgeScorer customScorer(customWeights);
-
-    EdgeLayout layout;
-    layout.from = 0;
-    layout.to = 1;
-    // Both Top edges, same y → tooCloseSnap triggers but selfOverlap doesn't
-    // (V-H-V path: y1 = y2 = 25-20=5, y1 > y2 is false)
-    layout.sourcePoint = Point{100, 25};
-    layout.sourceEdge = NodeEdge::Top;
-    layout.targetPoint = Point{110, 25};
-    layout.targetEdge = NodeEdge::Top;
-
-    int score = customScorer.calculateScore(layout, edgeLayouts_, nodeLayouts_);
-
-    // Score = 50000 (tooCloseSnap) + ~10 (distance)
-    EXPECT_GE(score, 50000);
-    EXPECT_LT(score, 60000);
+    auto ctx = createContext(layout);
+    EXPECT_TRUE(penaltySystem_->passesHardConstraints(layout, ctx));
 }
 
 // =============================================================================
@@ -247,24 +263,40 @@ TEST_F(AStarEdgeOptimizerTest, Optimize_SingleEdge_ReturnsOptimizedLayout) {
                 optimized.sourceEdge == NodeEdge::Right);
 }
 
-TEST_F(AStarEdgeOptimizerTest, Optimize_SelfLoop_PreservesOriginal) {
+TEST_F(AStarEdgeOptimizerTest, Optimize_SelfLoop_ProducesValidAdjacentEdges) {
     AStarEdgeOptimizer optimizer;
 
     EdgeLayout selfLoop;
+    selfLoop.id = 0;
     selfLoop.from = 0;
     selfLoop.to = 0;
-    selfLoop.sourcePoint = Point{100, 0};
-    selfLoop.sourceEdge = NodeEdge::Top;
-    selfLoop.targetPoint = Point{100, 50};
-    selfLoop.targetEdge = NodeEdge::Bottom;
+    // Self-loops use SelfLoopRouter which determines the best direction
+    // via penalty scoring. We just verify the result uses valid adjacent edges.
+    selfLoop.sourcePoint = Point{150, 0};
+    selfLoop.sourceEdge = NodeEdge::Right;
+    selfLoop.targetPoint = Point{100, 0};
+    selfLoop.targetEdge = NodeEdge::Top;
 
     edgeLayouts_[0] = selfLoop;
 
     auto result = optimizer.optimize({0}, edgeLayouts_, nodeLayouts_);
 
     ASSERT_EQ(1u, result.size());
-    EXPECT_EQ(selfLoop.sourceEdge, result[0].sourceEdge);
-    EXPECT_EQ(selfLoop.targetEdge, result[0].targetEdge);
+
+    // Verify the result uses valid adjacent edges (self-loop constraint)
+    // Adjacent means: not same edge and not opposite edge
+    NodeEdge srcEdge = result[0].sourceEdge;
+    NodeEdge tgtEdge = result[0].targetEdge;
+
+    // Self-loop constraint: source and target must be adjacent (not same, not opposite)
+    bool isSameEdge = (srcEdge == tgtEdge);
+    bool isOpposite = (srcEdge == NodeEdge::Top && tgtEdge == NodeEdge::Bottom) ||
+                      (srcEdge == NodeEdge::Bottom && tgtEdge == NodeEdge::Top) ||
+                      (srcEdge == NodeEdge::Left && tgtEdge == NodeEdge::Right) ||
+                      (srcEdge == NodeEdge::Right && tgtEdge == NodeEdge::Left);
+
+    EXPECT_FALSE(isSameEdge) << "Self-loop should not use same edge for source and target";
+    EXPECT_FALSE(isOpposite) << "Self-loop should not use opposite edges";
 }
 
 TEST_F(AStarEdgeOptimizerTest, Optimize_MultipleEdges_ConsidersIntersections) {
@@ -301,13 +333,15 @@ TEST_F(AStarEdgeOptimizerTest, AlgorithmName_ReturnsAStar) {
     EXPECT_STREQ("AStar", optimizer.algorithmName());
 }
 
-TEST_F(AStarEdgeOptimizerTest, SetWeights_UpdatesScoring) {
+TEST_F(AStarEdgeOptimizerTest, SetPenaltySystem_ConfiguresPenalties) {
     AStarEdgeOptimizer optimizer;
 
-    ScoringWeights newWeights;
-    newWeights.tooCloseSnap = 200000;
+    // Default penalty system should be set
+    EXPECT_NE(nullptr, optimizer.penaltySystem());
 
-    optimizer.setWeights(newWeights);
+    // Can override with custom penalty system
+    auto customSystem = EdgePenaltySystem::createMinimal();
+    optimizer.setPenaltySystem(customSystem);
 
-    EXPECT_EQ(200000, optimizer.weights().tooCloseSnap);
+    EXPECT_EQ(customSystem, optimizer.penaltySystem());
 }
