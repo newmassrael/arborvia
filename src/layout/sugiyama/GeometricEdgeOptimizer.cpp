@@ -1,4 +1,5 @@
 #include "GeometricEdgeOptimizer.h"
+#include "EdgeRoutingUtils.h"
 #include "SelfLoopRouter.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/IEdgePenalty.h"
@@ -275,30 +276,7 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
 Point GeometricEdgeOptimizer::calculateEdgeCenter(
     const NodeLayout& node,
     NodeEdge edge) {
-
-    switch (edge) {
-        case NodeEdge::Top:
-            return {
-                node.position.x + node.size.width * 0.5f,
-                node.position.y
-            };
-        case NodeEdge::Bottom:
-            return {
-                node.position.x + node.size.width * 0.5f,
-                node.position.y + node.size.height
-            };
-        case NodeEdge::Left:
-            return {
-                node.position.x,
-                node.position.y + node.size.height * 0.5f
-            };
-        case NodeEdge::Right:
-            return {
-                node.position.x + node.size.width,
-                node.position.y + node.size.height * 0.5f
-            };
-    }
-    return node.center();
+    return EdgeRoutingUtils::calculateEdgeCenter(node, edge);
 }
 
 std::vector<BendPoint> GeometricEdgeOptimizer::predictOrthogonalPath(
