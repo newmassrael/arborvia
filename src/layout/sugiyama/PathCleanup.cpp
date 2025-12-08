@@ -161,18 +161,18 @@ void PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
                 lastBend.x = layout.targetPoint.x;
                 // Keep Y at previous segment's Y (or offset from target)
                 if (layout.targetEdge == NodeEdge::Top) {
-                    lastBend.y = std::min(lastBend.y, layout.targetPoint.y - 20.0f);
+                    lastBend.y = std::min(lastBend.y, layout.targetPoint.y - DEFAULT_MARGIN);
                 } else {
-                    lastBend.y = std::max(lastBend.y, layout.targetPoint.y + 20.0f);
+                    lastBend.y = std::max(lastBend.y, layout.targetPoint.y + DEFAULT_MARGIN);
                 }
             } else {
                 // Move bend to be directly left/right of target
                 lastBend.y = layout.targetPoint.y;
                 // Keep X at previous segment's X (or offset from target)
                 if (layout.targetEdge == NodeEdge::Left) {
-                    lastBend.x = std::min(lastBend.x, layout.targetPoint.x - 20.0f);
+                    lastBend.x = std::min(lastBend.x, layout.targetPoint.x - DEFAULT_MARGIN);
                 } else {
-                    lastBend.x = std::max(lastBend.x, layout.targetPoint.x + 20.0f);
+                    lastBend.x = std::max(lastBend.x, layout.targetPoint.x + DEFAULT_MARGIN);
                 }
             }
             break;  // Don't remove, we adjusted it

@@ -13,6 +13,9 @@ public:
     /// Tolerance for floating point comparisons
     static constexpr float EPSILON = 0.1f;
 
+    /// Default margin for keeping bends outside nodes
+    static constexpr float DEFAULT_MARGIN = 20.0f;
+
     /// Check if two points are essentially the same (within tolerance)
     /// @param a First point
     /// @param b Second point
@@ -40,7 +43,7 @@ public:
     /// @param layout Edge layout to clean (modified in place)
     /// @param targetNode Target node layout (for boundary checking)
     /// @param margin Minimum distance to keep from node boundary
-    static void moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& targetNode, float margin = 20.0f);
+    static void moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& targetNode, float margin = DEFAULT_MARGIN);
 };
 
 }  // namespace arborvia

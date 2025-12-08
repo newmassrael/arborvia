@@ -118,19 +118,7 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
         manualManager_->applyManualEdgeRoutings(state_->result);
     }
 
-    // Final cleanup: remove duplicate bend points and fix bends inside nodes
-    for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
-        if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
-            PathCleanup::removeEndpointDuplicates(*layout);
-
-            // Move any bends that ended up inside the target node
-            const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
-            if (targetNode) {
-                float margin = std::max(options_.gridConfig.cellSize, 20.0f);
-                PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
-            }
-        }
-    }
+    applyFinalCleanup();
 
     return state_->result;
 }
@@ -192,7 +180,12 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
         manualManager_->applyManualEdgeRoutings(state_->result);
     }
 
-    // Final cleanup: remove duplicate bend points and fix bends inside nodes
+    applyFinalCleanup();
+
+    return state_->result;
+}
+
+void SugiyamaLayout::applyFinalCleanup() {
     for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
         if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
             PathCleanup::removeEndpointDuplicates(*layout);
@@ -200,13 +193,11 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
             // Move any bends that ended up inside the target node
             const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
             if (targetNode) {
-                float margin = std::max(options_.gridConfig.cellSize, 20.0f);
+                float margin = std::max(options_.gridConfig.cellSize, PathCleanup::DEFAULT_MARGIN);
                 PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
             }
         }
     }
-
-    return state_->result;
 }
 
 std::pair<LayoutResult, bool> SugiyamaLayout::layoutIncremental(Graph& graph) {

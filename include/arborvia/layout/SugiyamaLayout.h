@@ -112,6 +112,9 @@ private:
     void assignCoordinates();
     void routeEdges();
 
+    /// Final cleanup: remove duplicate bend points and fix bends inside nodes
+    void applyFinalCleanup();
+
     // Compound graph specific
     void layoutCompoundNode(NodeId id, const CompoundGraph& graph);
     void layoutParallelRegions(NodeId id, const CompoundGraph& graph);

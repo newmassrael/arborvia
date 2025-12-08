@@ -203,6 +203,25 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<ForbiddenZone>& forbiddenZones);
 
+    /// Fallback path adjustment when 256 combination search fails
+    /// Tries various path adjustments to resolve overlap between two edges
+    /// @param edgeIdA First edge
+    /// @param edgeIdB Second edge
+    /// @param layoutA Layout for first edge (kept as-is or adjusted)
+    /// @param layoutB Layout for second edge (adjusted to avoid overlap)
+    /// @param otherLayouts Other assigned layouts (excluding A and B)
+    /// @param nodeLayouts Node positions
+    /// @param forbiddenZones Pre-calculated forbidden zones
+    /// @param gridSize Grid cell size for adjustments
+    /// @return Best adjusted pair result (valid=false if all attempts fail)
+    EdgePairResult tryPathAdjustmentFallback(
+        EdgeId edgeIdA, EdgeId edgeIdB,
+        const EdgeLayout& layoutA, const EdgeLayout& layoutB,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones,
+        float gridSize);
+
     /// Evaluate self-loop combinations for a single edge
     /// Tries all 4 directions (Right, Left, Top, Bottom) and returns
     /// sorted results based on penalty scores.
