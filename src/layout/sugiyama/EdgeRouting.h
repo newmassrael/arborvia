@@ -293,35 +293,6 @@ private:
     // === updateSnapPositions Helper Methods ===
     // These private helpers decompose the large updateSnapPositions method
 
-    /// Type alias for affected connections map
-    using AffectedConnectionsMap = std::map<std::pair<NodeId, NodeEdge>, 
-                                            std::vector<std::pair<EdgeId, bool>>>;
-
-    /// Collect affected connections grouped by node-edge
-    /// @param edgeLayouts All edge layouts
-    /// @param affectedEdges Edges that need updating
-    /// @return Map from (nodeId, nodeEdge) to list of (edgeId, isSource) pairs
-    AffectedConnectionsMap collectAffectedConnections(
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::vector<EdgeId>& affectedEdges);
-
-    /// Calculate snap positions for all connections on a single node-edge
-    /// @param key The (nodeId, nodeEdge) pair
-    /// @param connections List of (edgeId, isSource) pairs for this node-edge
-    /// @param edgeLayouts All edge layouts (modified in place)
-    /// @param nodeLayouts All node layouts
-    /// @param movedNodes Set of nodes that have moved
-    /// @param effectiveGridSize Grid size for calculations
-    /// @param result SnapUpdateResult to update with redistributed edges
-    void calculateSnapPositionsForNodeEdge(
-        const std::pair<NodeId, NodeEdge>& key,
-        const std::vector<std::pair<EdgeId, bool>>& connections,
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_set<NodeId>& movedNodes,
-        float effectiveGridSize,
-        SnapUpdateResult& result);
-
     /// Detect diagonal segments and attempt swap retry to fix them
     /// @param edgeId The edge to check and fix
     /// @param edgeLayouts All edge layouts (may be modified during swap)
