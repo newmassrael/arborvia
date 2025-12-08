@@ -3,6 +3,8 @@
 #include "EdgePathFixer.h"
 #include "DragOptimizationHandler.h"
 #include "SnapPositionUpdater.h"
+#include "SnapDistributor.h"
+#include "RoutingOptimizer.h"
 #include "GridSnapCalculator.h"
 #include "GridCoordinates.h"
 #include "ChannelRouter.h"
@@ -501,128 +503,16 @@ void EdgeRouting::distributeAutoSnapPoints(
     float gridSize,
     bool sortSnapPoints) {
 
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
+    // Create callback for bend point recalculation
+    auto recalcFunc = [this](EdgeLayout& layout,
+                             const std::unordered_map<NodeId, NodeLayout>& nodes,
+                             float gs) {
+        recalculateBendPoints(layout, nodes, gs);
+    };
 
-    // Unified mode: all connections on same edge distributed together
-    // Key: (nodeId, nodeEdge) -> list of (edgeId, isSource)
-    std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> allConnections;
-
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        allConnections[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
-        allConnections[{layout.to, layout.targetEdge}].push_back({edgeId, false});
-    }
-
-    for (auto& [key, connections] : allConnections) {
-        auto [nodeId, nodeEdge] = key;
-
-        // Sort snap points by other node position to minimize edge crossings
-        if (sortSnapPoints && connections.size() > 1) {
-            auto sortedPairs = SnapIndexManager::sortSnapPointsByOtherNode(
-                nodeId, nodeEdge, result.edgeLayouts, nodeLayouts);
-
-            // Replace original connections if sorting succeeded
-            // sortedPairs contains (EdgeId, isSource) pairs in correct order
-            if (sortedPairs.size() == connections.size()) {
-                connections = std::move(sortedPairs);
-            }
-        }
-
-        // Move self-loop endpoints to corner positions
-        SelfLoopRouter::applySelfLoopCornerPositioning(connections, result.edgeLayouts, nodeEdge);
-
-        auto nodeIt = nodeLayouts.find(nodeId);
-        if (nodeIt == nodeLayouts.end()) continue;
-
-        const NodeLayout& node = nodeIt->second;
-        int connectionCount = static_cast<int>(connections.size());
-
-        // Use grid-based calculation for all snap point positions
-        for (int i = 0; i < connectionCount; ++i) {
-            auto [edgeId, isSource] = connections[i];
-            EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-            // Calculate snap position and store the candidate index (fixed grid position)
-            // Store the candidate index (not connection index) for later retrieval
-            int candidateIndex = 0;
-            Point snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, i, connectionCount, effectiveGridSize, &candidateIndex);
-
-            if (isSource) {
-                layout.sourcePoint = snapPoint;
-                layout.sourceSnapIndex = candidateIndex;  // Store candidate index
-            } else {
-                layout.targetPoint = snapPoint;
-                layout.targetSnapIndex = candidateIndex;  // Store candidate index
-            }
-        }
-    }
-
-    // Recalculate bend points (snap points are already on grid from quantized calculation)
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        recalculateBendPoints(layout, nodeLayouts, effectiveGridSize);
-
-        // Grid mode: bend points are already orthogonal from quantized routing.
-        // Remove spikes/duplicates for path cleanup.
-        std::vector<Point> fullPath;
-        fullPath.push_back(layout.sourcePoint);
-        for (const auto& bp : layout.bendPoints) {
-            fullPath.push_back(bp.position);
-        }
-        fullPath.push_back(layout.targetPoint);
-
-        PathCleanup::removeSpikesAndDuplicates(fullPath);
-
-        layout.bendPoints.clear();
-        for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
-            layout.bendPoints.push_back({fullPath[i]});
-        }
-
-        // Ensure first bend has proper clearance from source
-        if (!layout.bendPoints.empty()) {
-            Point& firstBend = layout.bendPoints[0].position;
-            float minClearance = std::max(effectiveGridSize, constants::PATHFINDING_GRID_SIZE);
-
-            switch (layout.sourceEdge) {
-                case NodeEdge::Top:
-                    if (firstBend.y > layout.sourcePoint.y - minClearance) {
-                        float newY = layout.sourcePoint.y - minClearance;
-                        firstBend.y = newY;
-                        if (layout.bendPoints.size() >= 2) {
-                            layout.bendPoints[1].position.y = newY;
-                        }
-                    }
-                    break;
-                case NodeEdge::Bottom:
-                    if (firstBend.y < layout.sourcePoint.y + minClearance) {
-                        float newY = layout.sourcePoint.y + minClearance;
-                        firstBend.y = newY;
-                        if (layout.bendPoints.size() >= 2) {
-                            layout.bendPoints[1].position.y = newY;
-                        }
-                    }
-                    break;
-                case NodeEdge::Left:
-                    if (firstBend.x > layout.sourcePoint.x - minClearance) {
-                        float newX = layout.sourcePoint.x - minClearance;
-                        firstBend.x = newX;
-                        if (layout.bendPoints.size() >= 2) {
-                            layout.bendPoints[1].position.x = newX;
-                        }
-                    }
-                    break;
-                case NodeEdge::Right:
-                    if (firstBend.x < layout.sourcePoint.x + minClearance) {
-                        float newX = layout.sourcePoint.x + minClearance;
-                        firstBend.x = newX;
-                        if (layout.bendPoints.size() >= 2) {
-                            layout.bendPoints[1].position.x = newX;
-                        }
-                    }
-                    break;
-            }
-        }
-
-        layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
-    }
+    // Delegate to SnapDistributor
+    SnapDistributor distributor(recalcFunc);
+    distributor.distribute(result, nodeLayouts, gridSize, sortSnapPoints);
 }
 
 void EdgeRouting::optimizeRouting(
@@ -630,104 +520,9 @@ void EdgeRouting::optimizeRouting(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const LayoutOptions& options) {
 
-    // Create optimizer based on postDragAlgorithm
-    IEdgeOptimizer* optimizer = edgeOptimizer_.get();
-    std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
-
-    if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
-        const float gridSize = options.gridConfig.cellSize;
-
-        switch (options.optimizationOptions.postDragAlgorithm) {
-            case PostDragAlgorithm::AStar: {
-                OptimizerConfig config = OptimizerConfig::balanced();
-                config.gridSize = gridSize;
-                config.pathFinder = pathFinder_;
-                config.penaltySystem = EdgePenaltySystem::createDefault();
-                fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
-                break;
-            }
-            case PostDragAlgorithm::None:
-                break;
-        }
-        optimizer = fallbackOptimizer.get();
-    }
-
-    if (!optimizer || result.edgeLayouts.empty()) {
-        return;
-    }
-
-    // Collect all edge IDs for optimization
-    std::vector<EdgeId> edgeIds;
-    edgeIds.reserve(result.edgeLayouts.size());
-    for (const auto& [edgeId, layout] : result.edgeLayouts) {
-        edgeIds.push_back(edgeId);
-    }
-
-    // Run optimizer on edges with their final snap positions
-    auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts);
-
-    // Merge optimized layouts
-    // IMPORTANT: Preserve snap indices (optimizer sets them to -1, we keep grid-based values)
-    // BUT: Only if NodeEdge hasn't changed (indices are specific to NodeEdge)
-    for (auto& [edgeId, layout] : optimizedLayouts) {
-        auto& existing = result.edgeLayouts[edgeId];
-        
-        // Save original values
-        NodeEdge origSourceEdge = existing.sourceEdge;
-        NodeEdge origTargetEdge = existing.targetEdge;
-        int preservedSourceSnapIndex = existing.sourceSnapIndex;
-        int preservedTargetSnapIndex = existing.targetSnapIndex;
-        
-        existing = std::move(layout);
-        
-        // Only restore snap indices if NodeEdge didn't change
-        if (existing.sourceEdge == origSourceEdge) {
-            existing.sourceSnapIndex = preservedSourceSnapIndex;
-        }
-        if (existing.targetEdge == origTargetEdge) {
-            existing.targetSnapIndex = preservedTargetSnapIndex;
-        }
-    }
-
-    // Fix any -1 indices that weren't restored (NodeEdge changed during optimization)
-    // Group edges by (node, nodeEdge) to properly calculate snap indices
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
-    std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> connectionsByNodeEdge;
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        connectionsByNodeEdge[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
-        connectionsByNodeEdge[{layout.to, layout.targetEdge}].push_back({edgeId, false});
-    }
-
-    for (auto& [key, connections] : connectionsByNodeEdge) {
-        auto [nodeId, nodeEdge] = key;
-        auto nodeIt = nodeLayouts.find(nodeId);
-        if (nodeIt == nodeLayouts.end()) continue;
-        const NodeLayout& node = nodeIt->second;
-
-        int totalConnections = static_cast<int>(connections.size());
-        for (int i = 0; i < totalConnections; ++i) {
-            auto [edgeId, isSource] = connections[i];
-            EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-            int existingIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
-            if (existingIndex < 0) {  // -1 means needs fixing
-                int candidateIndex = 0;
-                Point snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, i, totalConnections, effectiveGridSize, &candidateIndex);
-                if (isSource) {
-                    layout.sourceSnapIndex = candidateIndex;
-                    layout.sourcePoint = snapPoint;
-                } else {
-                    layout.targetSnapIndex = candidateIndex;
-                    layout.targetPoint = snapPoint;
-                }
-            }
-        }
-    }
-
-    // Update label positions after optimization
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
-    }
+    // Delegate to RoutingOptimizer
+    RoutingOptimizer optimizer(pathFinder_, edgeOptimizer_.get());
+    optimizer.optimize(result, nodeLayouts, options);
 }
 
 // =============================================================================
