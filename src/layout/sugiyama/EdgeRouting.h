@@ -19,6 +19,7 @@ class IEdgeOptimizer;
 class PathRoutingCoordinator;
 class EdgeValidator;
 class ChannelRouter;
+class PathCalculator;
 
 /// Channel assignment info for an edge
 struct ChannelAssignment {

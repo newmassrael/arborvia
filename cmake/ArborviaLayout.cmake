@@ -16,6 +16,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/sugiyama/CrossingMinimization.cpp
     src/layout/sugiyama/CoordinateAssignment.cpp
     src/layout/sugiyama/EdgeRouting.cpp
+    src/layout/sugiyama/PathCalculator.cpp
     src/layout/sugiyama/GridSnapCalculator.cpp
     src/layout/sugiyama/ChannelRouter.cpp
     src/layout/sugiyama/AStarRetrySystem.cpp
