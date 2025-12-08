@@ -1,5 +1,6 @@
 #include "GeometricEdgeOptimizer.h"
 #include "EdgeRoutingUtils.h"
+#include "EdgeValidator.h"
 #include "SelfLoopRouter.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/IEdgePenalty.h"
@@ -330,38 +331,7 @@ bool GeometricEdgeOptimizer::segmentIntersectsNode(
     const Point& p2,
     const NodeLayout& node,
     float margin) {
-
-    // Expand node bounds by margin
-    float nodeXmin = node.position.x - margin;
-    float nodeXmax = node.position.x + node.size.width + margin;
-    float nodeYmin = node.position.y - margin;
-    float nodeYmax = node.position.y + node.size.height + margin;
-
-    bool isHorizontal = (std::abs(p1.y - p2.y) < EPSILON);
-    bool isVertical = (std::abs(p1.x - p2.x) < EPSILON);
-
-    if (isHorizontal) {
-        float y = p1.y;
-        float xMin = std::min(p1.x, p2.x);
-        float xMax = std::max(p1.x, p2.x);
-        // Check if y is strictly inside node and x ranges overlap
-        return (y > nodeYmin && y < nodeYmax && xMin < nodeXmax && xMax > nodeXmin);
-    }
-    else if (isVertical) {
-        float x = p1.x;
-        float yMin = std::min(p1.y, p2.y);
-        float yMax = std::max(p1.y, p2.y);
-        // Check if x is strictly inside node and y ranges overlap
-        return (x > nodeXmin && x < nodeXmax && yMin < nodeYmax && yMax > nodeYmin);
-    }
-
-    // Non-orthogonal segment: use general AABB intersection
-    float xMin = std::min(p1.x, p2.x);
-    float xMax = std::max(p1.x, p2.x);
-    float yMin = std::min(p1.y, p2.y);
-    float yMax = std::max(p1.y, p2.y);
-
-    return !(xMax < nodeXmin || xMin > nodeXmax || yMax < nodeYmin || yMin > nodeYmax);
+    return EdgeValidator::segmentIntersectsNode(p1, p2, node, margin);
 }
 
 std::vector<std::pair<NodeId, NodeLayout>> GeometricEdgeOptimizer::findCollidingNodes(
@@ -1231,9 +1201,8 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createSelfLoopPath(
 
             bool cornerAInside = (cornerA.x >= nodeLeft && cornerA.x <= nodeRight &&
                                    cornerA.y >= nodeTop && cornerA.y <= nodeBottom);
-            bool cornerBInside = (cornerB.x >= nodeLeft && cornerB.x <= nodeRight &&
-                                   cornerB.y >= nodeTop && cornerB.y <= nodeBottom);
 
+            // Choose corner that's outside the node (prefer A if both outside)
             Point corner = cornerAInside ? cornerB : cornerA;
             bends.push_back({corner});
             bends.push_back({tgtExt});
