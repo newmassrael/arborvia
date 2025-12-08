@@ -1,5 +1,6 @@
 #include "PathCalculator.h"
 #include "ObstacleMap.h"
+#include "EdgeRoutingUtils.h"
 #include "arborvia/layout/LayoutOptions.h"
 #include <cmath>
 #include <iostream>
@@ -19,26 +20,7 @@ PathCalculator::PathCalculator(IPathFinder& pathFinder)
 }
 
 bool PathCalculator::hasFreshBendPoints(const EdgeLayout& layout, float gridSize) {
-    if (layout.bendPoints.empty()) {
-        return true;  // No bendPoints = direct connection, considered fresh
-    }
-
-    // Check source side: sourcePoint -> firstBend
-    const Point& src = layout.sourcePoint;
-    const Point& firstBend = layout.bendPoints[0].position;
-    float dx_src = std::abs(src.x - firstBend.x);
-    float dy_src = std::abs(src.y - firstBend.y);
-    bool sourceDiagonal = (dx_src > gridSize && dy_src > gridSize);
-
-    // Check target side: lastBend -> targetPoint
-    const Point& lastBend = layout.bendPoints.back().position;
-    const Point& tgt = layout.targetPoint;
-    float dx_tgt = std::abs(lastBend.x - tgt.x);
-    float dy_tgt = std::abs(lastBend.y - tgt.y);
-    bool targetDiagonal = (dx_tgt > gridSize && dy_tgt > gridSize);
-
-    // If either side has diagonal, bendPoints are stale
-    return !(sourceDiagonal || targetDiagonal);
+    return EdgeRoutingUtils::hasFreshBendPoints(layout, gridSize);
 }
 
 void PathCalculator::handleSelfLoop(

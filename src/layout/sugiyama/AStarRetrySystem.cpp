@@ -1,4 +1,5 @@
 #include "AStarRetrySystem.h"
+#include "EdgeRoutingUtils.h"
 #include "GridSnapCalculator.h"
 #include "SnapIndexManager.h"
 #include "ObstacleMap.h"
@@ -14,32 +15,6 @@
 #endif
 
 namespace arborvia {
-
-namespace {
-    /// Count how many edges are connected to a specific NodeEdge.
-    /// Used for proper snap index allocation when switching NodeEdges.
-    inline int countEdgesOnNodeEdge(
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        NodeId nodeId,
-        NodeEdge edge,
-        EdgeId excludeId) {
-
-        int count = 0;
-        for (const auto& [id, layout] : edgeLayouts) {
-            if (id == excludeId) continue;
-
-            // Check source side
-            if (layout.from == nodeId && layout.sourceEdge == edge) {
-                count++;
-            }
-            // Check target side
-            if (layout.to == nodeId && layout.targetEdge == edge) {
-                count++;
-            }
-        }
-        return count;
-    }
-}  // namespace
 
 // =============================================================================
 // Constructor
@@ -530,8 +505,8 @@ SnapRetryResult AStarRetrySystem::tryNodeEdgeSwitch(
             int srcEdgeCount = 0;
             int tgtEdgeCount = 0;
             if (otherEdges) {
-                srcEdgeCount = countEdgesOnNodeEdge(*otherEdges, layout.from, srcEdge, layout.id);
-                tgtEdgeCount = countEdgesOnNodeEdge(*otherEdges, layout.to, tgtEdge, layout.id);
+                srcEdgeCount = EdgeRoutingUtils::countEdgesOnNodeEdge(*otherEdges, layout.from, srcEdge, layout.id);
+                tgtEdgeCount = EdgeRoutingUtils::countEdgesOnNodeEdge(*otherEdges, layout.to, tgtEdge, layout.id);
             }
 
             int srcCandidateCount = GridSnapCalculator::getCandidateCount(srcNode, srcEdge, effectiveGridSize);
@@ -627,25 +602,7 @@ SnapRetryResult AStarRetrySystem::tryNodeEdgeSwitch(
 // =============================================================================
 
 bool AStarRetrySystem::hasFreshBendPoints(const EdgeLayout& layout, float gridSize) {
-    if (layout.bendPoints.empty()) {
-        return true;  // No bendPoints = direct connection, considered fresh
-    }
-
-    // Check source side: sourcePoint → firstBend
-    const Point& src = layout.sourcePoint;
-    const Point& firstBend = layout.bendPoints[0].position;
-    float dx_src = std::abs(src.x - firstBend.x);
-    float dy_src = std::abs(src.y - firstBend.y);
-    bool sourceDiagonal = (dx_src > gridSize && dy_src > gridSize);
-
-    // Check target side: lastBend → targetPoint
-    const Point& lastBend = layout.bendPoints.back().position;
-    const Point& tgt = layout.targetPoint;
-    float dx_tgt = std::abs(lastBend.x - tgt.x);
-    float dy_tgt = std::abs(lastBend.y - tgt.y);
-    bool targetDiagonal = (dx_tgt > gridSize && dy_tgt > gridSize);
-
-    return !(sourceDiagonal || targetDiagonal);
+    return EdgeRoutingUtils::hasFreshBendPoints(layout, gridSize);
 }
 
 float AStarRetrySystem::getEffectiveGridSize() const {

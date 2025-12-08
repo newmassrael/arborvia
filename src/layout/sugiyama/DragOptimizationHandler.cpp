@@ -1,4 +1,6 @@
 #include "DragOptimizationHandler.h"
+#include "DragOptimizationHandler.h"
+#include "EdgeRoutingUtils.h"
 #include "arborvia/layout/OptimizerRegistry.h"
 #include "arborvia/layout/OptimizerConfig.h"
 #include "arborvia/layout/EdgePenaltySystem.h"
@@ -28,39 +30,7 @@ DragOptimizationHandler::DragOptimizationHandler(
 
 bool DragOptimizationHandler::segmentPenetratesNodeInterior(
     const Point& p1, const Point& p2, const NodeLayout& node) {
-
-    constexpr float MARGIN = 1.0f;
-
-    float left = node.position.x;
-    float right = node.position.x + node.size.width;
-    float top = node.position.y;
-    float bottom = node.position.y + node.size.height;
-
-    // Check vertical segment
-    if (std::abs(p1.x - p2.x) < 0.1f) {
-        float x = p1.x;
-        float minY = std::min(p1.y, p2.y);
-        float maxY = std::max(p1.y, p2.y);
-
-        if (x > left + MARGIN && x < right - MARGIN) {
-            if (minY < bottom - MARGIN && maxY > top + MARGIN) {
-                return true;
-            }
-        }
-    }
-    // Check horizontal segment
-    else if (std::abs(p1.y - p2.y) < 0.1f) {
-        float y = p1.y;
-        float minX = std::min(p1.x, p2.x);
-        float maxX = std::max(p1.x, p2.x);
-
-        if (y > top + MARGIN && y < bottom - MARGIN) {
-            if (minX < right - MARGIN && maxX > left + MARGIN) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return EdgeRoutingUtils::segmentPenetratesNodeInterior(p1, p2, node);
 }
 
 std::vector<EdgeId> DragOptimizationHandler::collectPenetratingEdges(

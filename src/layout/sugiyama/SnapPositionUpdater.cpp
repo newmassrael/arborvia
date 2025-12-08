@@ -1,4 +1,6 @@
 #include "SnapPositionUpdater.h"
+#include "SnapPositionUpdater.h"
+#include "EdgeRoutingUtils.h"
 #include "GridSnapCalculator.h"
 #include "SnapIndexManager.h"
 #include "SelfLoopRouter.h"
@@ -16,16 +18,7 @@
 namespace arborvia {
 
 namespace {
-    struct PairHash {
-        template <typename T1, typename T2>
-        std::size_t operator()(const std::pair<T1, T2>& p) const {
-            auto h1 = std::hash<T1>{}(p.first);
-            auto h2 = std::hash<T2>{}(p.second);
-            return h1 ^ (h2 << 1);
-        }
-    };
-
-    template <typename HashType = PairHash>
+    template <typename HashType = EdgeRoutingUtils::PairHash>
     std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, HashType> buildEdgeMapFromLayouts(
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
         std::unordered_map<std::pair<NodeId, NodeId>, EdgeId, HashType> edgeMap;
@@ -48,23 +41,7 @@ SnapPositionUpdater::SnapPositionUpdater(
 }
 
 bool SnapPositionUpdater::hasFreshBendPoints(const EdgeLayout& layout, float gridSize) {
-    if (layout.bendPoints.empty()) {
-        return true;
-    }
-
-    const Point& src = layout.sourcePoint;
-    const Point& firstBend = layout.bendPoints[0].position;
-    float dx_src = std::abs(src.x - firstBend.x);
-    float dy_src = std::abs(src.y - firstBend.y);
-    bool sourceDiagonal = (dx_src > gridSize && dy_src > gridSize);
-
-    const Point& lastBend = layout.bendPoints.back().position;
-    const Point& tgt = layout.targetPoint;
-    float dx_tgt = std::abs(lastBend.x - tgt.x);
-    float dy_tgt = std::abs(lastBend.y - tgt.y);
-    bool targetDiagonal = (dx_tgt > gridSize && dy_tgt > gridSize);
-
-    return !(sourceDiagonal || targetDiagonal);
+    return EdgeRoutingUtils::hasFreshBendPoints(layout, gridSize);
 }
 
 SnapPositionUpdater::AffectedConnectionsMap SnapPositionUpdater::collectAffectedConnections(
@@ -276,7 +253,7 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
 
     // Check for bidirectional edges
     std::unordered_set<EdgeId> bidirectionalEdges;
-    auto edgeMap = buildEdgeMapFromLayouts<PairHash>(edgeLayouts);
+    auto edgeMap = buildEdgeMapFromLayouts<EdgeRoutingUtils::PairHash>(edgeLayouts);
 
     for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
