@@ -6,6 +6,7 @@
 #include <climits>
 #include <iostream>
 
+
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
 #endif
@@ -117,6 +118,12 @@ PathResult AStarPathFinder::findPath(
     std::priority_queue<SearchNode, std::vector<SearchNode>, std::greater<SearchNode>> openSet;
     std::unordered_map<SearchKey, int, SearchKeyHash> bestCost;
     std::unordered_map<SearchKey, SearchKey, SearchKeyHash> cameFrom;
+    
+    // Pre-allocate hash map capacity based on estimated search space
+    // Manhattan distance * 2 is a reasonable estimate for typical orthogonal paths
+    const int estimatedNodes = std::min(manhattanDistance(start, goal) * 2, 1024);
+    bestCost.reserve(estimatedNodes);
+    cameFrom.reserve(estimatedNodes);
 
     // Initialize with start node
     SearchNode startNode;
@@ -208,7 +215,8 @@ PathResult AStarPathFinder::findPath(
             // Check if blocked (considering per-cell exclusions for node blocking)
             if (cellCost >= IObstacleProvider::COST_BLOCKED) {
                 // Even if COST_BLOCKED from proximity, check if actually passable via cellExclude
-                if (obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, cellExclude)) {
+                bool blocked = obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, cellExclude);
+                if (blocked) {
 #if EDGE_ROUTING_DEBUG
                     if (current.pos == start && current.lastDir == MoveDirection::None) {
                         std::cout << "[A* DEBUG] FIRST MOVE BLOCKED: from (" << start.x << "," << start.y

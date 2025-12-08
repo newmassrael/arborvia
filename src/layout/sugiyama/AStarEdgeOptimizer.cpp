@@ -1,5 +1,4 @@
 #include "AStarEdgeOptimizer.h"
-#include "AStarEdgeOptimizer.h"
 #include "ObstacleMap.h"
 #include "AStarPathFinder.h"
 #include "PathIntersection.h"
@@ -9,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+
 #include <iostream>
 
 #ifndef EDGE_ROUTING_DEBUG
@@ -62,12 +62,9 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     constexpr int MAX_PASSES = 3;
     std::unordered_map<EdgeId, EdgeLayout> result;
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts = currentLayouts;
-    std::vector<EdgeId> failedEdges;  // Edges with no valid combinations
+    std::vector<EdgeId> failedEdges;
 
     for (int pass = 0; pass < MAX_PASSES; ++pass) {
-#if EDGE_ROUTING_DEBUG
-        std::cout << "[AStarOptimizer] Pass " << (pass + 1) << "/" << MAX_PASSES << std::endl;
-#endif
         bool anyOverlapFound = false;
         failedEdges.clear();
 
@@ -198,9 +195,6 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
         // If no overlaps found in this pass, we're done
         if (!anyOverlapFound) {
-#if EDGE_ROUTING_DEBUG
-            std::cout << "[AStarOptimizer] No overlaps found, optimization complete" << std::endl;
-#endif
             break;
         }
     }
@@ -222,10 +216,9 @@ AStarEdgeOptimizer::evaluateCombinations(
     // Build obstacle map once for all combinations (more efficient)
     float gridSize = effectiveGridSize();
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);  // margin = 0
+    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
 
     // Add OTHER edge segments as obstacles so A* finds paths that avoid them
-    // This is KEY for finding non-overlapping paths!
     obstacles.addEdgeSegments(assignedLayouts, baseLayout.id);
 
     // Lambda to evaluate a single edge combination
@@ -331,7 +324,6 @@ AStarEdgeOptimizer::evaluateCombinations(
         }
 
         int score = calculatePenalty(candidate, ctx);
-
         results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
     };
 
@@ -339,15 +331,93 @@ AStarEdgeOptimizer::evaluateCombinations(
         // Preserve existing direction - only evaluate current combination
         evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
     } else {
-        // Optimize directions - evaluate all 16 combinations (4 source × 4 target)
-        constexpr std::array<NodeEdge, 4> allEdges = {
-            NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+        // Optimize directions with smart ordering based on node positions
+        // Threshold for early return: score below this means acceptable path found
+        constexpr int EARLY_RETURN_SCORE_THRESHOLD = 100;
+        
+        // Get node centers to determine relative positions
+        auto srcNodeIt = nodeLayouts.find(baseLayout.from);
+        auto tgtNodeIt = nodeLayouts.find(baseLayout.to);
+        
+        // Use a bitmask for O(1) duplicate checking (4 src * 4 tgt = 16 bits)
+        // Bit index = srcEdge * 4 + tgtEdge
+        auto edgeToIndex = [](NodeEdge e) -> int {
+            switch (e) {
+                case NodeEdge::Top: return 0;
+                case NodeEdge::Bottom: return 1;
+                case NodeEdge::Left: return 2;
+                case NodeEdge::Right: return 3;
+                default: return 0;
+            }
         };
-        for (NodeEdge srcEdge : allEdges) {
-            for (NodeEdge tgtEdge : allEdges) {
-                evaluateEdge(srcEdge, tgtEdge);
+        uint16_t addedMask = 0;
+        
+        auto tryAddCombo = [&](NodeEdge src, NodeEdge tgt) {
+            int bit = edgeToIndex(src) * 4 + edgeToIndex(tgt);
+            if (!(addedMask & (1 << bit))) {
+                addedMask |= (1 << bit);
+                evaluateEdge(src, tgt);
+                return !results.empty() && results.back().score < EARLY_RETURN_SCORE_THRESHOLD;
+            }
+            return false;
+        };
+        
+        // 1. Always try current direction first (might already be optimal)
+        if (tryAddCombo(baseLayout.sourceEdge, baseLayout.targetEdge)) {
+            goto done_evaluating;
+        }
+        
+        // 2. Try position-based optimal directions
+        if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
+            Point srcCenter = srcNodeIt->second.center();
+            Point tgtCenter = tgtNodeIt->second.center();
+            
+            float dx = tgtCenter.x - srcCenter.x;
+            float dy = tgtCenter.y - srcCenter.y;
+            
+            // Default directions for edge case where dx == dy == 0
+            NodeEdge primarySrc = NodeEdge::Bottom;
+            NodeEdge primaryTgt = NodeEdge::Top;
+            NodeEdge secondarySrc = NodeEdge::Right;
+            NodeEdge secondaryTgt = NodeEdge::Left;
+            
+            // Determine primary and secondary directions based on relative position
+            if (std::abs(dx) > std::abs(dy)) {
+                // Horizontal dominant
+                primarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
+                primaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
+                secondarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
+                secondaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
+            } else if (std::abs(dy) > 0.1f) {
+                // Vertical dominant (with tolerance for near-zero)
+                primarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
+                primaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
+                secondarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
+                secondaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
+            }
+            // else: use defaults for overlapping nodes
+            
+            // Try high-priority combinations based on relative position
+            if (tryAddCombo(primarySrc, primaryTgt)) goto done_evaluating;
+            if (tryAddCombo(secondarySrc, secondaryTgt)) goto done_evaluating;
+            if (tryAddCombo(primarySrc, secondaryTgt)) goto done_evaluating;
+            if (tryAddCombo(secondarySrc, primaryTgt)) goto done_evaluating;
+        }
+        
+        // 3. Try remaining combinations
+        {
+            constexpr std::array<NodeEdge, 4> allEdges = {
+                NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
+            };
+            for (NodeEdge srcEdge : allEdges) {
+                for (NodeEdge tgtEdge : allEdges) {
+                    if (tryAddCombo(srcEdge, tgtEdge)) {
+                        goto done_evaluating;
+                    }
+                }
             }
         }
+        done_evaluating:;
     }
 
     // Sort by score (ascending - lower is better)

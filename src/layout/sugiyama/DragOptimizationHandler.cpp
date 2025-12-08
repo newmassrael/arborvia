@@ -1,5 +1,4 @@
 #include "DragOptimizationHandler.h"
-#include "DragOptimizationHandler.h"
 #include "EdgeRoutingUtils.h"
 #include "arborvia/layout/OptimizerRegistry.h"
 #include "arborvia/layout/OptimizerConfig.h"
@@ -183,12 +182,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     const std::unordered_set<NodeId>& movedNodes,
     std::shared_ptr<IEdgeOptimizer>& edgeOptimizer) {
 
-#if EDGE_ROUTING_DEBUG
-    std::cout << "\n[DragOptimizationHandler] updateEdgeRoutingWithOptimization called" << std::endl;
-    std::cout << "  affectedEdges: " << affectedEdges.size() << std::endl;
-    std::cout << "  movedNodes: " << movedNodes.size() << std::endl;
-#endif
-
     float gridSize = options.gridConfig.cellSize;
     bool usedDragOptimizer = false;
 
@@ -254,9 +247,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
 
     // Skip A* post-processing when drag optimizer was used
     if (usedDragOptimizer) {
-#if EDGE_ROUTING_DEBUG
-        std::cout << "[DragOptimizationHandler] Skipping A* post-processing (drag optimizer mode)" << std::endl;
-#endif
         return;
     }
 
@@ -264,10 +254,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     if (!movedNodes.empty()) {
         auto penetratingEdges = collectPenetratingEdges(edgeLayouts, nodeLayouts, movedNodes, affectedEdges);
         if (!penetratingEdges.empty()) {
-#if EDGE_ROUTING_DEBUG
-            std::cout << "[DragOptimizationHandler] " << penetratingEdges.size()
-                      << " non-affected edges penetrate moved nodes, re-routing" << std::endl;
-#endif
             snapUpdateFunc_(edgeLayouts, nodeLayouts, penetratingEdges, movedNodes, gridSize, false);
         }
     }
@@ -276,10 +262,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     {
         auto finalPenetratingEdges = collectAllPenetratingEdges(edgeLayouts, nodeLayouts);
         if (!finalPenetratingEdges.empty()) {
-#if EDGE_ROUTING_DEBUG
-            std::cout << "[DragOptimizationHandler] Final validation found " << finalPenetratingEdges.size()
-                      << " edges still penetrating nodes, forcing A* recalculation" << std::endl;
-#endif
             for (EdgeId edgeId : finalPenetratingEdges) {
                 auto it = edgeLayouts.find(edgeId);
                 if (it != edgeLayouts.end()) {
@@ -291,10 +273,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
 
     // Post-nudging
     applyPostNudging(edgeLayouts, options);
-
-#if EDGE_ROUTING_DEBUG
-    std::cout << "[DragOptimizationHandler] updateEdgeRoutingWithOptimization DONE" << std::endl;
-#endif
 }
 
 } // namespace arborvia
