@@ -18,6 +18,7 @@ class IPathFinder;
 class IEdgeOptimizer;
 class PathRoutingCoordinator;
 class EdgeValidator;
+class ChannelRouter;
 
 /// Channel assignment info for an edge
 struct ChannelAssignment {
@@ -84,6 +85,9 @@ public:
     /// Constructor with routing coordinator for dual-algorithm support
     /// @param coordinator Routing coordinator managing drag/drop pathfinders (not owned)
     explicit EdgeRouting(PathRoutingCoordinator* coordinator);
+
+    /// Destructor (defined in .cpp for unique_ptr to ChannelRouter)
+    ~EdgeRouting();
 
     /// Result of edge routing operation
     struct Result {
@@ -285,43 +289,62 @@ private:
         NodeId nodeId,
         NodeEdge nodeEdge);
 
-    // === A* Retry Methods ===
+    // === updateSnapPositions Helper Methods ===
+    // These private helpers decompose the large updateSnapPositions method
 
-    /// Main retry orchestrator when A* fails
-    /// Tries: Snap Index Retry → Neighbor Adjustment → NodeEdge Switch
-    SnapRetryResult tryAStarRetry(
-        EdgeLayout& layout,
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
-        const SnapRetryConfig& config);
+    /// Type alias for affected connections map
+    using AffectedConnectionsMap = std::map<std::pair<NodeId, NodeEdge>, 
+                                            std::vector<std::pair<EdgeId, bool>>>;
 
-    /// Layer 1: Try alternative snap indices on same NodeEdge (concentric expansion)
-    SnapRetryResult trySnapIndexRetry(
-        EdgeLayout& layout,
+    /// Collect affected connections grouped by node-edge
+    /// @param edgeLayouts All edge layouts
+    /// @param affectedEdges Edges that need updating
+    /// @return Map from (nodeId, nodeEdge) to list of (edgeId, isSource) pairs
+    AffectedConnectionsMap collectAffectedConnections(
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
-        const SnapRetryConfig& config);
+        const std::vector<EdgeId>& affectedEdges);
 
-    /// Layer 2: Try adjusting neighbor transition coordinates
-    SnapRetryResult tryNeighborAdjustment(
-        EdgeLayout& layout,
+    /// Calculate snap positions for all connections on a single node-edge
+    /// @param key The (nodeId, nodeEdge) pair
+    /// @param connections List of (edgeId, isSource) pairs for this node-edge
+    /// @param edgeLayouts All edge layouts (modified in place)
+    /// @param nodeLayouts All node layouts
+    /// @param movedNodes Set of nodes that have moved
+    /// @param effectiveGridSize Grid size for calculations
+    /// @param result SnapUpdateResult to update with redistributed edges
+    void calculateSnapPositionsForNodeEdge(
+        const std::pair<NodeId, NodeEdge>& key,
+        const std::vector<std::pair<EdgeId, bool>>& connections,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
-        const SnapRetryConfig& config);
+        const std::unordered_set<NodeId>& movedNodes,
+        float effectiveGridSize,
+        SnapUpdateResult& result);
 
-    /// Layer 3: Try different NodeEdge combinations (16 total)
-    SnapRetryResult tryNodeEdgeSwitch(
-        EdgeLayout& layout,
+    /// Detect diagonal segments and attempt swap retry to fix them
+    /// @param edgeId The edge to check and fix
+    /// @param edgeLayouts All edge layouts (may be modified during swap)
+    /// @param nodeLayouts All node layouts
+    /// @param movedNodes Set of nodes that have moved
+    /// @param effectiveGridSize Grid size for calculations
+    /// @param otherEdges Other edges for obstacle detection
+    /// @return true if diagonal was detected and fixed (or no diagonal), false if unfixable
+    bool detectAndFixDiagonals(
+        EdgeId edgeId,
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
-        const SnapRetryConfig& config);
+        const std::unordered_set<NodeId>& movedNodes,
+        float effectiveGridSize,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges);
+
+    /// Validate and fix direction constraints for an edge
+    /// Inserts clearance segments if first/last segment violates direction constraint
+    /// @param layout The edge layout to validate and fix (modified in place)
+    /// @param effectiveGridSize Grid size for calculations
+    /// @return true if any direction violation was fixed (caller should run overlap avoidance)
+    bool validateAndFixDirectionConstraints(
+        EdgeLayout& layout,
+        float effectiveGridSize);
 
     // === Channel-based routing methods ===
 
@@ -401,6 +424,9 @@ private:
 
     /// Pathfinder instance (injected via constructor, used when no coordinator)
     std::shared_ptr<IPathFinder> pathFinder_;
+
+    /// Channel router for channel-based edge routing
+    std::unique_ptr<ChannelRouter> channelRouter_;
 
     /// Edge optimizer for snap point selection (optional)
     std::shared_ptr<IEdgeOptimizer> edgeOptimizer_;
