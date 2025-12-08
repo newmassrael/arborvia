@@ -18,14 +18,16 @@ Demo listens on TCP port 9999 (configurable with `--port=XXXX` or `-p XXXX`).
 | Command | Description | Example |
 |---------|-------------|---------|
 | `drag <nodeId> <dx> <dy>` | Drag node by offset | `drag 1 420 -140` |
-| `set_pos <id> <x> <y>` | Set node absolute position | `set_pos 1 500 200` |
+| `set_pos <id> <x> <y>` | Set node position (triggers A* optimization) | `set_pos 1 500 200` |
 | `pause [msg]` | Pause demo with optional message | `pause "Testing"` |
 | `resume` | Resume paused demo | `resume` |
 | `get_state` | Get brief node/edge count and positions | `get_state` |
+| `get_state_full` | Get state with routing status | `get_state_full` |
 | `get_layout` | Get full layout as JSON | `get_layout` |
 | `check_penetration` | Check if edges penetrate nodes | `check_penetration` |
-| `get_log` | Get captured debug log | `get_log` |
+| `get_log` | Get captured debug log (non-destructive) | `get_log` |
 | `clear_log` | Clear log buffer | `clear_log` |
+| `wait_idle [timeout_ms]` | Wait for optimization to complete | `wait_idle 10000` |
 | `astar_viz [edgeId]` | Enable A* debug visualization | `astar_viz 0` |
 | `astar_viz_off` | Disable A* debug visualization | `astar_viz_off` |
 | `quit` | Exit demo | `quit` |
@@ -44,6 +46,45 @@ echo "get_log" | nc -q 1 localhost 9999 | grep -E "(DIAGONAL|RETRY)"
 
 **Important**: Claude must NOT run the demo. Only send TCP commands after user confirms demo is running.
 
+### Performance Testing Workflow
+
+```bash
+# 1. Clear logs
+echo "clear_log" | nc -q 1 localhost 9999
+
+# 2. Move node (triggers full A* optimization cycle)
+echo "set_pos 4 400 400" | nc -q 1 localhost 9999
+
+# 3. Wait for optimization to complete
+echo "wait_idle 10000" | nc -q 1 localhost 9999
+
+# 4. Get performance logs (save to file for parsing)
+echo "get_log" | nc -q 1 localhost 9999 > /tmp/demo_log.txt
+
+# 5. Parse and filter logs
+cat /tmp/demo_log.txt | sed 's/\\n/\n/g' | grep -E "PERF"
+```
+
+### Performance Log Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| `[PERF] optimizer->optimize()` | Total A* optimization time |
+| `[PERF-AStar] Pass N/3` | Multi-pass optimization progress |
+| `[PERF-evalCombo] buildNodes` | ObstacleMap build time |
+| `[PERF-evalCombo] pathFind` | A* pathfinding time (main bottleneck) |
+| `[PERF-evalCombo] penalty` | Penalty calculation time |
+| `[PERF] TOTAL` | Total edge routing time |
+
+Example output:
+```
+[PERF-evalCombo] After 42 calls:
+  buildNodes: 0 ms
+  pathFind: 175 ms    <- Main bottleneck
+  penalty: 0 ms
+[PERF] optimizer->optimize(): 85 ms (8 edges)
+```
+
 ### Handling Large Logs
 
 ```bash
@@ -60,10 +101,9 @@ grep "DIAGONAL" /tmp/log.txt
 # Count pattern occurrences
 echo "get_log" | nc -q 1 localhost 9999 | grep -c "DIAGONAL"
 
-# Clear log before test (recommended)
-echo "clear_log" | nc -q 1 localhost 9999
-echo "drag 1 420 -140" | nc -q 1 localhost 9999
-echo "get_log" | nc -q 1 localhost 9999 | grep "DIAGONAL"
+# Log is non-destructive, can be retrieved multiple times
+echo "get_log" | nc -q 1 localhost 9999 | grep "PERF"
+echo "get_log" | nc -q 1 localhost 9999 | grep "evalCombo"
 ```
 
 ### Key Log Patterns

@@ -18,6 +18,8 @@
 #include <iostream>
 #include <sstream>
 #include <mutex>
+#include <thread>
+#include <chrono>
 
 using namespace arborvia;
 
@@ -49,6 +51,17 @@ public:
         buffer_.str("");
         buffer_.clear();
         return result;
+    }
+
+    std::string get() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return buffer_.str();
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        buffer_.str("");
+        buffer_.clear();
     }
 
     void append(const std::string& s) {
@@ -96,7 +109,7 @@ private:
     std::ostringstream buffer_;
     std::streambuf* originalBuf_ = nullptr;
     CaptureStreamBuf captureBuf_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     bool installed_ = false;
 };
 
@@ -1501,7 +1514,7 @@ private:
             }
         }
         else if (cmd.name == "set_pos" && cmd.args.size() >= 3) {
-            // set_pos <node_id> <x> <y> - uses moveNode() API with validation
+            // set_pos <node_id> <x> <y> - simulates full drag-drop cycle with A* optimization
             NodeId nodeId = std::stoi(cmd.args[0]);
             float x = std::stof(cmd.args[1]);
             float y = std::stof(cmd.args[2]);
@@ -1509,13 +1522,31 @@ private:
             if (nodeLayouts_.count(nodeId)) {
                 Point proposedPos = {x, y};
 
+                // Collect affected edges before move
+                std::vector<EdgeId> affected;
+                for (const auto& [edgeId, layout] : edgeLayouts_) {
+                    if (layout.from == nodeId || layout.to == nodeId) {
+                        affected.push_back(edgeId);
+                    }
+                }
+
+                // Simulate drag start
+                routingCoordinator_->onDragStart(affected);
+
                 auto result = LayoutUtils::moveNode(
                     nodeId, proposedPos, nodeLayouts_, edgeLayouts_,
                     graph_, layoutOptions_);
 
                 if (result.success) {
+                    // Update affectedEdges_ for coordinator callback
+                    affectedEdges_ = affected;
+                    
+                    // Trigger drag end - this schedules A* optimization
+                    routingCoordinator_->onDragEnd();
+                    
                     commandServer_.sendResponse("OK set_pos " + std::to_string(nodeId));
                 } else {
+                    routingCoordinator_->cancelPendingOptimization();
                     commandServer_.sendResponse("BLOCKED " + result.reason);
                 }
             } else {
@@ -1620,8 +1651,8 @@ private:
             commandServer_.sendResponse(oss.str());
         }
         else if (cmd.name == "get_log") {
-            // Return captured logs since last call
-            std::string logs = LogCapture::instance().getAndClear();
+            // Return captured logs (non-destructive read)
+            std::string logs = LogCapture::instance().get();
             if (logs.empty()) {
                 commandServer_.sendResponse("LOG_EMPTY");
             } else {
@@ -1638,9 +1669,38 @@ private:
             }
         }
         else if (cmd.name == "clear_log") {
-            // Clear log buffer without returning
-            LogCapture::instance().getAndClear();
+            // Clear log buffer
+            LogCapture::instance().clear();
             commandServer_.sendResponse("OK cleared");
+        }
+        else if (cmd.name == "wait_idle") {
+            // Wait until optimization is complete (with timeout)
+            int timeoutMs = 5000;  // Default 5 seconds
+            if (!cmd.args.empty()) {
+                timeoutMs = std::stoi(cmd.args[0]);
+            }
+            
+            auto startTime = std::chrono::steady_clock::now();
+            while (routingCoordinator_->state() != RoutingState::Idle) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - startTime).count();
+                if (elapsed >= timeoutMs) {
+                    commandServer_.sendResponse("TIMEOUT state=" + 
+                        std::to_string(static_cast<int>(routingCoordinator_->state())));
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            commandServer_.sendResponse("OK idle");
+        }
+        else if (cmd.name == "get_state_full") {
+            // Extended state including optimization status
+            std::ostringstream oss;
+            oss << "STATE nodes=" << nodeLayouts_.size()
+                << " edges=" << edgeLayouts_.size()
+                << " routing=" << static_cast<int>(routingCoordinator_->state())
+                << " pending=" << (routingCoordinator_->isPendingOptimization() ? "yes" : "no");
+            commandServer_.sendResponse(oss.str());
         }
         else if (cmd.name == "astar_viz") {
             // Enable A* visualization, optionally for specific edge
