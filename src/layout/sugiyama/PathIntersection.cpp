@@ -378,6 +378,183 @@ std::vector<float> findUsedHorizontalY(
     return usedY;
 }
 
+// =============================================================================
+// Overlap Adjustment
+// =============================================================================
+
+std::vector<BendPoint> adjustPathToAvoidOverlap(
+    const EdgeLayout& candidate,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSpacing) {
+
+    // Check if there's any overlap
+    auto overlapInfo = findOverlapInfo(candidate, assignedLayouts, candidate.id);
+    if (!overlapInfo.found) {
+        return candidate.bendPoints;  // No overlap, return as-is
+    }
+
+    // Build the full path including source/target
+    std::vector<Point> pathPoints;
+    pathPoints.push_back(candidate.sourcePoint);
+    for (const auto& bp : candidate.bendPoints) {
+        pathPoints.push_back(bp.position);
+    }
+    pathPoints.push_back(candidate.targetPoint);
+
+    // Find and adjust the overlapping segment
+    std::vector<BendPoint> adjustedBends;
+
+    if (overlapInfo.isVertical) {
+        // Vertical segment overlap - need to change X coordinate
+        float newX = findAlternativeX(
+            overlapInfo.sharedCoordinate,
+            overlapInfo.overlapStart,
+            overlapInfo.overlapEnd,
+            assignedLayouts,
+            gridSpacing);
+
+        // Rebuild bend points with new X
+        for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
+            const Point& p1 = pathPoints[i];
+            const Point& p2 = pathPoints[i + 1];
+
+            // Check if this is a vertical segment at the overlapping X
+            if (std::abs(p1.x - overlapInfo.sharedCoordinate) < EPSILON &&
+                std::abs(p2.x - overlapInfo.sharedCoordinate) < EPSILON) {
+                // This segment needs adjustment - insert offset bend points
+                if (i > 0) {
+                    // Not starting from source, add transition to new X
+                    adjustedBends.push_back({{newX, p1.y}});
+                }
+                adjustedBends.push_back({{newX, p2.y}});
+            } else if (i > 0 && i < pathPoints.size() - 2) {
+                // Regular intermediate point
+                adjustedBends.push_back({{p2.x, p2.y}});
+            }
+        }
+    } else {
+        // Horizontal segment overlap - need to change Y coordinate
+        float newY = findAlternativeY(
+            overlapInfo.sharedCoordinate,
+            overlapInfo.overlapStart,
+            overlapInfo.overlapEnd,
+            assignedLayouts,
+            gridSpacing);
+
+        // Rebuild bend points with new Y
+        for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
+            const Point& p1 = pathPoints[i];
+            const Point& p2 = pathPoints[i + 1];
+
+            // Check if this is a horizontal segment at the overlapping Y
+            if (std::abs(p1.y - overlapInfo.sharedCoordinate) < EPSILON &&
+                std::abs(p2.y - overlapInfo.sharedCoordinate) < EPSILON) {
+                // This segment needs adjustment
+                if (i > 0) {
+                    adjustedBends.push_back({{p1.x, newY}});
+                }
+                adjustedBends.push_back({{p2.x, newY}});
+            } else if (i > 0 && i < pathPoints.size() - 2) {
+                adjustedBends.push_back({{p2.x, p2.y}});
+            }
+        }
+    }
+
+    // If adjustment produced valid bends, return them
+    if (!adjustedBends.empty()) {
+        return adjustedBends;
+    }
+
+    // Fallback: return original bends
+    return candidate.bendPoints;
+}
+
+float findAlternativeX(
+    float originalX,
+    float yMin,
+    float yMax,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSpacing) {
+
+    // Find all X coordinates used by vertical segments in the Y range
+    auto usedX = findUsedVerticalX(assignedLayouts, yMin, yMax);
+
+    // Try offsets in both directions to find unused X
+    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
+        // Try positive offset first
+        float candidateX = originalX + offset;
+        bool used = false;
+        for (float x : usedX) {
+            if (std::abs(x - candidateX) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateX;
+        }
+
+        // Try negative offset
+        candidateX = originalX - offset;
+        used = false;
+        for (float x : usedX) {
+            if (std::abs(x - candidateX) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateX;
+        }
+    }
+
+    // Fallback: just use offset
+    return originalX + gridSpacing;
+}
+
+float findAlternativeY(
+    float originalY,
+    float xMin,
+    float xMax,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSpacing) {
+
+    // Find all Y coordinates used by horizontal segments in the X range
+    auto usedY = findUsedHorizontalY(assignedLayouts, xMin, xMax);
+
+    // Try offsets in both directions to find unused Y
+    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
+        // Try positive offset first
+        float candidateY = originalY + offset;
+        bool used = false;
+        for (float y : usedY) {
+            if (std::abs(y - candidateY) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateY;
+        }
+
+        // Try negative offset
+        candidateY = originalY - offset;
+        used = false;
+        for (float y : usedY) {
+            if (std::abs(y - candidateY) < EPSILON) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            return candidateY;
+        }
+    }
+
+    // Fallback: just use offset
+    return originalY + gridSpacing;
+}
+
 }  // namespace PathIntersection
 
 
