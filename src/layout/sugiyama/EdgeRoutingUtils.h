@@ -7,6 +7,20 @@
 namespace arborvia {
 
 /**
+ * @brief Result of evaluating a single edge routing combination.
+ *
+ * Shared by AStarEdgeOptimizer and GeometricEdgeOptimizer for
+ * consistent edge combination evaluation results.
+ */
+struct EdgeCombinationResult {
+    NodeEdge sourceEdge;       ///< Source edge of the node
+    NodeEdge targetEdge;       ///< Target edge of the node
+    int score;                 ///< Penalty score (lower is better)
+    EdgeLayout layout;         ///< The resulting edge layout
+    bool valid = true;         ///< False if no valid path exists
+};
+
+/**
  * @brief Shared utility functions for edge routing operations.
  *
  * This class consolidates common utility functions used across multiple

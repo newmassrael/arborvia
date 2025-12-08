@@ -3,6 +3,7 @@
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "arborvia/layout/IPathFinder.h"
 #include "arborvia/layout/ValidRegionCalculator.h"
+#include "EdgeRoutingUtils.h"
 
 #include <atomic>
 #include <future>
@@ -68,19 +69,13 @@ private:
     float gridSize_ = 0.0f;
     bool parallelEnabled_ = true;
 
-    /// Result of evaluating a single edge combination
-    struct CombinationResult {
-        NodeEdge sourceEdge;
-        NodeEdge targetEdge;
-        int score;
-        EdgeLayout layout;
-        bool valid = true;  // False if no valid path exists
-    };
+    /// Result of evaluating a single edge combination (uses shared type)
+    using CombinationResult = EdgeCombinationResult;
 
     /// Result of parallel edge evaluation
     struct ParallelEdgeResult {
         EdgeId edgeId;
-        CombinationResult best;
+        EdgeCombinationResult best;
         bool isSelfLoop = false;
         bool hasValidResult = false;
     };

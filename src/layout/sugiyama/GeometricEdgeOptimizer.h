@@ -2,6 +2,7 @@
 
 #include "arborvia/layout/IEdgeOptimizer.h"
 #include "PathIntersection.h"
+#include "EdgeRoutingUtils.h"
 
 #include <unordered_map>
 #include <vector>
@@ -30,12 +31,8 @@ public:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
 
 private:
-    struct CombinationResult {
-        NodeEdge sourceEdge;
-        NodeEdge targetEdge;
-        int score;
-        EdgeLayout layout;
-    };
+    /// Result of evaluating a single edge combination (uses shared type)
+    using CombinationResult = EdgeCombinationResult;
 
     /// Evaluate edge combinations geometrically
     /// When preserveDirections() is true, only evaluates the existing combination.
