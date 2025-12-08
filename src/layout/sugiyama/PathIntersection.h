@@ -60,6 +60,14 @@ namespace PathIntersection {
     /// @return true if any segments overlap
     bool hasSegmentOverlap(const EdgeLayout& e1, const EdgeLayout& e2);
 
+    /// Check if two edge paths have overlapping segments, excluding the last N segments
+    /// This allows edges going to the same target to share the final approach
+    /// @param e1 First edge layout
+    /// @param e2 Second edge layout
+    /// @param excludeLastN Number of segments from the end to exclude from checking
+    /// @return true if any non-excluded segments overlap
+    bool hasSegmentOverlapExcludingLast(const EdgeLayout& e1, const EdgeLayout& e2, int excludeLastN);
+
     /// Check if an edge has segment overlaps with any other assigned edges
     /// @param edge Edge to check
     /// @param otherEdges Map of other edge layouts

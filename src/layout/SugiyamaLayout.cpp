@@ -10,6 +10,7 @@
 #include "sugiyama/CoordinateAssignment.h"
 #include "sugiyama/AStarPathFinder.h"
 #include "sugiyama/EdgeRouting.h"
+#include "sugiyama/PathCleanup.h"
 
 #include <unordered_set>
 
@@ -117,6 +118,20 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
         manualManager_->applyManualEdgeRoutings(state_->result);
     }
 
+    // Final cleanup: remove duplicate bend points and fix bends inside nodes
+    for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
+        if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
+            PathCleanup::removeEndpointDuplicates(*layout);
+
+            // Move any bends that ended up inside the target node
+            const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
+            if (targetNode) {
+                float margin = std::max(options_.gridConfig.cellSize, 20.0f);
+                PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
+            }
+        }
+    }
+
     return state_->result;
 }
 
@@ -175,6 +190,20 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
     // Apply manual edge routings (to override auto-routing if set)
     if (manualManager_) {
         manualManager_->applyManualEdgeRoutings(state_->result);
+    }
+
+    // Final cleanup: remove duplicate bend points and fix bends inside nodes
+    for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
+        if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
+            PathCleanup::removeEndpointDuplicates(*layout);
+
+            // Move any bends that ended up inside the target node
+            const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
+            if (targetNode) {
+                float margin = std::max(options_.gridConfig.cellSize, 20.0f);
+                PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
+            }
+        }
     }
 
     return state_->result;

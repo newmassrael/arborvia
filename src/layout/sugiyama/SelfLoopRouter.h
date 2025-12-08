@@ -72,6 +72,17 @@ public:
     /// @param gridSize Grid cell size (0 = use default)
     /// @return Spacing distance
     static float calculateSpacing(float gridSize);
+
+    /// Calculate loop index for consistent ordering of multiple self-loops
+    /// Uses edge ID ordering to ensure deterministic results in parallel execution.
+    /// @param edgeId Current edge being processed
+    /// @param nodeId Node where self-loops are attached
+    /// @param layouts All edge layouts to search for other self-loops
+    /// @return Loop index (0 for first self-loop, 1 for second, etc.)
+    static int calculateLoopIndex(
+        EdgeId edgeId,
+        NodeId nodeId,
+        const std::unordered_map<EdgeId, EdgeLayout>& layouts);
 };
 
 }  // namespace arborvia

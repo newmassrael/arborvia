@@ -136,18 +136,26 @@ EdgeLayout SelfLoopRouter::route(
     layout.to = from;  // Self-loop: source == target
 
     const auto& config = options.channelRouting.selfLoop;
-    float offset = config.loopOffset + static_cast<float>(loopIndex) * config.stackSpacing;
 
     // Determine direction based on config or auto-detect
     SelfLoopDirection dir = config.preferredDirection;
-
-    // For auto, default to Right (most common for state diagrams)
     if (dir == SelfLoopDirection::Auto) {
         dir = SelfLoopDirection::Right;
     }
 
     float gridSize = options.gridConfig.cellSize;
     float spacing = calculateSpacing(gridSize);
+
+    // Calculate loop spacing with boundary check (shared by offset and snapOffset)
+    // Limit to 40% of smaller node dimension to prevent overflow
+    float loopSpacing = static_cast<float>(loopIndex) * config.stackSpacing;
+    float maxLoopSpacing = std::min(nodeLayout.size.width, nodeLayout.size.height) * 0.4f;
+    loopSpacing = std::min(loopSpacing, maxLoopSpacing);
+
+    // offset: distance from node edge for bend points
+    // snapOffset: shift for source/target snap points
+    float offset = config.loopOffset + loopSpacing;
+    float snapOffset = loopSpacing;
 
     // Node boundaries
     float nodeLeft = nodeLayout.position.x;
@@ -164,9 +172,11 @@ EdgeLayout SelfLoopRouter::route(
             layout.targetEdge = NodeEdge::Top;
 
             // Source: Right edge, near top (corner position)
-            layout.sourcePoint = {nodeRight, nodeTop + spacing};
+            // Each loop shifts source DOWN by snapOffset
+            layout.sourcePoint = {nodeRight, nodeTop + spacing + snapOffset};
             // Target: Top edge, near right (corner position)
-            layout.targetPoint = {nodeRight - spacing, nodeTop};
+            // Each loop shifts target LEFT by snapOffset
+            layout.targetPoint = {nodeRight - spacing - snapOffset, nodeTop};
 
             // Bend points: route around top-right corner
             layout.bendPoints.push_back({{nodeRight + offset, layout.sourcePoint.y}});
@@ -180,9 +190,11 @@ EdgeLayout SelfLoopRouter::route(
             layout.targetEdge = NodeEdge::Bottom;
 
             // Source: Left edge, near bottom (corner position)
-            layout.sourcePoint = {nodeLeft, nodeBottom - spacing};
+            // Each loop shifts source UP by snapOffset
+            layout.sourcePoint = {nodeLeft, nodeBottom - spacing - snapOffset};
             // Target: Bottom edge, near left (corner position)
-            layout.targetPoint = {nodeLeft + spacing, nodeBottom};
+            // Each loop shifts target RIGHT by snapOffset
+            layout.targetPoint = {nodeLeft + spacing + snapOffset, nodeBottom};
 
             // Bend points: route around bottom-left corner
             layout.bendPoints.push_back({{nodeLeft - offset, layout.sourcePoint.y}});
@@ -196,9 +208,11 @@ EdgeLayout SelfLoopRouter::route(
             layout.targetEdge = NodeEdge::Right;
 
             // Source: Top edge, near right (corner position)
-            layout.sourcePoint = {nodeRight - spacing, nodeTop};
+            // Each loop shifts source LEFT by snapOffset
+            layout.sourcePoint = {nodeRight - spacing - snapOffset, nodeTop};
             // Target: Right edge, near top (corner position)
-            layout.targetPoint = {nodeRight, nodeTop + spacing};
+            // Each loop shifts target DOWN by snapOffset
+            layout.targetPoint = {nodeRight, nodeTop + spacing + snapOffset};
 
             // Bend points: route around top-right corner
             layout.bendPoints.push_back({{layout.sourcePoint.x, nodeTop - offset}});
@@ -212,9 +226,11 @@ EdgeLayout SelfLoopRouter::route(
             layout.targetEdge = NodeEdge::Left;
 
             // Source: Bottom edge, near left (corner position)
-            layout.sourcePoint = {nodeLeft + spacing, nodeBottom};
+            // Each loop shifts source RIGHT by snapOffset
+            layout.sourcePoint = {nodeLeft + spacing + snapOffset, nodeBottom};
             // Target: Left edge, near bottom (corner position)
-            layout.targetPoint = {nodeLeft, nodeBottom - spacing};
+            // Each loop shifts target UP by snapOffset
+            layout.targetPoint = {nodeLeft, nodeBottom - spacing - snapOffset};
 
             // Bend points: route around bottom-left corner
             layout.bendPoints.push_back({{layout.sourcePoint.x, nodeBottom + offset}});
@@ -231,6 +247,25 @@ EdgeLayout SelfLoopRouter::route(
     layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
 
     return layout;
+}
+
+int SelfLoopRouter::calculateLoopIndex(
+    EdgeId edgeId,
+    NodeId nodeId,
+    const std::unordered_map<EdgeId, EdgeLayout>& layouts) {
+    // Count self-loops on this node with SMALLER edgeIds
+    // This ensures consistent ordering regardless of parallel execution order:
+    // - edgeId=1 counts 0 smaller self-loops → loopIndex=0
+    // - edgeId=2 counts 1 smaller self-loop (edgeId=1) → loopIndex=1
+    int loopIndex = 0;
+    for (const auto& [otherId, layout] : layouts) {
+        if (otherId < edgeId &&
+            layout.from == layout.to &&
+            layout.from == nodeId) {
+            ++loopIndex;
+        }
+    }
+    return loopIndex;
 }
 
 }  // namespace arborvia

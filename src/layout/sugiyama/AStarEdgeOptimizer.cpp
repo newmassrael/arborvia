@@ -11,6 +11,7 @@
 #include <future>
 #include <thread>
 #include <iostream>
+#include <unordered_set>
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -73,6 +74,9 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
         // ===== PARALLEL MULTI-PASS OPTIMIZATION =====
         constexpr int MAX_PASSES = 3;
 
+        // Track edges that had overlap resolution applied - don't re-evaluate them
+        std::unordered_set<EdgeId> resolvedEdges;
+
         for (int pass = 0; pass < MAX_PASSES; ++pass) {
             // ===== PHASE 1: Parallel independent evaluation =====
             // Note: nodeLayouts and forbiddenZones are read-only during optimize(),
@@ -81,6 +85,9 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             futures.reserve(numEdges);
 
             for (EdgeId edgeId : edges) {
+                // Skip edges that had successful overlap resolution - keep their resolved layout
+                if (resolvedEdges.count(edgeId)) continue;
+
                 auto it = currentLayouts.find(edgeId);
                 if (it == currentLayouts.end()) continue;
 
@@ -90,16 +97,15 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
                 // Launch async evaluation - reference capture is safe for read-only data
                 futures.push_back(std::async(std::launch::async,
-                    [this, edgeId, baseLayout, &nodeLayouts, &forbiddenZones]() {
+                    [this, edgeId, baseLayout, &nodeLayouts, &forbiddenZones, &currentLayouts]() {
                         // Create thread-local pathfinder for thread safety
                         AStarPathFinder localPathFinder;
                         return evaluateEdgeIndependent(
-                            edgeId, baseLayout, nodeLayouts, forbiddenZones, localPathFinder);
+                            edgeId, baseLayout, nodeLayouts, forbiddenZones, localPathFinder, currentLayouts);
                     }));
             }
 
             // Collect results
-            std::vector<EdgeId> failedEdges;
             bool anyOverlapFound = false;
 
             for (auto& future : futures) {
@@ -109,7 +115,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     result[presult.edgeId] = presult.best.layout;
                     assignedLayouts[presult.edgeId] = presult.best.layout;
                 } else {
-                    failedEdges.push_back(presult.edgeId);
+                    // Use original layout for failed edges
                     auto it = currentLayouts.find(presult.edgeId);
                     if (it != currentLayouts.end()) {
                         result[presult.edgeId] = it->second;
@@ -138,6 +144,9 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     result[idB] = pairResult.layoutB;
                     assignedLayouts[idA] = pairResult.layoutA;
                     assignedLayouts[idB] = pairResult.layoutB;
+                    // Mark both edges as resolved - don't re-evaluate them in subsequent passes
+                    resolvedEdges.insert(idA);
+                    resolvedEdges.insert(idB);
                 }
             }
 
@@ -193,9 +202,10 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                 assignedLayouts[edgeId] = best.layout;
             }
 
-            // Cooperative rerouting for failed edges
-            if (failedEdges.size() >= 2) {
-                auto overlappingPairs = detectOverlaps(result);
+            // Detect and resolve overlaps (not just for failed edges)
+            auto overlappingPairs = detectOverlaps(result);
+            if (!overlappingPairs.empty()) {
+                anyOverlapFound = true;
                 for (const auto& [idA, idB] : overlappingPairs) {
                     auto itA = result.find(idA);
                     auto itB = result.find(idB);
@@ -1078,6 +1088,9 @@ AStarEdgeOptimizer::evaluateSelfLoopCombinations(
 
     const NodeLayout& nodeLayout = nodeIt->second;
 
+    // Calculate loop index for unique snap points using shared helper
+    int loopIndex = SelfLoopRouter::calculateLoopIndex(edgeId, baseLayout.from, assignedLayouts);
+
     // Create default layout options for SelfLoopRouter
     LayoutOptions options;
     options.gridConfig.cellSize = effectiveGridSize();
@@ -1095,7 +1108,7 @@ AStarEdgeOptimizer::evaluateSelfLoopCombinations(
 
         // Generate self-loop layout using SelfLoopRouter
         EdgeLayout candidate = SelfLoopRouter::route(
-            edgeId, baseLayout.from, nodeLayout, 0, options);
+            edgeId, baseLayout.from, nodeLayout, loopIndex, options);
 
         // Calculate penalty score using unified penalty system
         PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
@@ -1233,11 +1246,252 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
         }
     }
 
+    // Fallback: If no valid combination found, try path adjustment
+    if (!bestResult.valid) {
+        // Try adjusting layoutB's path to avoid overlap with layoutA
+        std::unordered_map<EdgeId, EdgeLayout> withA;
+        withA[edgeIdA] = layoutA;
+
+        auto adjustedBendsB = PathIntersection::adjustPathToAvoidOverlap(layoutB, withA, gridSize);
+
+        // Always try the adjustment - check if it resolves overlap
+        {
+            EdgeLayout adjustedB = layoutB;
+            adjustedB.bendPoints = adjustedBendsB;
+
+            if (!PathIntersection::hasSegmentOverlap(layoutA, adjustedB)) {
+                PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
+                ctxA.sourceNodeId = layoutA.from;
+                ctxA.targetNodeId = layoutA.to;
+                int scoreA = calculatePenalty(layoutA, ctxA);
+
+                std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
+                withALayout[edgeIdA] = layoutA;
+                PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
+                ctxB.sourceNodeId = adjustedB.from;
+                ctxB.targetNodeId = adjustedB.to;
+                int scoreB = calculatePenalty(adjustedB, ctxB);
+
+                bestResult.layoutA = layoutA;
+                bestResult.layoutB = adjustedB;
+                bestResult.combinedScore = scoreA + scoreB;
+                bestResult.valid = true;
+            }
+        }
+
+        // If adjusting B didn't work, try adjusting A
+        if (!bestResult.valid) {
+            std::unordered_map<EdgeId, EdgeLayout> withB;
+            withB[edgeIdB] = layoutB;
+
+            auto adjustedBendsA = PathIntersection::adjustPathToAvoidOverlap(layoutA, withB, gridSize);
+
+            // Always try the adjustment
+            {
+                EdgeLayout adjustedA = layoutA;
+                adjustedA.bendPoints = adjustedBendsA;
+
+                if (!PathIntersection::hasSegmentOverlap(adjustedA, layoutB)) {
+                    std::unordered_map<EdgeId, EdgeLayout> withAdjA = otherLayouts;
+                    withAdjA[edgeIdA] = adjustedA;
+                    PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
+                    ctxA.sourceNodeId = adjustedA.from;
+                    ctxA.targetNodeId = adjustedA.to;
+                    int scoreA = calculatePenalty(adjustedA, ctxA);
+
+                    PenaltyContext ctxB{withAdjA, nodeLayouts, forbiddenZones, gridSize};
+                    ctxB.sourceNodeId = layoutB.from;
+                    ctxB.targetNodeId = layoutB.to;
+                    int scoreB = calculatePenalty(layoutB, ctxB);
+
+                    bestResult.layoutA = adjustedA;
+                    bestResult.layoutB = layoutB;
+                    bestResult.combinedScore = scoreA + scoreB;
+                    bestResult.valid = true;
+                }
+            }
+        }
+
+        // Last resort: Handle first-segment overlap by inserting offset bend point
+        if (!bestResult.valid) {
+            // First, check for first-segment vertical overlap (most common case)
+            // This happens when both edges have vertical first segments at the same X
+            bool hasFirstSegVerticalOverlap = false;
+            float sharedX = 0.0f;
+
+            if (!layoutB.bendPoints.empty() && !layoutA.bendPoints.empty()) {
+                // Check if both have vertical first segments at same X
+                const Point& b0 = layoutB.sourcePoint;
+                const Point& b1 = layoutB.bendPoints[0].position;
+                const Point& a0 = layoutA.sourcePoint;
+                const Point& a1 = layoutA.bendPoints[0].position;
+
+                bool bFirstVertical = std::abs(b0.x - b1.x) < 1.0f;
+                bool aFirstVertical = std::abs(a0.x - a1.x) < 1.0f;
+
+                if (bFirstVertical && aFirstVertical && std::abs(b0.x - a0.x) < 1.0f) {
+                    // Check Y range overlap (including touching)
+                    float bMinY = std::min(b0.y, b1.y), bMaxY = std::max(b0.y, b1.y);
+                    float aMinY = std::min(a0.y, a1.y), aMaxY = std::max(a0.y, a1.y);
+                    // Segments touch or overlap if max(mins) <= min(maxs)
+                    if (std::max(bMinY, aMinY) <= std::min(bMaxY, aMaxY) + 1.0f) {
+                        hasFirstSegVerticalOverlap = true;
+                        sharedX = b0.x;
+                    }
+                }
+            }
+
+            if (hasFirstSegVerticalOverlap) {
+                // Fix by offsetting layoutB's first bend X coordinate
+                EdgeLayout adjustedB = layoutB;
+                float offset = gridSize;
+
+                for (int dir = -1; dir <= 1; dir += 2) {
+                    float tryX = sharedX + dir * offset;
+                    // Also offset the Y coordinate for horizontal segments to avoid secondary overlap
+                    float yOffset = dir * offset;
+
+                    std::vector<BendPoint> newBends;
+                    // Insert horizontal segment from source
+                    newBends.push_back({{tryX, layoutB.sourcePoint.y}});
+                    // Adjust bends at shared X, and also offset Y for the first horizontal segment
+                    bool firstHorizontalAdjusted = false;
+                    for (size_t i = 0; i < layoutB.bendPoints.size(); ++i) {
+                        const auto& bp = layoutB.bendPoints[i];
+                        if (std::abs(bp.position.x - sharedX) < 1.0f) {
+                            // This bend was at the shared X - move to tryX
+                            // Also check if the NEXT bend is a horizontal segment at same Y
+                            float adjustedY = bp.position.y;
+                            if (!firstHorizontalAdjusted && i + 1 < layoutB.bendPoints.size()) {
+                                const auto& nextBp = layoutB.bendPoints[i + 1];
+                                // If horizontal segment at same Y, offset the Y
+                                if (std::abs(bp.position.y - nextBp.position.y) < 1.0f) {
+                                    adjustedY = bp.position.y + yOffset;
+                                    firstHorizontalAdjusted = true;
+                                }
+                            }
+                            newBends.push_back({{tryX, adjustedY}});
+                        } else if (firstHorizontalAdjusted && i > 0 &&
+                                   std::abs(layoutB.bendPoints[i-1].position.y - bp.position.y) < 1.0f) {
+                            // Continue the offset for the next bend in the horizontal segment
+                            newBends.push_back({{bp.position.x, bp.position.y + yOffset}});
+                            firstHorizontalAdjusted = false;  // Only adjust once
+                        } else {
+                            newBends.push_back(bp);
+                        }
+                    }
+                    adjustedB.bendPoints = newBends;
+
+                    // Check overlap, but ignore overlaps on last 2 segments (near target)
+                    bool stillOverlaps = PathIntersection::hasSegmentOverlapExcludingLast(layoutA, adjustedB, 2);
+                    if (!stillOverlaps) {
+                        PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
+                        ctxA.sourceNodeId = layoutA.from;
+                        ctxA.targetNodeId = layoutA.to;
+                        int scoreA = calculatePenalty(layoutA, ctxA);
+
+                        std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
+                        withALayout[edgeIdA] = layoutA;
+                        PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
+                        ctxB.sourceNodeId = adjustedB.from;
+                        ctxB.targetNodeId = adjustedB.to;
+                        int scoreB = calculatePenalty(adjustedB, ctxB);
+
+                        bestResult.layoutA = layoutA;
+                        bestResult.layoutB = adjustedB;
+                        bestResult.combinedScore = scoreA + scoreB;
+                        bestResult.valid = true;
+                        break;
+                    }
+                }
+            }
+
+            // If first-segment fix didn't work, try general overlap detection
+            if (!bestResult.valid) {
+                auto overlapInfo = PathIntersection::findOverlapInfo(layoutB, withA, layoutB.id);
+                if (overlapInfo.found) {
+                    EdgeLayout adjustedB = layoutB;
+                    float offset = gridSize;
+
+                    if (overlapInfo.isVertical) {
+                        for (int dir = -1; dir <= 1; dir += 2) {
+                            float tryX = overlapInfo.sharedCoordinate + dir * offset;
+                            std::vector<BendPoint> newBends;
+                            newBends.push_back({{tryX, layoutB.sourcePoint.y}});
+                            for (const auto& bp : layoutB.bendPoints) {
+                                if (std::abs(bp.position.x - overlapInfo.sharedCoordinate) < 1.0f) {
+                                    newBends.push_back({{tryX, bp.position.y}});
+                                } else {
+                                    newBends.push_back(bp);
+                                }
+                            }
+                            adjustedB.bendPoints = newBends;
+
+                            if (!PathIntersection::hasSegmentOverlap(layoutA, adjustedB)) {
+                                PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
+                                ctxA.sourceNodeId = layoutA.from;
+                                ctxA.targetNodeId = layoutA.to;
+                                int scoreA = calculatePenalty(layoutA, ctxA);
+
+                                std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
+                                withALayout[edgeIdA] = layoutA;
+                                PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
+                                ctxB.sourceNodeId = adjustedB.from;
+                                ctxB.targetNodeId = adjustedB.to;
+                                int scoreB = calculatePenalty(adjustedB, ctxB);
+
+                                bestResult.layoutA = layoutA;
+                                bestResult.layoutB = adjustedB;
+                                bestResult.combinedScore = scoreA + scoreB;
+                                bestResult.valid = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        for (int dir = -1; dir <= 1; dir += 2) {
+                            float tryY = overlapInfo.sharedCoordinate + dir * offset;
+                            std::vector<BendPoint> newBends;
+                            newBends.push_back({{layoutB.sourcePoint.x, tryY}});
+                            for (const auto& bp : layoutB.bendPoints) {
+                                if (std::abs(bp.position.y - overlapInfo.sharedCoordinate) < 1.0f) {
+                                    newBends.push_back({{bp.position.x, tryY}});
+                                } else {
+                                    newBends.push_back(bp);
+                                }
+                            }
+                            adjustedB.bendPoints = newBends;
+
+                            if (!PathIntersection::hasSegmentOverlap(layoutA, adjustedB)) {
+                                PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
+                                ctxA.sourceNodeId = layoutA.from;
+                                ctxA.targetNodeId = layoutA.to;
+                                int scoreA = calculatePenalty(layoutA, ctxA);
+
+                                std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
+                                withALayout[edgeIdA] = layoutA;
+                                PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
+                                ctxB.sourceNodeId = adjustedB.from;
+                                ctxB.targetNodeId = adjustedB.to;
+                                int scoreB = calculatePenalty(adjustedB, ctxB);
+
+                                bestResult.layoutA = layoutA;
+                                bestResult.layoutB = adjustedB;
+                                bestResult.combinedScore = scoreA + scoreB;
+                                bestResult.valid = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 #if EDGE_ROUTING_DEBUG
     std::cout << "[CoopReroute] Edges " << edgeIdA << " & " << edgeIdB << " stats:\n"
-              << "  totalCombos=" << totalCombos << " pathFoundA=" << pathFoundACount 
+              << "  totalCombos=" << totalCombos << " pathFoundA=" << pathFoundACount
               << " passedHardA=" << passedHardA << "\n"
-              << "  pathFoundB=" << pathFoundBCount << " passedHardB=" << passedHardB 
+              << "  pathFoundB=" << pathFoundBCount << " passedHardB=" << passedHardB
               << " noOverlap=" << noOverlapCount << std::endl;
     if (bestResult.valid) {
         std::cout << "[CoopReroute] Edges " << edgeIdA << " & " << edgeIdB
@@ -1256,7 +1510,8 @@ AStarEdgeOptimizer::ParallelEdgeResult AStarEdgeOptimizer::evaluateEdgeIndepende
     const EdgeLayout& baseLayout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::vector<ForbiddenZone>& forbiddenZones,
-    IPathFinder& pathFinder) {
+    IPathFinder& pathFinder,
+    const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts) {
 
     ParallelEdgeResult presult;
     presult.edgeId = edgeId;
@@ -1265,9 +1520,9 @@ AStarEdgeOptimizer::ParallelEdgeResult AStarEdgeOptimizer::evaluateEdgeIndepende
     // Handle self-loops (don't use pathfinder for self-loops)
     if (baseLayout.from == baseLayout.to) {
         presult.isSelfLoop = true;
-        std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
+        // Pass currentLayouts to calculate correct loopIndex for unique snap points
         auto combinations = evaluateSelfLoopCombinations(
-            edgeId, baseLayout, emptyLayouts, nodeLayouts, forbiddenZones);
+            edgeId, baseLayout, currentLayouts, nodeLayouts, forbiddenZones);
 
         if (!combinations.empty()) {
             presult.best = combinations.front();
@@ -1340,12 +1595,8 @@ std::vector<std::pair<EdgeId, EdgeId>> AStarEdgeOptimizer::detectOverlaps(
                 continue;  // No possible overlap
             }
 
-            // Bounding boxes overlap - do expensive check
-            std::unordered_map<EdgeId, EdgeLayout> pairCheck;
-            pairCheck[a.id] = *a.layout;
-            pairCheck[b.id] = *b.layout;
-
-            if (PathIntersection::hasOverlapWithOthers(*a.layout, pairCheck, a.id)) {
+            // Bounding boxes overlap - do direct segment overlap check (no copies)
+            if (PathIntersection::hasSegmentOverlap(*a.layout, *b.layout)) {
                 overlappingPairs.emplace_back(a.id, b.id);
             }
         }

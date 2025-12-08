@@ -88,12 +88,14 @@ private:
     /// Evaluate single edge independently (thread-safe)
     /// Uses thread-local pathfinder to avoid data races
     /// @param pathFinder Thread-local pathfinder instance
+    /// @param currentLayouts All current edge layouts (for self-loop loopIndex calculation)
     ParallelEdgeResult evaluateEdgeIndependent(
         EdgeId edgeId,
         const EdgeLayout& baseLayout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<ForbiddenZone>& forbiddenZones,
-        IPathFinder& pathFinder);
+        IPathFinder& pathFinder,
+        const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts);
 
     /// Detect overlapping edges in results
     std::vector<std::pair<EdgeId, EdgeId>> detectOverlaps(

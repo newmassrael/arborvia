@@ -201,6 +201,35 @@ bool hasSegmentOverlap(const EdgeLayout& e1, const EdgeLayout& e2) {
     return false;
 }
 
+bool hasSegmentOverlapExcludingLast(const EdgeLayout& e1, const EdgeLayout& e2, int excludeLastN) {
+    // Build segment lists for both edges
+    std::vector<std::pair<Point, Point>> segments1, segments2;
+
+    e1.forEachSegment([&](const Point& p1, const Point& p2) {
+        segments1.emplace_back(p1, p2);
+    });
+
+    e2.forEachSegment([&](const Point& p1, const Point& p2) {
+        segments2.emplace_back(p1, p2);
+    });
+
+    // Determine how many segments to check (excluding last N from each)
+    int check1 = std::max(0, static_cast<int>(segments1.size()) - excludeLastN);
+    int check2 = std::max(0, static_cast<int>(segments2.size()) - excludeLastN);
+
+    // Check segment pairs, excluding last N segments from each edge
+    for (int i = 0; i < check1; ++i) {
+        for (int j = 0; j < check2; ++j) {
+            if (segmentsOverlap(segments1[i].first, segments1[i].second,
+                                segments2[j].first, segments2[j].second)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 bool hasOverlapWithOthers(
     const EdgeLayout& edge,
     const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,

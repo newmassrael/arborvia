@@ -1459,6 +1459,9 @@ GeometricEdgeOptimizer::evaluateSelfLoopCombinations(
 
     const NodeLayout& nodeLayout = nodeIt->second;
 
+    // Calculate loop index for unique snap points using shared helper
+    int loopIndex = SelfLoopRouter::calculateLoopIndex(edgeId, baseLayout.from, assignedLayouts);
+
     // Create default layout options for SelfLoopRouter
     LayoutOptions options;
     options.gridConfig.cellSize = gridSize_;
@@ -1476,7 +1479,7 @@ GeometricEdgeOptimizer::evaluateSelfLoopCombinations(
 
         // Generate self-loop layout using SelfLoopRouter
         EdgeLayout candidate = SelfLoopRouter::route(
-            edgeId, baseLayout.from, nodeLayout, 0, options);
+            edgeId, baseLayout.from, nodeLayout, loopIndex, options);
 
         // Calculate penalty score using unified penalty system
         // Note: Geometric optimizer doesn't use forbiddenZones for speed

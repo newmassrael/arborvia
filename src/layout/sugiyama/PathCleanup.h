@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arborvia/core/Types.h"
+#include "arborvia/layout/LayoutResult.h"
 #include <vector>
 
 namespace arborvia {
@@ -29,6 +30,17 @@ public:
     /// A circular detour is when the path returns to a previously visited point
     /// @param points Path points to clean (modified in place)
     static void removeSpikesAndDuplicates(std::vector<Point>& points);
+
+    /// Remove bend points that duplicate sourcePoint or targetPoint
+    /// Also removes consecutive duplicate bend points
+    /// @param layout Edge layout to clean (modified in place)
+    static void removeEndpointDuplicates(EdgeLayout& layout);
+
+    /// Move bend points that are inside node boundaries to be outside
+    /// @param layout Edge layout to clean (modified in place)
+    /// @param targetNode Target node layout (for boundary checking)
+    /// @param margin Minimum distance to keep from node boundary
+    static void moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& targetNode, float margin = 20.0f);
 };
 
 }  // namespace arborvia
