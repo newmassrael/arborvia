@@ -4,6 +4,8 @@
 #include "arborvia/layout/IPathFinder.h"
 #include "arborvia/layout/ValidRegionCalculator.h"
 
+#include <atomic>
+#include <future>
 #include <memory>
 #include <vector>
 
@@ -58,9 +60,13 @@ public:
     /// Set grid size for pathfinding
     void setGridSize(float gridSize);
 
+    /// Enable/disable parallel evaluation (default: true)
+    void setParallelEnabled(bool enabled) { parallelEnabled_ = enabled; }
+
 private:
     std::shared_ptr<IPathFinder> pathFinder_;
     float gridSize_ = 0.0f;
+    bool parallelEnabled_ = true;
 
     /// Result of evaluating a single edge combination
     struct CombinationResult {
@@ -70,6 +76,28 @@ private:
         EdgeLayout layout;
         bool valid = true;  // False if no valid path exists
     };
+
+    /// Result of parallel edge evaluation
+    struct ParallelEdgeResult {
+        EdgeId edgeId;
+        CombinationResult best;
+        bool isSelfLoop = false;
+        bool hasValidResult = false;
+    };
+
+    /// Evaluate single edge independently (thread-safe)
+    /// Uses thread-local pathfinder to avoid data races
+    /// @param pathFinder Thread-local pathfinder instance
+    ParallelEdgeResult evaluateEdgeIndependent(
+        EdgeId edgeId,
+        const EdgeLayout& baseLayout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones,
+        IPathFinder& pathFinder);
+
+    /// Detect overlapping edges in results
+    std::vector<std::pair<EdgeId, EdgeId>> detectOverlaps(
+        const std::unordered_map<EdgeId, EdgeLayout>& layouts);
 
     /// Evaluate edge combinations for a single edge
     /// When preserveDirections() is true, only evaluates the existing combination.
@@ -87,15 +115,18 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<ForbiddenZone>& forbiddenZones);
 
+    /// Thread-safe version with explicit pathfinder
+    std::vector<CombinationResult> evaluateCombinations(
+        EdgeId edgeId,
+        const EdgeLayout& baseLayout,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones,
+        IPathFinder& pathFinder);
+
     /// Create a candidate layout for a specific source/target edge combination
     /// Calculates actual orthogonal path using A* pathfinder
-    /// @param base Original edge layout
-    /// @param sourceEdge Desired source node edge
-    /// @param targetEdge Desired target node edge
-    /// @param nodeLayouts Node positions for snap point and path calculation
-    /// @param obstacles Pre-built obstacle map (includes node and edge obstacles)
-    /// @param[out] pathFound Set to true if valid path was found
-    /// @return New EdgeLayout with actual bend points (or empty if no path)
+    /// Uses member pathFinder_
     EdgeLayout createCandidateLayout(
         const EdgeLayout& base,
         NodeEdge sourceEdge,
@@ -103,6 +134,16 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         ObstacleMap& obstacles,
         bool& pathFound);
+
+    /// Thread-safe version with explicit pathfinder
+    EdgeLayout createCandidateLayout(
+        const EdgeLayout& base,
+        NodeEdge sourceEdge,
+        NodeEdge targetEdge,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        ObstacleMap& obstacles,
+        bool& pathFound,
+        IPathFinder& pathFinder);
 
     /// Calculate snap point position on a node edge (pixel coordinates)
     /// @param node Node layout
