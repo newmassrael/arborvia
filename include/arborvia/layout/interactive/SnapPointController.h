@@ -18,6 +18,7 @@ struct SnapCandidate {
     NodeEdge edge;
     int candidateIndex;
     Point position;
+    bool blocked = false;  ///< True if A* can't find path from this position
 };
 
 /// Controller for snap point drag operations

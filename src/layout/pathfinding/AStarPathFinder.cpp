@@ -94,6 +94,10 @@ PathResult AStarPathFinder::findPath(
     std::unordered_set<NodeId> goalExcludes = extraGoalExcludes;
     goalExcludes.insert(targetNode);
 
+    // Pre-compute self-loop detection (used for intermediate cell blocking)
+    const bool isSelfLoop = (sourceNode == targetNode);
+    static const std::unordered_set<NodeId> emptyExcludeSet{};
+
     // Check if start cell is accessible (blocked only by excluded nodes is OK)
     if (obstacles.isBlocked(start.x, start.y, startExcludes)) {
         // Start is blocked by a non-excluded node - can't route from here
@@ -204,18 +208,28 @@ PathResult AStarPathFinder::findPath(
                 // with source node since we start at the node's edge
                 cellExclude = startExcludes;
             }
-            // else: empty exclude set for intermediate cells
+            // else: empty exclude set for intermediate cells (normal edges)
+
+            // Self-loop intermediate cell detection:
+            // For self-loops, intermediate cells must NOT exclude the node from blocking,
+            // otherwise A* can route through the node's interior
+            const bool isIntermediateCell = (neighborPos != start) && (neighborPos != goal) &&
+                                            (current.pos != start || current.lastDir != MoveDirection::None);
+            const bool isSelfLoopIntermediate = isSelfLoop && isIntermediateCell;
 
             // Get cost for this cell including proximity penalty
-            // For proximity calculation, always exclude source and target nodes
-            std::unordered_set<NodeId> excludeForProximity = {sourceNode, targetNode};
+            // For self-loop intermediate cells, don't exclude the node so penetration is detected
+            std::unordered_set<NodeId> excludeForProximity = isSelfLoopIntermediate 
+                ? std::unordered_set<NodeId>{} 
+                : std::unordered_set<NodeId>{sourceNode, targetNode};
             int cellCost = obstacles.getCostForDirectionWithExcludes(
                 neighborPos.x, neighborPos.y, moveDir, excludeForProximity);
 
             // Check if blocked (considering per-cell exclusions for node blocking)
             if (cellCost >= IObstacleProvider::COST_BLOCKED) {
-                // Even if COST_BLOCKED from proximity, check if actually passable via cellExclude
-                bool blocked = obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, cellExclude);
+                // For self-loop intermediate cells, use empty exclusion to block node interior
+                const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExclude;
+                bool blocked = obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
                 if (blocked) {
 #if EDGE_ROUTING_DEBUG
                     if (current.pos == start && current.lastDir == MoveDirection::None) {

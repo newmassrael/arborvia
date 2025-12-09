@@ -3,10 +3,12 @@
 #include "../snap/GridSnapCalculator.h"
 #include "../pathfinding/ObstacleMap.h"
 #include "../pathfinding/AStarPathFinder.h"
+#include "../sugiyama/routing/EdgeRouting.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <iostream>
 
 namespace arborvia {
 
@@ -60,6 +62,11 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
     originalSnapIndex_ = isSource ? edge.sourceSnapIndex : edge.targetSnapIndex;
     originalLayout_ = edge;
 
+    std::cout << "[SnapPointController] startDrag: edge=" << edgeId 
+              << " isSource=" << isSource
+              << " originalPos=(" << originalPosition_.x << "," << originalPosition_.y << ")"
+              << std::endl;
+
     // Calculate all snap candidates for all 4 edges
     candidates_.clear();
     float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
@@ -69,7 +76,42 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
         for (int i = 0; i < candidateCount; ++i) {
             Point pos = GridSnapCalculator::getPositionFromCandidateIndex(
                 node, nodeEdge, i, effectiveGridSize);
-            candidates_.push_back({nodeEdge, i, pos});
+            candidates_.push_back({nodeEdge, i, pos, false});  // blocked=false initially
+        }
+    }
+
+    // Validate each candidate: check if A* can find a path from that position
+    // Build obstacle map with nodes and other edge segments
+    ObstacleMap obstacles;
+    obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);
+    obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Add other edges as obstacles
+
+    // Get the other endpoint (target if dragging source, source if dragging target)
+    Point otherEndpoint = isSource ? edge.targetPoint : edge.sourcePoint;
+    NodeEdge otherEdge = isSource ? edge.targetEdge : edge.sourceEdge;
+    NodeId otherNodeId = isSource ? edge.to : edge.from;
+
+    GridPoint goalGrid = obstacles.pixelToGrid(otherEndpoint);
+
+    for (auto& candidate : candidates_) {
+        GridPoint startGrid = obstacles.pixelToGrid(candidate.position);
+        
+        // Try A* with direction constraint
+        NodeEdge srcEdge = isSource ? candidate.edge : otherEdge;
+        NodeEdge tgtEdge = isSource ? otherEdge : candidate.edge;
+        NodeId srcNode = isSource ? nodeId : otherNodeId;
+        NodeId tgtNode = isSource ? otherNodeId : nodeId;
+        GridPoint pathStart = isSource ? startGrid : goalGrid;
+        GridPoint pathGoal = isSource ? goalGrid : startGrid;
+
+        auto pathResult = pathFinder_->findPath(
+            pathStart, pathGoal, obstacles,
+            srcNode, tgtNode,
+            srcEdge, tgtEdge,
+            {}, {});
+
+        if (!pathResult.found || pathResult.path.size() < 2) {
+            candidate.blocked = true;
         }
     }
 
@@ -98,11 +140,12 @@ SnapPointController::DragUpdateResult SnapPointController::updateDrag(
         return result;
     }
 
-    // Find nearest candidate
+    // Find nearest NON-BLOCKED candidate
     int nearestIdx = -1;
     float nearestDist = std::numeric_limits<float>::max();
 
     for (size_t i = 0; i < candidates_.size(); ++i) {
+        if (candidates_[i].blocked) continue;  // Skip blocked candidates
         float dist = mousePosition.distanceTo(candidates_[i].position);
         if (dist < nearestDist) {
             nearestDist = dist;
@@ -175,14 +218,21 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     if (snappedCandidateIndex >= 0 && snappedCandidateIndex < static_cast<int>(candidates_.size())) {
         // Use snapped candidate
         const auto& candidate = candidates_[snappedCandidateIndex];
+        if (candidate.blocked) {
+            // Blocked candidate - cannot drop here, return to original position
+            result.reason = "Candidate is blocked (no valid path)";
+            cancelDrag();
+            return result;
+        }
         targetPosition = candidate.position;
         targetEdge = candidate.edge;
         targetSnapIndex = candidate.candidateIndex;
     } else {
-        // Fallback: find closest candidate to mouse position
+        // Fallback: find closest NON-BLOCKED candidate to mouse position
         int nearestIdx = -1;
         float nearestDist = std::numeric_limits<float>::max();
         for (size_t i = 0; i < candidates_.size(); ++i) {
+            if (candidates_[i].blocked) continue;  // Skip blocked candidates
             float dist = mousePosition.distanceTo(candidates_[i].position);
             if (dist < nearestDist) {
                 nearestDist = dist;
@@ -208,6 +258,13 @@ SnapPointController::DropResult SnapPointController::completeDrag(
 
     // Update dragged edge
     EdgeLayout& draggedEdge = edgeIt->second;
+    
+    std::cout << "[SnapPointController] completeDrag: edge=" << draggedEdgeId_
+              << " isSource=" << isDraggingSource_
+              << " BEFORE=(" << originalPosition_.x << "," << originalPosition_.y << ")"
+              << " AFTER=(" << targetPosition.x << "," << targetPosition.y << ")"
+              << std::endl;
+    
     if (isDraggingSource_) {
         draggedEdge.sourcePoint = targetPosition;
         draggedEdge.sourceEdge = targetEdge;
@@ -237,9 +294,18 @@ SnapPointController::DropResult SnapPointController::completeDrag(
         result.affectedEdges.push_back(occupying.edgeId);
     }
 
-    // Regenerate bend points if callback provided
+    // Regenerate bend points - MUST run full pathfinding flow:
+    // 1. Build ObstacleMap from nodes
+    // 2. Add other edge segments as obstacles
+    // 3. Run A* pathfinding
+    // 4. Update bendPoints with orthogonal path
     if (regenerator) {
         regenerator(edgeLayouts, nodeLayouts, result.affectedEdges, options);
+    } else {
+        // Default: use EdgeRouting::regenerateBendPointsOnly
+        // This ensures ObstacleMap is built and A* pathfinding runs
+        EdgeRouting routing;
+        routing.regenerateBendPointsOnly(edgeLayouts, nodeLayouts, result.affectedEdges, options);
     }
 
     result.success = true;

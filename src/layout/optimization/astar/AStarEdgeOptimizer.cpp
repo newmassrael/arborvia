@@ -842,8 +842,10 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
         EdgeLayout& layout = it->second;
 
-        // Handle self-loops: generate orthogonal path wrapping around node corner
-        if (layout.from == layout.to) {
+        // Handle self-loops: use geometric routing for valid adjacent edge combinations,
+        // fall through to A* for invalid combinations (opposite edges, same edge)
+        if (layout.from == layout.to && 
+            SelfLoopRouter::isValidSelfLoopCombination(layout.sourceEdge, layout.targetEdge)) {
             auto nodeIt = nodeLayouts.find(layout.from);
             if (nodeIt == nodeLayouts.end()) {
                 continue;
@@ -921,9 +923,18 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             continue;
         }
 
-        // Build obstacle map with nodes + already-routed edges as blocking
+        // Build obstacle map with nodes + ALL other edges as blocking
+        // This includes:
+        // 1. Edges from edgeLayouts that are NOT in the 'edges' parameter (existing edges)
+        // 2. Already-routed edges from current call (with updated paths)
         ObstacleMap obstacles;
         obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
+        
+        // Add all edges from edgeLayouts as obstacles (excluding current edge)
+        // This ensures we avoid overlapping with edges that are NOT being re-routed
+        obstacles.addEdgeSegments(edgeLayouts, edgeId);
+        
+        // Also add already-routed edges from current call (they may have updated paths)
         if (!routedEdges.empty()) {
             obstacles.addEdgeSegments(routedEdges, edgeId);
         }
@@ -946,49 +957,9 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                     pathResult.path[i].x, pathResult.path[i].y);
                 layout.bendPoints.push_back({pixelPoint});
             }
-        } else {
-            // A* failed - generate simple orthogonal fallback path
-            // This ensures we have valid orthogonal bendPoints even if A* can't find a path
-            // Don't keep old bendPoints as they may be for different snap positions
-            layout.bendPoints.clear();
-
-            // Generate orthogonal path respecting source/target edge directions
-            float srcX = layout.sourcePoint.x;
-            float srcY = layout.sourcePoint.y;
-            float tgtX = layout.targetPoint.x;
-            float tgtY = layout.targetPoint.y;
-
-            // Check if direct connection is possible (aligned already)
-            bool xAligned = std::abs(srcX - tgtX) < 1.0f;
-            bool yAligned = std::abs(srcY - tgtY) < 1.0f;
-
-            if (!xAligned && !yAligned) {
-                // Need at least two bend points for orthogonal path
-                // Source exits perpendicular to its edge, target enters perpendicular to its edge
-                // This creates a Z-shape or S-shape path
-
-                // Calculate mid-point Y for horizontal segment (between source and target)
-                // Keep source X, move to mid-Y, then move to target X, then to target Y
-                float midY = (srcY + tgtY) / 2.0f;
-                midY = std::round(midY / gridSize) * gridSize;
-
-                // Create two bend points for proper orthogonal path:
-                // source -> (srcX, midY) -> (tgtX, midY) -> target
-                Point bend1 = {srcX, midY};
-                Point bend2 = {tgtX, midY};
-
-                // Keep bend point X coordinates aligned with source/target
-                // (no grid snapping on X to maintain alignment)
-                layout.bendPoints.push_back({bend1});
-                layout.bendPoints.push_back({bend2});
-            }
-            // else: already aligned, no bendPoints needed
-#if EDGE_ROUTING_DEBUG
-            std::cout << "[regenerateBendPoints] Edge " << edgeId 
-                      << " A* failed, using fallback orthogonal path with "
-                      << layout.bendPoints.size() << " bends" << std::endl;
-#endif
         }
+        // If A* fails, keep existing bendPoints.
+        // Snap point validation should prevent selecting positions where A* fails.
 
         // Add this edge to routed edges for blocking subsequent edges
         routedEdges[edgeId] = layout;
