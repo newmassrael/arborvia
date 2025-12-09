@@ -4,13 +4,10 @@
 #include "../sugiyama/routing/SelfLoopRouter.h"
 #include "../sugiyama/routing/PathCleanup.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "arborvia/core/GeometryUtils.h"
 #include <map>
 
 namespace arborvia {
-
-namespace constants {
-    constexpr float PATHFINDING_GRID_SIZE = 20.0f;
-}
 
 SnapDistributor::SnapDistributor(RecalcBendPointsFunc recalcFunc)
     : recalcFunc_(std::move(recalcFunc)) {

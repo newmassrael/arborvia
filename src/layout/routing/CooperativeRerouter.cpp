@@ -2,16 +2,13 @@
 #include "../pathfinding/ObstacleMap.h"
 #include "../pathfinding/AStarPathFinder.h"
 #include "../sugiyama/routing/PathIntersection.h"
+#include "arborvia/core/GeometryUtils.h"
 
 #ifdef EDGE_ROUTING_DEBUG
 #include <iostream>
 #endif
 
 namespace arborvia {
-
-namespace {
-    constexpr float DEFAULT_GRID_SIZE = 20.0f;
-}
 
 CooperativeRerouter::CooperativeRerouter(
     std::shared_ptr<IPathFinder> pathFinder,
@@ -31,7 +28,7 @@ void CooperativeRerouter::setGridSize(float gridSize) {
 }
 
 float CooperativeRerouter::effectiveGridSize() const {
-    return gridSize_ > 0 ? gridSize_ : DEFAULT_GRID_SIZE;
+    return gridSize_ > 0 ? gridSize_ : constants::PATHFINDING_GRID_SIZE;
 }
 
 // =============================================================================

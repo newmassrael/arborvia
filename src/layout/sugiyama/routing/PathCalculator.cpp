@@ -2,6 +2,7 @@
 #include "../../pathfinding/ObstacleMap.h"
 #include "EdgeRoutingUtils.h"
 #include "arborvia/layout/config/LayoutOptions.h"
+#include "arborvia/core/GeometryUtils.h"
 #include <cmath>
 #include <iostream>
 
@@ -10,10 +11,6 @@
 #endif
 
 namespace arborvia {
-
-namespace constants {
-    constexpr float PATHFINDING_GRID_SIZE = 10.0f;
-}
 
 PathCalculator::PathCalculator(IPathFinder& pathFinder)
     : pathFinder_(pathFinder) {
