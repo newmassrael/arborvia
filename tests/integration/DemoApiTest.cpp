@@ -561,3 +561,150 @@ TEST_F(DemoApiTest, Edge2_MustRemainOrthogonalAfterDrag) {
                       << "Bug: Diagonal detection only checks non-empty bendPoints.";
     }
 }
+
+// Helper: Get edge info from JSON
+struct EdgeLayoutInfo {
+    int id;
+    int from;
+    int to;
+    float sourceX, sourceY;
+    float targetX, targetY;
+    int sourceSnapIndex, targetSnapIndex;
+    int sourceEdge, targetEdge;  // 0=Top, 1=Bottom, 2=Left, 3=Right
+    int bendCount;
+
+    static EdgeLayoutInfo fromJson(const json& layout, int edgeId) {
+        EdgeLayoutInfo info{};
+        for (const auto& edge : layout["edgeLayouts"]) {
+            int thisId = edge["id"].is_string() ? std::stoi(edge["id"].get<std::string>()) : edge["id"].get<int>();
+            if (thisId == edgeId) {
+                info.id = edgeId;
+                info.from = edge["from"].is_string() ? std::stoi(edge["from"].get<std::string>()) : edge["from"].get<int>();
+                info.to = edge["to"].is_string() ? std::stoi(edge["to"].get<std::string>()) : edge["to"].get<int>();
+                info.sourceX = edge["sourcePoint"]["x"].get<float>();
+                info.sourceY = edge["sourcePoint"]["y"].get<float>();
+                info.targetX = edge["targetPoint"]["x"].get<float>();
+                info.targetY = edge["targetPoint"]["y"].get<float>();
+                info.sourceSnapIndex = edge.contains("sourceSnapIndex") ?
+                    (edge["sourceSnapIndex"].is_string() ? std::stoi(edge["sourceSnapIndex"].get<std::string>()) : edge["sourceSnapIndex"].get<int>()) : -1;
+                info.targetSnapIndex = edge.contains("targetSnapIndex") ?
+                    (edge["targetSnapIndex"].is_string() ? std::stoi(edge["targetSnapIndex"].get<std::string>()) : edge["targetSnapIndex"].get<int>()) : -1;
+                info.sourceEdge = edge.contains("sourceEdge") ?
+                    (edge["sourceEdge"].is_string() ? std::stoi(edge["sourceEdge"].get<std::string>()) : edge["sourceEdge"].get<int>()) : -1;
+                info.targetEdge = edge.contains("targetEdge") ?
+                    (edge["targetEdge"].is_string() ? std::stoi(edge["targetEdge"].get<std::string>()) : edge["targetEdge"].get<int>()) : -1;
+                info.bendCount = edge["bendPoints"].size();
+                break;
+            }
+        }
+        return info;
+    }
+
+    void print(const std::string& label) const {
+        std::cout << label << std::endl;
+        std::cout << "  from=" << from << " to=" << to << std::endl;
+        std::cout << "  source: (" << sourceX << "," << sourceY << ") snapIdx=" << sourceSnapIndex << " edge=" << sourceEdge << std::endl;
+        std::cout << "  target: (" << targetX << "," << targetY << ") snapIdx=" << targetSnapIndex << " edge=" << targetEdge << std::endl;
+        std::cout << "  bendCount=" << bendCount << std::endl;
+    }
+};
+
+// TDD RED: Snap point drag must preserve user's intended edge and position
+// When user drags a snap point along the same edge, the edge type should NOT change
+TEST_F(DemoApiTest, SnapPointDrag_MustPreserveEdgeAndPosition) {
+    // Get initial layout
+    std::string layoutBefore = sendCommand("get_layout");
+    json jsonBefore = json::parse(layoutBefore);
+
+    // Get Edge 0 (idle -> running) initial state
+    EdgeLayoutInfo edgeBefore = EdgeLayoutInfo::fromJson(jsonBefore, 0);
+    edgeBefore.print("\n=== Edge 0 BEFORE snap drag ===");
+
+    // Use test_snap_drag to move target snap point by 40px right
+    // test_snap_drag <edge_id> <is_source:0|1> <dx> <dy>
+    std::string dragResult = sendCommand("test_snap_drag 0 0 40 0");  // 0=target, dx=40, dy=0
+    std::cout << "\ntest_snap_drag result: " << dragResult << std::endl;
+
+    // Get layout after snap drag
+    std::string layoutAfter = sendCommand("get_layout");
+    json jsonAfter = json::parse(layoutAfter);
+
+    EdgeLayoutInfo edgeAfter = EdgeLayoutInfo::fromJson(jsonAfter, 0);
+    edgeAfter.print("\n=== Edge 0 AFTER snap drag ===");
+
+    EdgePath pathAfter = EdgePath::fromJson(jsonAfter, 0);
+
+    int failures = 0;
+    std::ostringstream errors;
+
+    // CONSTRAINT 1: Target edge should be PRESERVED
+    if (edgeAfter.targetEdge != edgeBefore.targetEdge) {
+        ++failures;
+        errors << "[FAIL] Target edge changed from " << edgeBefore.targetEdge
+               << " to " << edgeAfter.targetEdge
+               << " - user's intended edge should be preserved!\n";
+    }
+
+    // CONSTRAINT 2: Target position should move in the requested direction
+    float expectedX = edgeBefore.targetX + 40.0f;
+    float positionError = std::abs(edgeAfter.targetX - expectedX);
+    if (positionError > 30.0f) {  // Allow some grid snapping tolerance
+        ++failures;
+        errors << "[FAIL] Target X position error too large. "
+               << "Expected ~" << expectedX << ", Got " << edgeAfter.targetX
+               << ", Error=" << positionError << "\n";
+    }
+
+    // CONSTRAINT 3: All segments must be ORTHOGONAL
+    std::string orthoErrors = pathAfter.checkSegments();
+    if (!pathAfter.isOrthogonal()) {
+        ++failures;
+        errors << "[FAIL] Edge has diagonal segments!\n" << orthoErrors;
+    }
+
+    // CONSTRAINT 4: Edge must have bend points for non-trivial routing
+    if (pathAfter.points.size() <= 2) {
+        // Check if source and target form a diagonal
+        float dx = std::abs(pathAfter.points.back().first - pathAfter.points.front().first);
+        float dy = std::abs(pathAfter.points.back().second - pathAfter.points.front().second);
+        if (dx > 0.1f && dy > 0.1f) {
+            ++failures;
+            errors << "[FAIL] Edge has no bends but forms diagonal - A* failed to find path!\n";
+        }
+    }
+
+    std::cout << "\n========== SUMMARY ==========" << std::endl;
+    std::cout << "Total failures: " << failures << std::endl;
+
+    EXPECT_EQ(failures, 0)
+        << "Snap point drag must satisfy all constraints!\n"
+        << errors.str();
+}
+
+// TDD RED: All edges must remain orthogonal after snap point drag
+TEST_F(DemoApiTest, SnapPointDrag_AllEdgesMustRemainOrthogonal) {
+    // Drag snap point of edge 0
+    sendCommand("test_snap_drag 0 0 40 0");  // Move target snap right
+
+    // Get layout after snap drag
+    std::string layoutStr = sendCommand("get_layout");
+    json layout = json::parse(layoutStr);
+
+    bool allOrthogonal = true;
+    std::ostringstream errors;
+
+    for (const auto& edge : layout["edgeLayouts"]) {
+        int edgeId = edge["id"].get<int>();
+        EdgePath path = EdgePath::fromJson(layout, edgeId);
+
+        if (!path.isOrthogonal()) {
+            allOrthogonal = false;
+            errors << "Edge " << edgeId << " is NOT orthogonal:\n";
+            errors << path.checkSegments();
+        }
+    }
+
+    EXPECT_TRUE(allOrthogonal)
+        << "All edges must be orthogonal after snap point drag!\n"
+        << errors.str();
+}

@@ -1,5 +1,5 @@
-#include "arborvia/layout/LayoutResult.h"
-#include "arborvia/layout/LayoutSerializer.h"
+#include "arborvia/layout/config/LayoutResult.h"
+#include "arborvia/layout/util/LayoutSerializer.h"
 
 #include <algorithm>
 #include <limits>

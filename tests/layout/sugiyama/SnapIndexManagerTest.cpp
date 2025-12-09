@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "../../../src/layout/sugiyama/SnapIndexManager.h"
+#include "../../../src/layout/snap/SnapIndexManager.h"
 
 using namespace arborvia;
 using namespace arborvia;

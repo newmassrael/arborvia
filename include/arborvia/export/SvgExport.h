@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/CompoundGraph.h"
-#include "../layout/LayoutResult.h"
+#include "../layout/config/LayoutResult.h"
 #include "IExporter.h"
 
 #include <ostream>

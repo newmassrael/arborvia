@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
-#include <arborvia/layout/ValidRegionCalculator.h>
-#include <arborvia/layout/LayoutUtils.h>
-#include <arborvia/layout/ConstraintConfig.h>
+#include "../../src/layout/interactive/ValidRegionCalculator.h"
+#include <arborvia/layout/util/LayoutUtils.h>
+#include <arborvia/layout/config/ConstraintConfig.h>
 
 using namespace arborvia;
 

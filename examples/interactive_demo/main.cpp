@@ -4,9 +4,13 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <arborvia/arborvia.h>
-#include <arborvia/layout/PathRoutingCoordinator.h>
-#include <arborvia/layout/ValidRegionCalculator.h>
-#include "../../src/layout/sugiyama/ObstacleMap.h"
+#include <arborvia/layout/interactive/PathRoutingCoordinator.h>
+#include "../../src/layout/interactive/ValidRegionCalculator.h"
+#include <arborvia/layout/interactive/SnapPointController.h>
+#include "../../src/layout/pathfinding/ObstacleMap.h"
+#include "../../src/layout/snap/GridSnapCalculator.h"
+#include "../../src/layout/pathfinding/AStarPathFinder.h"
+#include "../../src/layout/routing/OrthogonalRouter.h"
 #include "CommandServer.h"
 
 #include <unordered_map>
@@ -160,6 +164,13 @@ struct HoveredSnapPoint {
     void clear() { edgeId = INVALID_EDGE; }
 };
 
+// Snap point candidate for drag preview
+struct SnapPointCandidate {
+    NodeEdge edge;
+    int candidateIndex;
+    Point position;
+};
+
 class InteractiveDemo : public IRoutingListener {
 public:
     explicit InteractiveDemo(int port = 9999)
@@ -182,10 +193,36 @@ public:
             for (const auto& [edgeId, layout] : edgeLayouts_) {
                 allEdges.push_back(edgeId);
             }
+
+            std::cout << "[DEBUG-optimizationCallback] Called with " << allEdges.size() << " edges" << std::endl;
+            std::cout << "[DEBUG-optimizationCallback] movedNodes passed as EMPTY set (BUG?)" << std::endl;
+            std::cout << "[DEBUG-optimizationCallback] dragAlgorithm="
+                      << static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm)
+                      << " postDragAlgorithm="
+                      << static_cast<int>(layoutOptions_.optimizationOptions.postDragAlgorithm) << std::endl;
+
+            // Dump edge layouts BEFORE optimization
+            std::cout << "[DEBUG-optimizationCallback] Edge layouts BEFORE:" << std::endl;
+            for (const auto& [edgeId, layout] : edgeLayouts_) {
+                std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
+                          << "," << layout.targetSnapIndex << ") src=" << layout.sourcePoint.x
+                          << "," << layout.sourcePoint.y << " tgt=" << layout.targetPoint.x
+                          << "," << layout.targetPoint.y << std::endl;
+            }
+
             // Use overload with LayoutOptions to trigger A* optimization
             LayoutUtils::updateEdgePositions(
                 edgeLayouts_, nodeLayouts_, allEdges,
                 layoutOptions_, {});
+
+            // Dump edge layouts AFTER optimization
+            std::cout << "[DEBUG-optimizationCallback] Edge layouts AFTER:" << std::endl;
+            for (const auto& [edgeId, layout] : edgeLayouts_) {
+                std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
+                          << "," << layout.targetSnapIndex << ") src=" << layout.sourcePoint.x
+                          << "," << layout.sourcePoint.y << " tgt=" << layout.targetPoint.x
+                          << "," << layout.targetPoint.y << std::endl;
+            }
         });
 
         setupGraph();
@@ -401,12 +438,25 @@ public:
         if (hoveredSnapPoint_.isValid() && ImGui::IsMouseClicked(0)) {
             draggingSnapPoint_ = hoveredSnapPoint_;
             selectedEdge_ = hoveredSnapPoint_.edgeId;
-            auto it = edgeLayouts_.find(hoveredSnapPoint_.edgeId);
-            if (it != edgeLayouts_.end()) {
-                Point snapPos = hoveredSnapPoint_.isSource ?
-                    it->second.sourcePoint : it->second.targetPoint;
-                snapPointDragOffset_ = {graphMouse.x - snapPos.x, graphMouse.y - snapPos.y};
-                snapPointDragStart_ = snapPos;
+
+            // Use SnapPointController to start drag
+            auto startResult = snapController_.startDrag(
+                hoveredSnapPoint_.edgeId,
+                hoveredSnapPoint_.isSource,
+                nodeLayouts_,
+                edgeLayouts_,
+                gridSize_);
+
+            if (startResult.success) {
+                snapPointDragStart_ = startResult.originalPosition;
+                auto it = edgeLayouts_.find(hoveredSnapPoint_.edgeId);
+                if (it != edgeLayouts_.end()) {
+                    Point snapPos = hoveredSnapPoint_.isSource ?
+                        it->second.sourcePoint : it->second.targetPoint;
+                    snapPointDragOffset_ = {graphMouse.x - snapPos.x, graphMouse.y - snapPos.y};
+                }
+                snappedCandidateIndex_ = -1;
+                hasSnapPreview_ = false;
             }
         }
 
@@ -482,30 +532,29 @@ public:
         }
 
         if (ImGui::IsMouseReleased(0)) {
-            // Handle snap point drag release - apply snap point move
-            if (draggingSnapPoint_.isValid()) {
+            // Handle snap point drag release using SnapPointController
+            if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
                 Point dropPosition = {graphMouse.x - snapPointDragOffset_.x,
                                       graphMouse.y - snapPointDragOffset_.y};
-                auto result = LayoutUtils::moveSnapPoint(
-                    draggingSnapPoint_.edgeId,
-                    draggingSnapPoint_.isSource,
+
+                auto dropResult = snapController_.completeDrag(
+                    snappedCandidateIndex_,
                     dropPosition,
                     nodeLayouts_,
                     edgeLayouts_,
-                    graph_,
                     layoutOptions_);
 
-                if (result.success) {
-                    std::cout << "[SnapDrag] Moved snap point of edge " << draggingSnapPoint_.edgeId
-                              << " to " << result.actualPosition.x << "," << result.actualPosition.y
-                              << " (edge: " << static_cast<int>(result.newEdge) << ")"
-                              << " redistributed: " << result.redistributedEdges.size() << " edges"
-                              << std::endl;
-                } else {
-                    std::cout << "[SnapDrag] Failed: " << result.reason << std::endl;
+                if (!dropResult.success) {
+                    std::cout << "[SnapDrag] Failed: " << dropResult.reason << std::endl;
+                } else if (dropResult.swapEdgeId != INVALID_EDGE) {
+                    std::cout << "[SnapDrag] Swapped with edge " << dropResult.swapEdgeId << std::endl;
                 }
+            } else if (draggingSnapPoint_.isValid()) {
+                snapController_.cancelDrag();
             }
             draggingSnapPoint_.clear();
+            snappedCandidateIndex_ = -1;
+            hasSnapPreview_ = false;
 
             // Handle bend point drag release
             if (draggingBendPoint_.isValid()) {
@@ -537,30 +586,16 @@ public:
             lastRoutedPosition_ = {-9999, -9999};  // Reset for next drag
         }
 
-        // Handle snap point dragging - visual preview during drag
-        if (draggingSnapPoint_.isValid() && ImGui::IsMouseDragging(0)) {
+        // Handle snap point dragging - use SnapPointController for preview
+        if (draggingSnapPoint_.isValid() && ImGui::IsMouseDragging(0) && snapController_.isDragging()) {
             Point dragPosition = {graphMouse.x - snapPointDragOffset_.x,
                                   graphMouse.y - snapPointDragOffset_.y};
-            // Temporarily update snap point position for visual feedback
-            auto edgeIt = edgeLayouts_.find(draggingSnapPoint_.edgeId);
-            if (edgeIt != edgeLayouts_.end()) {
-                // Find which node edge the drag position is closest to
-                NodeId nodeId = draggingSnapPoint_.isSource ?
-                    edgeIt->second.from : edgeIt->second.to;
-                auto nodeIt = nodeLayouts_.find(nodeId);
-                if (nodeIt != nodeLayouts_.end()) {
-                    auto [closestEdge, position] = LayoutUtils::findClosestNodeEdge(
-                        dragPosition, nodeIt->second);
-                    Point snappedPos = LayoutUtils::calculateSnapPointFromPosition(
-                        nodeIt->second, closestEdge, position);
-                    // Update visual position during drag (not final)
-                    if (draggingSnapPoint_.isSource) {
-                        edgeIt->second.sourcePoint = snappedPos;
-                    } else {
-                        edgeIt->second.targetPoint = snappedPos;
-                    }
-                }
-            }
+
+            auto updateResult = snapController_.updateDrag(
+                dragPosition, nodeLayouts_, gridSize_);
+
+            snappedCandidateIndex_ = updateResult.snappedCandidateIndex;
+            hasSnapPreview_ = updateResult.hasValidPreview;
         }
         // Handle bend point dragging with orthogonal constraint
         else if (draggingBendPoint_.isValid() && ImGui::IsMouseDragging(0)) {
@@ -867,6 +902,11 @@ public:
                 continue;
             }
 
+            // Hide the edge being snap-point-dragged (preview will be shown instead)
+            if (draggingSnapPoint_.isValid() && draggingSnapPoint_.edgeId == id && hasSnapPreview_) {
+                continue;
+            }
+
             bool isSelected = (id == selectedEdge_);
             bool isHovered = (id == hoveredEdge_);
 
@@ -964,6 +1004,70 @@ public:
             // Draw snap points if show enabled
             if (showSnapPoints_) {
                 drawSnapPoints(drawList, layout);
+            }
+        }
+
+        // Draw snap point candidates during drag
+        if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
+            drawSnapCandidates(drawList);
+        }
+
+        // Draw A* path preview during snap point drag
+        if (hasSnapPreview_ && draggingSnapPoint_.isValid()) {
+            drawSnapPreviewPath(drawList);
+        }
+    }
+
+    void drawSnapCandidates(ImDrawList* drawList) {
+        const auto& candidates = snapController_.getCandidates();
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const auto& candidate = candidates[i];
+            ImVec2 screenPos = {candidate.position.x + offset_.x,
+                                candidate.position.y + offset_.y};
+
+            bool isSnapped = (static_cast<int>(i) == snappedCandidateIndex_);
+
+            if (isSnapped) {
+                // Highlight the snapped candidate
+                drawList->AddCircleFilled(screenPos, 8.0f, IM_COL32(255, 100, 100, 255));
+                drawList->AddCircle(screenPos, 8.0f, IM_COL32(255, 255, 255, 255), 0, 2.0f);
+            } else {
+                // Draw other candidates as smaller circles
+                drawList->AddCircleFilled(screenPos, 4.0f, IM_COL32(150, 150, 255, 150));
+                drawList->AddCircle(screenPos, 4.0f, IM_COL32(100, 100, 200, 200), 0, 1.0f);
+            }
+        }
+    }
+
+    void drawSnapPreviewPath(ImDrawList* drawList) {
+        // Draw preview path in a distinct color (cyan, semi-transparent)
+        ImU32 previewColor = IM_COL32(0, 200, 255, 180);
+        float thickness = 3.0f;
+
+        auto points = snapController_.getPreviewLayout().allPoints();
+        for (size_t i = 1; i < points.size(); ++i) {
+            ImVec2 p1 = {points[i-1].x + offset_.x, points[i-1].y + offset_.y};
+            ImVec2 p2 = {points[i].x + offset_.x, points[i].y + offset_.y};
+            drawList->AddLine(p1, p2, previewColor, thickness);
+        }
+
+        // Draw arrow at the target
+        if (points.size() >= 2) {
+            ImVec2 p1 = {points[points.size()-2].x + offset_.x, points[points.size()-2].y + offset_.y};
+            ImVec2 p2 = {points.back().x + offset_.x, points.back().y + offset_.y};
+
+            float dx = p2.x - p1.x;
+            float dy = p2.y - p1.y;
+            float len = std::sqrt(dx*dx + dy*dy);
+            if (len > 0.01f) {
+                dx /= len;
+                dy /= len;
+                float arrowSize = 8.0f;
+                ImVec2 arrow1 = {p2.x - arrowSize * (dx + dy * 0.5f),
+                                 p2.y - arrowSize * (dy - dx * 0.5f)};
+                ImVec2 arrow2 = {p2.x - arrowSize * (dx - dy * 0.5f),
+                                 p2.y - arrowSize * (dy + dx * 0.5f)};
+                drawList->AddTriangleFilled(p2, arrow1, arrow2, previewColor);
             }
         }
     }
@@ -1444,6 +1548,11 @@ private:
     Point snapPointDragOffset_ = {0, 0};
     Point snapPointDragStart_ = {0, 0};  // Original snap point position at drag start
 
+    // Snap point controller (handles drag preview, swap, etc.)
+    SnapPointController snapController_;
+    int snappedCandidateIndex_ = -1;                  // Currently snapped candidate (cached for rendering)
+    bool hasSnapPreview_ = false;                      // Whether preview is valid
+
     // A* debug visualization state
     bool showAStarDebug_ = false;               // 'A' key toggles
     EdgeId debugEdgeId_ = INVALID_EDGE;         // Edge to debug (-1 = selected edge)
@@ -1549,6 +1658,154 @@ private:
                     routingCoordinator_->cancelPendingOptimization();
                     commandServer_.sendResponse("BLOCKED " + result.reason);
                 }
+            } else {
+                commandServer_.sendResponse("ERROR node not found");
+            }
+        }
+        else if (cmd.name == "test_snap_drag" && cmd.args.size() >= 4) {
+            // test_snap_drag <edge_id> <is_source:0|1> <dx> <dy> - Snap point drag simulation
+            EdgeId edgeId = std::stoi(cmd.args[0]);
+            bool isSource = std::stoi(cmd.args[1]) != 0;
+            float dx = std::stof(cmd.args[2]);
+            float dy = std::stof(cmd.args[3]);
+
+            if (edgeLayouts_.count(edgeId)) {
+                std::cout << "\n========== TEST_SNAP_DRAG START ==========" << std::endl;
+                std::cout << "[test_snap_drag] Edge " << edgeId << " isSource=" << isSource
+                          << " delta=(" << dx << "," << dy << ")" << std::endl;
+
+                EdgeLayout& layout = edgeLayouts_[edgeId];
+                Point currentPos = isSource ? layout.sourcePoint : layout.targetPoint;
+                int currentSnapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+                NodeEdge currentEdge = isSource ? layout.sourceEdge : layout.targetEdge;
+
+                std::cout << "[test_snap_drag] BEFORE:" << std::endl;
+                std::cout << "  snapPoint=(" << currentPos.x << "," << currentPos.y << ")"
+                          << " snapIndex=" << currentSnapIdx
+                          << " nodeEdge=" << static_cast<int>(currentEdge) << std::endl;
+
+                // Log all edge layouts BEFORE
+                std::cout << "[test_snap_drag] All edge layouts BEFORE:" << std::endl;
+                for (const auto& [eid, elayout] : edgeLayouts_) {
+                    std::cout << "  Edge " << eid << ": snapIdx=(" << elayout.sourceSnapIndex
+                              << "," << elayout.targetSnapIndex << ") src=(" << elayout.sourcePoint.x
+                              << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
+                              << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
+                }
+
+                Point newPos = {currentPos.x + dx, currentPos.y + dy};
+                std::cout << "[test_snap_drag] newPos=(" << newPos.x << "," << newPos.y << ")" << std::endl;
+
+                std::cout << "[test_snap_drag] Calling LayoutUtils::moveSnapPoint()..." << std::endl;
+                auto result = LayoutUtils::moveSnapPoint(
+                    edgeId, isSource, newPos,
+                    nodeLayouts_, edgeLayouts_, graph_, layoutOptions_);
+
+                std::cout << "[test_snap_drag] Result: success=" << result.success
+                          << " reason=" << result.reason << std::endl;
+
+                if (result.success) {
+                    EdgeLayout& afterLayout = edgeLayouts_[edgeId];
+                    Point afterPos = isSource ? afterLayout.sourcePoint : afterLayout.targetPoint;
+                    int afterSnapIdx = isSource ? afterLayout.sourceSnapIndex : afterLayout.targetSnapIndex;
+                    NodeEdge afterEdge = isSource ? afterLayout.sourceEdge : afterLayout.targetEdge;
+
+                    std::cout << "[test_snap_drag] AFTER:" << std::endl;
+                    std::cout << "  snapPoint=(" << afterPos.x << "," << afterPos.y << ")"
+                              << " snapIndex=" << afterSnapIdx
+                              << " nodeEdge=" << static_cast<int>(afterEdge) << std::endl;
+                    std::cout << "  actualPosition=(" << result.actualPosition.x << "," << result.actualPosition.y << ")"
+                              << " newEdge=" << static_cast<int>(result.newEdge) << std::endl;
+                    std::cout << "  redistributedEdges=" << result.redistributedEdges.size() << std::endl;
+                }
+
+                // Log all edge layouts AFTER
+                std::cout << "[test_snap_drag] All edge layouts AFTER:" << std::endl;
+                for (const auto& [eid, elayout] : edgeLayouts_) {
+                    std::cout << "  Edge " << eid << ": snapIdx=(" << elayout.sourceSnapIndex
+                              << "," << elayout.targetSnapIndex << ") src=(" << elayout.sourcePoint.x
+                              << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
+                              << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
+                }
+
+                std::cout << "========== TEST_SNAP_DRAG END ==========\n" << std::endl;
+                commandServer_.sendResponse(result.success ? "OK test_snap_drag" : "FAILED " + result.reason);
+            } else {
+                commandServer_.sendResponse("ERROR edge not found");
+            }
+        }
+        else if (cmd.name == "test_drag" && cmd.args.size() >= 3) {
+            // test_drag <node_id> <dx> <dy> - Full drag simulation with detailed logging
+            NodeId nodeId = std::stoi(cmd.args[0]);
+            float dx = std::stof(cmd.args[1]);
+            float dy = std::stof(cmd.args[2]);
+
+            if (nodeLayouts_.count(nodeId)) {
+                std::cout << "\n========== TEST_DRAG START ==========" << std::endl;
+                std::cout << "[test_drag] Node " << nodeId << " delta=(" << dx << "," << dy << ")" << std::endl;
+
+                // Log BEFORE state
+                std::cout << "[test_drag] BEFORE node position: ("
+                          << nodeLayouts_[nodeId].position.x << ","
+                          << nodeLayouts_[nodeId].position.y << ")" << std::endl;
+                std::cout << "[test_drag] BEFORE edge layouts:" << std::endl;
+                for (const auto& [edgeId, layout] : edgeLayouts_) {
+                    std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
+                              << "," << layout.targetSnapIndex << ") src=(" << layout.sourcePoint.x
+                              << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
+                              << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
+                }
+
+                Point proposedPos = {
+                    nodeLayouts_[nodeId].position.x + dx,
+                    nodeLayouts_[nodeId].position.y + dy
+                };
+                std::cout << "[test_drag] Proposed position: (" << proposedPos.x << "," << proposedPos.y << ")" << std::endl;
+
+                // Collect affected edges
+                std::vector<EdgeId> affected;
+                for (const auto& [edgeId, layout] : edgeLayouts_) {
+                    if (layout.from == nodeId || layout.to == nodeId) {
+                        affected.push_back(edgeId);
+                    }
+                }
+                std::cout << "[test_drag] Affected edges: " << affected.size() << std::endl;
+
+                // Simulate drag start
+                std::cout << "[test_drag] Calling onDragStart()..." << std::endl;
+                routingCoordinator_->onDragStart(affected);
+                std::cout << "[test_drag] routingCoordinator state after onDragStart: "
+                          << static_cast<int>(routingCoordinator_->state()) << std::endl;
+
+                // Actually move the node (bypass moveNode validation for testing)
+                nodeLayouts_[nodeId].position = proposedPos;
+                std::cout << "[test_drag] Node position updated" << std::endl;
+
+                // Save affectedEdges_ for callback
+                affectedEdges_ = affected;
+
+                // Trigger drag end
+                std::cout << "[test_drag] Calling onDragEnd()..." << std::endl;
+                std::cout << "[test_drag] dragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm)
+                          << " postDragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.postDragAlgorithm) << std::endl;
+                routingCoordinator_->onDragEnd();
+                std::cout << "[test_drag] routingCoordinator state after onDragEnd: "
+                          << static_cast<int>(routingCoordinator_->state()) << std::endl;
+
+                // Force update() to trigger callback (debounceDelay=0)
+                routingCoordinator_->update(SDL_GetTicks());
+
+                // Log AFTER state
+                std::cout << "[test_drag] AFTER edge layouts:" << std::endl;
+                for (const auto& [edgeId, layout] : edgeLayouts_) {
+                    std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
+                              << "," << layout.targetSnapIndex << ") src=(" << layout.sourcePoint.x
+                              << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
+                              << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
+                }
+                std::cout << "========== TEST_DRAG END ==========\n" << std::endl;
+
+                commandServer_.sendResponse("OK test_drag " + std::to_string(nodeId));
             } else {
                 commandServer_.sendResponse("ERROR node not found");
             }

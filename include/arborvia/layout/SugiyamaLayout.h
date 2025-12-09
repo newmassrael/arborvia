@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../core/CompoundGraph.h"
-#include "ILayout.h"
-#include "LayoutOptions.h"
-#include "LayoutResult.h"
-#include "ManualLayoutManager.h"
+#include "api/ILayout.h"
+#include "config/LayoutOptions.h"
+#include "config/LayoutResult.h"
+#include "interactive/ManualLayoutManager.h"
 
 #include <memory>
 #include <vector>

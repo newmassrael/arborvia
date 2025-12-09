@@ -1,6 +1,6 @@
-#include "arborvia/layout/ConstraintConfig.h"
-#include "arborvia/layout/ConstraintManager.h"
-#include "arborvia/layout/MinDistanceConstraint.h"
+#include "arborvia/layout/config/ConstraintConfig.h"
+#include "layout/interactive/ConstraintManager.h"
+#include "layout/constraints/MinDistanceConstraint.h"
 #include "arborvia/core/GeometryUtils.h"
 
 #include <nlohmann/json.hpp>

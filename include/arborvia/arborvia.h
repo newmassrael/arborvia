@@ -28,17 +28,16 @@
 #include "core/CompoundGraph.h"
 
 // Layout module - Layout algorithms and results
-#include "layout/LayoutOptions.h"
-#include "layout/LayoutResult.h"
-#include "layout/ILayout.h"
+#include "layout/config/LayoutOptions.h"
+#include "layout/config/LayoutResult.h"
+#include "layout/api/ILayout.h"
 #include "layout/SugiyamaLayout.h"
-#include "layout/LayoutEnums.h"
-#include "layout/ManualLayoutState.h"
-#include "layout/LayoutTypes.h"
-#include "layout/ManualLayoutManager.h"
-#include "layout/LayoutUtils.h"
-#include "layout/OrthogonalRouter.h"
-#include "layout/LayoutSerializer.h"
+#include "layout/config/LayoutEnums.h"
+#include "layout/config/ManualLayoutState.h"
+#include "layout/config/LayoutTypes.h"
+#include "layout/interactive/ManualLayoutManager.h"
+#include "layout/util/LayoutUtils.h"
+#include "layout/util/LayoutSerializer.h"
 
 // Export module - Output formats
 #include "export/IExporter.h"

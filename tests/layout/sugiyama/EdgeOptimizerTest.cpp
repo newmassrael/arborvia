@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
 
 #include "arborvia/core/Types.h"
-#include "arborvia/layout/LayoutResult.h"
-#include "arborvia/layout/LayoutOptions.h"
+#include "arborvia/layout/config/LayoutResult.h"
+#include "arborvia/layout/config/LayoutOptions.h"
 
 // Internal headers
-#include "../../../src/layout/sugiyama/AStarEdgeOptimizer.h"
-#include "../../../src/layout/sugiyama/PathIntersection.h"
-#include "arborvia/layout/EdgePenaltySystem.h"
-#include "arborvia/layout/BuiltinPenalties.h"
+#include "../../../src/layout/optimization/astar/AStarEdgeOptimizer.h"
+#include "../../../src/layout/sugiyama/routing/PathIntersection.h"
+#include "arborvia/layout/api/EdgePenaltySystem.h"
+#include "../../../src/layout/optimization/BuiltinPenalties.h"
 
 using namespace arborvia;
 

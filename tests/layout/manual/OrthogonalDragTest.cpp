@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
+#include "../../../src/layout/routing/OrthogonalRouter.h"
 #include <cmath>
 #include <vector>
 #include <iostream>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Types.h"
-#include "../layout/LayoutResult.h"
+#include "../layout/config/LayoutResult.h"
 
 namespace arborvia {
 

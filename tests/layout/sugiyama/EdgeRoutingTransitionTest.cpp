@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
-#include "../../../src/layout/sugiyama/EdgeRouting.h"
+#include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
 #include <sstream>
 #include <iomanip>
 

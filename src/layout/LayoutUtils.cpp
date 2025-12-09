@@ -1,10 +1,12 @@
-#include "arborvia/layout/LayoutUtils.h"
+#include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/core/Graph.h"
-#include "arborvia/layout/ConstraintManager.h"
-#include "arborvia/layout/ConstraintConfig.h"
-#include "arborvia/layout/PathRoutingCoordinator.h"
-#include "sugiyama/EdgeRouting.h"
+#include "interactive/ConstraintManager.h"
+#include "interactive/ValidRegionCalculator.h"
+#include "arborvia/layout/config/ConstraintConfig.h"
+#include "arborvia/layout/interactive/PathRoutingCoordinator.h"
+#include "sugiyama/routing/EdgeRouting.h"
+#include "snap/GridSnapCalculator.h"
 #include <cmath>
 #include <iostream>
 #include <algorithm>
@@ -548,7 +550,8 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const Graph& graph,
-    const LayoutOptions& options) {
+    const LayoutOptions& options,
+    const BendPointRegenerator& regenerator) {
 
     SnapMoveResult result;
 
@@ -573,36 +576,104 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
 
     const NodeLayout& node = nodeIt->second;
 
-    // Find which edge and position the new point maps to
+    // Save original position/index BEFORE moving (for potential swap)
+    Point originalPosition = isSource ? edge.sourcePoint : edge.targetPoint;
+    NodeEdge originalEdge = isSource ? edge.sourceEdge : edge.targetEdge;
+    int originalSnapIndex = isSource ? edge.sourceSnapIndex : edge.targetSnapIndex;
+
+    // Find which edge the new point maps to
     auto [newEdge, newPosition_] = findClosestNodeEdge(newPosition, node);
 
-    // Calculate the actual snap point position on the node edge
-    result.actualPosition = calculateSnapPointFromPosition(node, newEdge, newPosition_);
+    // Calculate grid-snapped position using GridSnapCalculator
+    // This ensures corners are excluded and positions are grid-aligned
+    float gridSize = GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
+
+    // First get a rough position estimate, then convert to grid candidate index
+    Point roughPosition = calculateSnapPointFromPosition(node, newEdge, newPosition_);
+
+    // Get the candidate index for this position (will clamp to valid range, excluding corners)
+    int newSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, newEdge, roughPosition, gridSize);
+
+    // Now get the actual grid-snapped position from the candidate index
+    // This ensures the position is grid-aligned and corners are excluded
+    result.actualPosition = GridSnapCalculator::getPositionFromCandidateIndex(
+        node, newEdge, newSnapIndex, gridSize);
     result.newEdge = newEdge;
     result.success = true;
 
-    // Update the edge's snap point
+    // Check if another edge occupies the target position - if so, SWAP
+    // Compare by snapIndex (exact match) since all positions are grid-aligned
+    EdgeId swapEdgeId = INVALID_EDGE;
+    bool swapIsSource = false;
+
+    for (auto& [eid, layout] : edgeLayouts) {
+        if (eid == edgeId) continue;
+
+        // Check source snap point (same node, same edge, same snapIndex)
+        if (layout.from == nodeId && layout.sourceEdge == newEdge &&
+            layout.sourceSnapIndex == newSnapIndex) {
+            swapEdgeId = eid;
+            swapIsSource = true;
+            break;
+        }
+
+        // Check target snap point (same node, same edge, same snapIndex)
+        if (layout.to == nodeId && layout.targetEdge == newEdge &&
+            layout.targetSnapIndex == newSnapIndex) {
+            swapEdgeId = eid;
+            swapIsSource = false;
+            break;
+        }
+    }
+
+    // Update the moving edge's snap point
     if (isSource) {
         edge.sourcePoint = result.actualPosition;
         edge.sourceEdge = newEdge;
+        edge.sourceSnapIndex = newSnapIndex;
     } else {
         edge.targetPoint = result.actualPosition;
         edge.targetEdge = newEdge;
+        edge.targetSnapIndex = newSnapIndex;
     }
 
-    // Redistribute other snap points on this edge to avoid overlaps
-    result.redistributedEdges = redistributeSnapPoints(
-        nodeId, newEdge, edgeId, newPosition_,
-        nodeLayouts, edgeLayouts, graph, options);
+    // If swap partner found, move it to the original position
+    if (swapEdgeId != INVALID_EDGE) {
+        EdgeLayout& swapEdge = edgeLayouts[swapEdgeId];
+        if (swapIsSource) {
+            swapEdge.sourcePoint = originalPosition;
+            swapEdge.sourceEdge = originalEdge;
+            swapEdge.sourceSnapIndex = originalSnapIndex;
+        } else {
+            swapEdge.targetPoint = originalPosition;
+            swapEdge.targetEdge = originalEdge;
+            swapEdge.targetSnapIndex = originalSnapIndex;
+        }
+        result.redistributedEdges.push_back(swapEdgeId);
+    } else {
+        // No swap needed - redistribute other snap points to avoid overlaps
+        result.redistributedEdges = redistributeSnapPoints(
+            nodeId, newEdge, edgeId, newPosition_,
+            nodeLayouts, edgeLayouts, graph, options);
+    }
 
-    // Re-route the edge path
-    EdgeRouting routing;
+    // Re-route the edge paths
+    // IMPORTANT: We use regenerateBendPointsOnly (or custom callback) instead of
+    // updateEdgeRoutingWithOptimization because moveSnapPoint explicitly sets the
+    // user's desired position. The optimizer would overwrite the user's choice.
     std::vector<EdgeId> toReroute = {edgeId};
     toReroute.insert(toReroute.end(),
         result.redistributedEdges.begin(), result.redistributedEdges.end());
 
-    routing.updateEdgeRoutingWithOptimization(
-        edgeLayouts, nodeLayouts, toReroute, options, {});
+    if (regenerator) {
+        // Use custom callback (allows decoupling from EdgeRouting)
+        regenerator(edgeLayouts, nodeLayouts, toReroute, options);
+    } else {
+        // Default: use EdgeRouting::regenerateBendPointsOnly
+        EdgeRouting routing;
+        routing.regenerateBendPointsOnly(edgeLayouts, nodeLayouts, toReroute, options);
+    }
 
     return result;
 }

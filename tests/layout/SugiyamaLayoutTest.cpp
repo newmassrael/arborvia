@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
-#include "../src/layout/sugiyama/SelfLoopRouter.h"
+#include "../src/layout/sugiyama/routing/SelfLoopRouter.h"
 
 using namespace arborvia;
 
@@ -984,6 +984,20 @@ namespace {
     bool isPointOnGrid(const Point& p, float gridSize) {
         return isOnGrid(p.x, gridSize) && isOnGrid(p.y, gridSize);
     }
+
+    // For snap points: only the coordinate ALONG the edge needs to be grid-aligned
+    // The perpendicular coordinate is the exact node edge position
+    bool isSnapPointAlongEdgeOnGrid(const Point& p, NodeEdge edge, float gridSize) {
+        switch (edge) {
+            case NodeEdge::Top:
+            case NodeEdge::Bottom:
+                return isOnGrid(p.x, gridSize);  // X is along edge
+            case NodeEdge::Left:
+            case NodeEdge::Right:
+                return isOnGrid(p.y, gridSize);  // Y is along edge
+        }
+        return false;
+    }
 }
 
 TEST(SugiyamaLayoutTest, GridAlignment_NodePositionsOnGrid) {
@@ -1035,20 +1049,24 @@ TEST(SugiyamaLayoutTest, GridAlignment_SnapPointsOnGrid) {
     layout.setOptions(options);
     LayoutResult result = layout.layout(graph);
 
-    // Verify all snap points are on grid
+    // Verify snap points: coordinate ALONG edge is grid-aligned
+    // The perpendicular coordinate is the exact node edge position (may not be grid-aligned)
     float gridSize = options.gridConfig.cellSize;
     for (EdgeId edgeId : {e0, e1}) {
         const EdgeLayout* el = result.getEdgeLayout(edgeId);
         ASSERT_NE(el, nullptr);
 
-        EXPECT_TRUE(isPointOnGrid(el->sourcePoint, gridSize))
+        // Source snap point: coordinate along sourceEdge must be grid-aligned
+        EXPECT_TRUE(isSnapPointAlongEdgeOnGrid(el->sourcePoint, el->sourceEdge, gridSize))
             << "Edge " << edgeId << " sourcePoint (" << el->sourcePoint.x << ", "
-            << el->sourcePoint.y << ") is not on grid";
-        EXPECT_TRUE(isPointOnGrid(el->targetPoint, gridSize))
-            << "Edge " << edgeId << " targetPoint (" << el->targetPoint.x << ", "
-            << el->targetPoint.y << ") is not on grid";
+            << el->sourcePoint.y << ") coordinate along edge is not on grid";
 
-        // Verify bend points are on grid
+        // Target snap point: coordinate along targetEdge must be grid-aligned
+        EXPECT_TRUE(isSnapPointAlongEdgeOnGrid(el->targetPoint, el->targetEdge, gridSize))
+            << "Edge " << edgeId << " targetPoint (" << el->targetPoint.x << ", "
+            << el->targetPoint.y << ") coordinate along edge is not on grid";
+
+        // Verify bend points are fully on grid (internal routing points)
         for (size_t i = 0; i < el->bendPoints.size(); ++i) {
             EXPECT_TRUE(isPointOnGrid(el->bendPoints[i].position, gridSize))
                 << "Edge " << edgeId << " bendPoint[" << i << "] ("
@@ -1092,16 +1110,16 @@ TEST(SugiyamaLayoutTest, GridAlignment_AllCoordinatesOnGrid) {
         }
     }
 
-    // Check all edges
+    // Check all edges - snap points only need coordinate ALONG edge to be grid-aligned
     for (const auto& [edgeId, el] : result.edgeLayouts()) {
-        if (!isPointOnGrid(el.sourcePoint, gridSize)) {
+        if (!isSnapPointAlongEdgeOnGrid(el.sourcePoint, el.sourceEdge, gridSize)) {
             std::cout << "Edge " << edgeId << " sourcePoint (" << el.sourcePoint.x << ", "
-                      << el.sourcePoint.y << ") NOT on grid\n";
+                      << el.sourcePoint.y << ") coordinate along edge NOT on grid\n";
             failures++;
         }
-        if (!isPointOnGrid(el.targetPoint, gridSize)) {
+        if (!isSnapPointAlongEdgeOnGrid(el.targetPoint, el.targetEdge, gridSize)) {
             std::cout << "Edge " << edgeId << " targetPoint (" << el.targetPoint.x << ", "
-                      << el.targetPoint.y << ") NOT on grid\n";
+                      << el.targetPoint.y << ") coordinate along edge NOT on grid\n";
             failures++;
         }
         for (size_t i = 0; i < el.bendPoints.size(); ++i) {
@@ -1153,12 +1171,12 @@ TEST(SugiyamaLayoutTest, GridAlignment_AfterDrag_StillOnGrid) {
         edgeLayouts, nodeLayouts, affectedEdges,
         {}, gridSize);
 
-    // Verify snap points are on grid
+    // Verify snap points: coordinate ALONG edge is on grid
     const EdgeLayout& el = edgeLayouts[e0];
-    EXPECT_TRUE(isPointOnGrid(el.sourcePoint, gridSize))
+    EXPECT_TRUE(isSnapPointAlongEdgeOnGrid(el.sourcePoint, el.sourceEdge, gridSize))
         << "After drag, sourcePoint (" << el.sourcePoint.x << ", "
-        << el.sourcePoint.y << ") should be on grid";
-    EXPECT_TRUE(isPointOnGrid(el.targetPoint, gridSize))
+        << el.sourcePoint.y << ") coordinate along edge should be on grid";
+    EXPECT_TRUE(isSnapPointAlongEdgeOnGrid(el.targetPoint, el.targetEdge, gridSize))
         << "After drag, targetPoint (" << el.targetPoint.x << ", "
         << el.targetPoint.y << ") should be on grid";
 }

@@ -1,6 +1,6 @@
-#include "../../include/arborvia/layout/LayoutSerializer.h"
-#include "../../include/arborvia/layout/ManualLayoutManager.h"
-#include "../../include/arborvia/layout/LayoutResult.h"
+#include "../../include/arborvia/layout/util/LayoutSerializer.h"
+#include "../../include/arborvia/layout/interactive/ManualLayoutManager.h"
+#include "../../include/arborvia/layout/config/LayoutResult.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>

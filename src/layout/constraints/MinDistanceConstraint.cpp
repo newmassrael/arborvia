@@ -1,5 +1,5 @@
-#include "arborvia/layout/MinDistanceConstraint.h"
-#include "arborvia/layout/ValidRegionCalculator.h"
+#include "layout/constraints/MinDistanceConstraint.h"
+#include "layout/interactive/ValidRegionCalculator.h"
 
 namespace arborvia {
 

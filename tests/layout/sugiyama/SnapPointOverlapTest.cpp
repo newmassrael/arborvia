@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "../../../src/layout/sugiyama/SnapIndexManager.h"
-#include "../../../src/layout/sugiyama/EdgeRouting.h"
-#include "arborvia/layout/LayoutUtils.h"
+#include "../../../src/layout/snap/SnapIndexManager.h"
+#include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
+#include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 
 #include <unordered_set>

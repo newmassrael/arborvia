@@ -1026,9 +1026,10 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
 
     std::cout << "\nDragging Running by (" << dragOffset.x << ", " << dragOffset.y << ")" << std::endl;
 
-    // Use library API
+    // Use library API - pass movedNodes to only recalculate moved node's snap positions
+    std::unordered_set<NodeId> movedNodes = {running_};
     LayoutUtils::updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges);
+        edgeLayouts, nodeLayouts, affectedEdges, movedNodes);
 
     // Capture order after drag
     std::vector<SnapInfo> afterOrder;
@@ -1127,21 +1128,18 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
     // (already validated above that all indices are >= 0 and < candidateCount)
 }
 
-// Test: Unified mode - snap point coordinates change by drag offset
+// Test: Drag updates snap points - unmoved nodes stay fixed, moved nodes update or swap
 TEST_F(DragBehaviorTest, SnapPoints_CoordsUpdateOnDrag) {
     ManualLayoutManager manager;
 
-
     SugiyamaLayout layout;
     LayoutOptions options;
-
     layout.setOptions(options);
     layout.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manager));
 
-    // Initial layout
     LayoutResult result = layout.layout(graph_);
 
-    std::cout << "\n=== Unified Mode: Snap Coordinates During Drag Test ===" << std::endl;
+    std::cout << "\n=== Snap Coordinates During Drag Test ===" << std::endl;
 
     // Store layouts locally
     std::unordered_map<NodeId, NodeLayout> nodeLayouts;
@@ -1155,7 +1153,7 @@ TEST_F(DragBehaviorTest, SnapPoints_CoordsUpdateOnDrag) {
     }
 
     // Capture initial coordinates for Running node's connections
-    std::unordered_map<EdgeId, std::pair<Point, Point>> initialCoords;  // source, target points
+    std::unordered_map<EdgeId, std::pair<Point, Point>> initialCoords;
 
     std::cout << "\nInitial Running node edge coordinates:" << std::endl;
     for (const auto& [edgeId, el] : edgeLayouts) {
@@ -1181,20 +1179,19 @@ TEST_F(DragBehaviorTest, SnapPoints_CoordsUpdateOnDrag) {
 
     std::cout << "\nDragging Running by (" << dragOffset.x << ", " << dragOffset.y << ")" << std::endl;
 
-    // Use library API
+    std::unordered_set<NodeId> movedNodes = {running_};
     LayoutUtils::updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges);
+        edgeLayouts, nodeLayouts, affectedEdges, movedNodes);
 
-    // Verify coordinates changed by expected offset
     std::cout << "\nAfter drag Running node edge coordinates:" << std::endl;
 
-    // With fixed grid candidates, snap points may be reassigned during drag.
-    // Use larger tolerance to account for candidate reassignment (up to half drag or one grid cell).
-    const float gridSize = 10.0f;
-    float xTolerance = std::max(gridSize, std::abs(dragOffset.x) * 0.5f);
-    float yTolerance = std::max(gridSize, std::abs(dragOffset.y) * 0.5f);
+    // Verify:
+    // 1. Unmoved node endpoints must stay FIXED (within small tolerance)
+    // 2. Moved node endpoints can either move by drag offset OR swap with another edge
+    const float fixedTolerance = 1.0f;  // Small tolerance for unmoved endpoints
+    int verifiedUnmovedFixed = 0;
+    int verifiedMovedUpdated = 0;
 
-    int verifiedCount = 0;
     for (const auto& [edgeId, el] : edgeLayouts) {
         if (el.from == running_ || el.to == running_) {
             std::cout << "  Edge " << edgeId << ": src=(" << el.sourcePoint.x << ", " << el.sourcePoint.y
@@ -1202,54 +1199,75 @@ TEST_F(DragBehaviorTest, SnapPoints_CoordsUpdateOnDrag) {
 
             const auto& [initialSrc, initialTgt] = initialCoords[edgeId];
 
-            // If Running is source, sourcePoint should move approximately by dragOffset
+            // If Running is source: target node didn't move, so targetPoint must stay fixed
             if (el.from == running_) {
+                float tgtDeltaX = std::abs(el.targetPoint.x - initialTgt.x);
+                float tgtDeltaY = std::abs(el.targetPoint.y - initialTgt.y);
+
+                // Target endpoint (connected to unmoved node) should stay fixed
+                EXPECT_LT(tgtDeltaX, fixedTolerance)
+                    << "Edge " << edgeId << " targetPoint (unmoved side) should stay fixed";
+                EXPECT_LT(tgtDeltaY, fixedTolerance)
+                    << "Edge " << edgeId << " targetPoint (unmoved side) should stay fixed";
+
+                if (tgtDeltaX < fixedTolerance && tgtDeltaY < fixedTolerance) {
+                    std::cout << "    Target (unmoved): FIXED [OK]" << std::endl;
+                    verifiedUnmovedFixed++;
+                }
+
+                // Source endpoint (connected to moved node) should have changed
                 float srcDeltaX = el.sourcePoint.x - initialSrc.x;
                 float srcDeltaY = el.sourcePoint.y - initialSrc.y;
+                std::cout << "    Source (moved): delta=(" << srcDeltaX << ", " << srcDeltaY << ")";
 
-                std::cout << "    Source moved by (" << srcDeltaX << ", " << srcDeltaY << ")";
-
-                // Grid tolerance: candidate reassignment allowed
-                EXPECT_NEAR(srcDeltaX, dragOffset.x, xTolerance)
-                    << "Edge " << edgeId << " sourcePoint.x should move in direction of dragOffset.x";
-                EXPECT_NEAR(srcDeltaY, dragOffset.y, yTolerance)
-                    << "Edge " << edgeId << " sourcePoint.y should move in direction of dragOffset.y";
-
-                if (std::abs(srcDeltaX - dragOffset.x) < xTolerance &&
-                    std::abs(srcDeltaY - dragOffset.y) < yTolerance) {
-                    std::cout << " [OK]" << std::endl;
+                // Changed from initial position (either moved or swapped)
+                bool sourceChanged = (std::abs(srcDeltaX) > 1.0f || std::abs(srcDeltaY) > 1.0f);
+                if (sourceChanged) {
+                    std::cout << " [updated]" << std::endl;
+                    verifiedMovedUpdated++;
                 } else {
-                    std::cout << " [grid reassignment]" << std::endl;
+                    std::cout << " [unchanged]" << std::endl;
                 }
-                verifiedCount++;
             }
 
-            // If Running is target, targetPoint should move approximately by dragOffset
+            // If Running is target: source node didn't move, so sourcePoint must stay fixed
             if (el.to == running_) {
+                float srcDeltaX = std::abs(el.sourcePoint.x - initialSrc.x);
+                float srcDeltaY = std::abs(el.sourcePoint.y - initialSrc.y);
+
+                // Source endpoint (connected to unmoved node) should stay fixed
+                EXPECT_LT(srcDeltaX, fixedTolerance)
+                    << "Edge " << edgeId << " sourcePoint (unmoved side) should stay fixed";
+                EXPECT_LT(srcDeltaY, fixedTolerance)
+                    << "Edge " << edgeId << " sourcePoint (unmoved side) should stay fixed";
+
+                if (srcDeltaX < fixedTolerance && srcDeltaY < fixedTolerance) {
+                    std::cout << "    Source (unmoved): FIXED [OK]" << std::endl;
+                    verifiedUnmovedFixed++;
+                }
+
+                // Target endpoint (connected to moved node) should have changed
                 float tgtDeltaX = el.targetPoint.x - initialTgt.x;
                 float tgtDeltaY = el.targetPoint.y - initialTgt.y;
+                std::cout << "    Target (moved): delta=(" << tgtDeltaX << ", " << tgtDeltaY << ")";
 
-                std::cout << "    Target moved by (" << tgtDeltaX << ", " << tgtDeltaY << ")";
-
-                // Grid tolerance: candidate reassignment allowed
-                EXPECT_NEAR(tgtDeltaX, dragOffset.x, xTolerance)
-                    << "Edge " << edgeId << " targetPoint.x should move in direction of dragOffset.x";
-                EXPECT_NEAR(tgtDeltaY, dragOffset.y, yTolerance)
-                    << "Edge " << edgeId << " targetPoint.y should move in direction of dragOffset.y";
-
-                if (std::abs(tgtDeltaX - dragOffset.x) < xTolerance &&
-                    std::abs(tgtDeltaY - dragOffset.y) < yTolerance) {
-                    std::cout << " [OK]" << std::endl;
+                // Changed from initial position (either moved or swapped)
+                bool targetChanged = (std::abs(tgtDeltaX) > 1.0f || std::abs(tgtDeltaY) > 1.0f);
+                if (targetChanged) {
+                    std::cout << " [updated]" << std::endl;
+                    verifiedMovedUpdated++;
                 } else {
-                    std::cout << " [grid reassignment]" << std::endl;
+                    std::cout << " [unchanged]" << std::endl;
                 }
-                verifiedCount++;
             }
         }
     }
 
-    std::cout << "\nVerified " << verifiedCount << " edge endpoints moved correctly." << std::endl;
-    EXPECT_GT(verifiedCount, 0) << "Should have verified at least one endpoint!";
+    std::cout << "\nVerified " << verifiedUnmovedFixed << " unmoved endpoints stayed fixed." << std::endl;
+    std::cout << "Verified " << verifiedMovedUpdated << " moved endpoints were updated." << std::endl;
+
+    EXPECT_GT(verifiedUnmovedFixed, 0) << "Should have verified at least one unmoved endpoint stayed fixed!";
+    EXPECT_GT(verifiedMovedUpdated, 0) << "Should have verified at least one moved endpoint was updated!";
 }
 
 // Test: Unified mode snap point distribution
