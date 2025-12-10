@@ -54,22 +54,26 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     RetryResult result;
     EdgeLayout workingLayout = layout;
 
-#ifdef EDGE_ROUTING_DEBUG
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " starting calculatePath" << std::endl;
-#endif
+              << " starting calculatePath"
+              << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
+              << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
+              << " maxSnapRetries=" << config.maxSnapRetries
+              << " maxNodeEdgeCombinations=" << config.maxNodeEdgeCombinations
+              << " enableCooperativeReroute=" << config.enableCooperativeReroute
+              << std::endl;
 
     // Step 1: Basic A* attempt
     result.astarAttempts++;
     if (tryAStarPath(workingLayout, nodeLayouts, otherEdges)) {
         result.success = true;
         result.layout = workingLayout;
-#ifdef EDGE_ROUTING_DEBUG
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
                   << " SUCCESS at Step 1 (basic A*)" << std::endl;
-#endif
         return result;
     }
+    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+              << " Step 1 FAILED (basic A*)" << std::endl;
 
     // Step 2: CooperativeRerouter (immediately after A* failure)
     if (config.enableCooperativeReroute) {
@@ -79,12 +83,15 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
             result.success = true;
             result.layout = coopResult.layout;
             result.reroutedEdges = std::move(coopResult.reroutedEdges);
-#ifdef EDGE_ROUTING_DEBUG
             std::cout << "[UnifiedRetryChain] Edge " << edgeId 
                       << " SUCCESS at Step 2 (CooperativeRerouter)" << std::endl;
-#endif
             return result;
         }
+        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+                  << " Step 2 FAILED (CooperativeRerouter)" << std::endl;
+    } else {
+        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+                  << " Step 2 SKIPPED (enableCooperativeReroute=false)" << std::endl;
     }
 
     // Step 3: Snap point variations + A* + rerouter
@@ -92,34 +99,33 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     result.astarAttempts += snapResult.astarAttempts;
     result.cooperativeAttempts += snapResult.cooperativeAttempts;
     if (snapResult.success) {
-#ifdef EDGE_ROUTING_DEBUG
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
                   << " SUCCESS at Step 3 (snap variations)" << std::endl;
-#endif
         return snapResult;
     }
+    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+              << " Step 3 FAILED (snap variations)" << std::endl;
 
     // Step 4: NodeEdge switch with rerouter attempts
     auto edgeSwitchResult = tryNodeEdgeSwitch(edgeId, layout, otherEdges, nodeLayouts, config);
     result.astarAttempts += edgeSwitchResult.astarAttempts;
     result.cooperativeAttempts += edgeSwitchResult.cooperativeAttempts;
     if (edgeSwitchResult.success) {
-#ifdef EDGE_ROUTING_DEBUG
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
                   << " SUCCESS at Step 4 (NodeEdge switch)" << std::endl;
-#endif
         return edgeSwitchResult;
     }
+    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+              << " Step 4 FAILED (NodeEdge switch), maxNodeEdgeCombinations=" 
+              << config.maxNodeEdgeCombinations << std::endl;
 
     // All steps failed
     result.failureReason = "All retry attempts exhausted";
     result.layout = layout;  // Return original layout
 
-#ifdef EDGE_ROUTING_DEBUG
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
               << " ALL STEPS FAILED! astarAttempts=" << result.astarAttempts
               << " cooperativeAttempts=" << result.cooperativeAttempts << std::endl;
-#endif
 
     return result;
 }
@@ -136,10 +142,31 @@ bool UnifiedRetryChain::tryAStarPath(
     obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
 
     // Add other edges as obstacles
+    std::cout << "[tryAStarPath] Edge " << layout.id << " adding " << otherEdges.size() 
+              << " other edges as obstacles" << std::endl;
+    for (const auto& [eid, el] : otherEdges) {
+        if (eid != layout.id) {
+            std::cout << "  OtherEdge " << eid << " bends=" << el.bendPoints.size()
+                      << " src=(" << el.sourcePoint.x << "," << el.sourcePoint.y << ")"
+                      << " tgt=(" << el.targetPoint.x << "," << el.targetPoint.y << ")" << std::endl;
+        }
+    }
     obstacles.addEdgeSegments(otherEdges, layout.id);
 
     GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
     GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
+
+    bool startBlocked = obstacles.isBlocked(startGrid.x, startGrid.y);
+    bool goalBlocked = obstacles.isBlocked(goalGrid.x, goalGrid.y);
+    
+    std::cout << "[tryAStarPath] Edge " << layout.id
+              << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
+              << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
+              << " startGrid=(" << startGrid.x << "," << startGrid.y << ")"
+              << " goalGrid=(" << goalGrid.x << "," << goalGrid.y << ")"
+              << " gridSize=" << gridSize 
+              << " startBlocked=" << startBlocked
+              << " goalBlocked=" << goalBlocked << std::endl;
 
     // Find path
     PathResult pathResult = pathFinder_->findPath(
@@ -148,15 +175,22 @@ bool UnifiedRetryChain::tryAStarPath(
         layout.sourceEdge, layout.targetEdge,
         {}, {});
 
+    std::cout << "[tryAStarPath] Edge " << layout.id
+              << " pathResult.found=" << pathResult.found
+              << " pathSize=" << pathResult.path.size() << std::endl;
+
     if (pathResult.found && pathResult.path.size() >= 2) {
         layout.bendPoints.clear();
         for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
             Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
             layout.bendPoints.push_back({pixelPoint});
         }
+        std::cout << "[tryAStarPath] Edge " << layout.id
+                  << " SUCCESS, bendPoints=" << layout.bendPoints.size() << std::endl;
         return true;
     }
 
+    std::cout << "[tryAStarPath] Edge " << layout.id << " FAILED" << std::endl;
     return false;
 }
 

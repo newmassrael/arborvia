@@ -99,21 +99,26 @@ PathResult AStarPathFinder::findPath(
     static const std::unordered_set<NodeId> emptyExcludeSet{};
 
     // Check if start cell is accessible (blocked only by excluded nodes is OK)
-    if (obstacles.isBlocked(start.x, start.y, startExcludes)) {
+    bool startBlockedWithExcludes = obstacles.isBlocked(start.x, start.y, startExcludes);
+    std::cout << "[A* findPath] start=(" << start.x << "," << start.y << ")"
+              << " goal=(" << goal.x << "," << goal.y << ")"
+              << " sourceNode=" << sourceNode << " targetNode=" << targetNode
+              << " startBlockedWithExcludes=" << startBlockedWithExcludes << std::endl;
+              
+    if (startBlockedWithExcludes) {
         // Start is blocked by a non-excluded node - can't route from here
-#if EDGE_ROUTING_DEBUG
-        std::cout << "[A* DEBUG] START BLOCKED at (" << start.x << "," << start.y << ")" << std::endl;
-#endif
+        std::cout << "[A* findPath] START BLOCKED -> fallback to findPathViaSafeZone" << std::endl;
         return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                    sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
     }
 
     // Check if goal cell is accessible
-    if (obstacles.isBlocked(goal.x, goal.y, goalExcludes)) {
+    bool goalBlockedWithExcludes = obstacles.isBlocked(goal.x, goal.y, goalExcludes);
+    std::cout << "[A* findPath] goalBlockedWithExcludes=" << goalBlockedWithExcludes << std::endl;
+    
+    if (goalBlockedWithExcludes) {
         // Goal is blocked by a non-excluded node - can't route to here
-#if EDGE_ROUTING_DEBUG
-        std::cout << "[A* DEBUG] GOAL BLOCKED at (" << goal.x << "," << goal.y << ")" << std::endl;
-#endif
+        std::cout << "[A* findPath] GOAL BLOCKED -> fallback to findPathViaSafeZone" << std::endl;
         return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                    sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
     }
@@ -267,11 +272,11 @@ PathResult AStarPathFinder::findPath(
     }
 
     // A* failed, try safe zone fallback
-#if EDGE_ROUTING_DEBUG
-    std::cout << "[A* DEBUG] A* EXHAUSTED after " << iterations << " iterations, openSet empty="
+    std::cout << "[A* findPath] A* EXHAUSTED after " << iterations << " iterations, openSet empty="
               << openSet.empty() << " srcDir=" << static_cast<int>(requiredSourceDir)
-              << " tgtDir=" << static_cast<int>(requiredTargetDir) << std::endl;
-#endif
+              << " tgtDir=" << static_cast<int>(requiredTargetDir) 
+              << " start=(" << start.x << "," << start.y << ")"
+              << " goal=(" << goal.x << "," << goal.y << ")" << std::endl;
     return findPathViaSafeZone(start, goal, obstacles, sourceNode, targetNode,
                                sourceEdge, targetEdge, extraStartExcludes, extraGoalExcludes);
 }
@@ -289,6 +294,9 @@ PathResult AStarPathFinder::findPathViaSafeZone(
 
     PathResult result;
     const auto& safeZones = obstacles.safeZones();
+
+    std::cout << "[A* findPathViaSafeZone] start=(" << start.x << "," << start.y << ")"
+              << " goal=(" << goal.x << "," << goal.y << ")" << std::endl;
 
     // Get required directions
     MoveDirection requiredSourceDir = getRequiredSourceDirection(sourceEdge);

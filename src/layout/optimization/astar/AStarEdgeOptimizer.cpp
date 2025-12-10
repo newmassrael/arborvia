@@ -1082,12 +1082,30 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             otherEdges[id] = routedLayout;
         }
 
+        std::cout << "[AStarOpt::regenerateBendPoints] Edge " << edgeId 
+                  << " BEFORE retryChain: src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
+                  << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
+                  << " srcEdge=" << static_cast<int>(layout.sourceEdge)
+                  << " tgtEdge=" << static_cast<int>(layout.targetEdge) << std::endl;
+
         auto result = retryChain.calculatePath(
             edgeId, layout, otherEdges, nodeLayouts, config);
 
+        std::cout << "[AStarOpt::regenerateBendPoints] Edge " << edgeId 
+                  << " retryChain result: success=" << result.success
+                  << " bendPoints=" << result.layout.bendPoints.size() << std::endl;
         if (result.success) {
-            // Only update bendPoints, preserve everything else
+            for (size_t i = 0; i < result.layout.bendPoints.size(); ++i) {
+                std::cout << "  result.bend[" << i << "]=(" 
+                          << result.layout.bendPoints[i].position.x << ","
+                          << result.layout.bendPoints[i].position.y << ")" << std::endl;
+            }
+        }
+
+        if (result.success) {
+            // Only update bendPoints and usedGridSize, preserve everything else
             layout.bendPoints = result.layout.bendPoints;
+            layout.usedGridSize = effectiveGridSize();  // Single Source of Truth
 
             // Update rerouted edges back to edgeLayouts (only bendPoints)
             for (const auto& reroutedLayout : result.reroutedEdges) {
@@ -1099,6 +1117,14 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                 if (rit != routedEdges.end()) {
                     rit->second.bendPoints = reroutedLayout.bendPoints;
                 }
+            }
+        } else {
+            std::cout << "[AStarOpt::regenerateBendPoints] Edge " << edgeId 
+                      << " retryChain FAILED, keeping existing bendPoints=" << layout.bendPoints.size() << std::endl;
+            for (size_t i = 0; i < layout.bendPoints.size(); ++i) {
+                std::cout << "  existing.bend[" << i << "]=(" 
+                          << layout.bendPoints[i].position.x << ","
+                          << layout.bendPoints[i].position.y << ")" << std::endl;
             }
         }
         // If retry chain fails, keep existing bendPoints

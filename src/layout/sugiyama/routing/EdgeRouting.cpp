@@ -465,7 +465,14 @@ void EdgeRouting::regenerateBendPointsOnly(
     std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
 
     if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
-        const float gridSize = options.gridConfig.cellSize;
+        // Single Source of Truth: prefer edge's stored gridSize over options
+        float gridSize = options.gridConfig.cellSize;
+        if (!affectedEdges.empty()) {
+            auto it = edgeLayouts.find(affectedEdges[0]);
+            if (it != edgeLayouts.end() && it->second.usedGridSize > 0.0f) {
+                gridSize = it->second.usedGridSize;
+            }
+        }
 
         switch (options.optimizationOptions.postDragAlgorithm) {
             case PostDragAlgorithm::AStar: {
