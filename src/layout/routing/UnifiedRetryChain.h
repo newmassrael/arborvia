@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <string>
 
@@ -31,6 +32,12 @@ public:
         int maxNodeEdgeCombinations = 16; ///< Maximum NodeEdge combinations (4x4)
         bool enableCooperativeReroute = true; ///< Enable CooperativeRerouter fallback
         float gridSize = 10.0f;           ///< Grid size for snap calculations
+        
+        /// Nodes that were moved (for soft constraint on endpoint modification)
+        /// If set, only endpoints connected to moved nodes can be modified.
+        /// Endpoints connected to unmoved nodes will be preserved.
+        /// If nullptr, all endpoints can be modified (legacy behavior).
+        const std::unordered_set<NodeId>* movedNodes = nullptr;
     };
 
     /// Result of retry chain execution

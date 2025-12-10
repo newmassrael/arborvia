@@ -121,7 +121,8 @@ bool PathCalculator::tryAStarPathfinding(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float effectiveGridSize,
-    std::unordered_map<EdgeId, EdgeLayout>& otherEdges) {
+    std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+    const std::unordered_set<NodeId>* movedNodes) {
 
     // Use UnifiedRetryChain for full retry sequence
     auto& retryChain = getRetryChain(effectiveGridSize);
@@ -130,6 +131,7 @@ bool PathCalculator::tryAStarPathfinding(
     config.maxSnapRetries = 9;
     config.enableCooperativeReroute = true;
     config.gridSize = effectiveGridSize;
+    config.movedNodes = movedNodes;
 
     auto result = retryChain.calculatePath(
         layout.id, layout, otherEdges, nodeLayouts, config);
@@ -165,7 +167,8 @@ void PathCalculator::recalculateBendPoints(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize,
-    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
+    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+    const std::unordered_set<NodeId>* movedNodes) {
 
     float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
 
@@ -188,7 +191,7 @@ void PathCalculator::recalculateBendPoints(
     if (otherEdges) {
         mutableOtherEdges = *otherEdges;
     }
-    tryAStarPathfinding(layout, nodeLayouts, effectiveGridSize, mutableOtherEdges);
+    tryAStarPathfinding(layout, nodeLayouts, effectiveGridSize, mutableOtherEdges, movedNodes);
 }
 
 } // namespace arborvia

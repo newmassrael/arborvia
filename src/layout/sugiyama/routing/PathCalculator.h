@@ -38,12 +38,14 @@ public:
      * @param nodeLayouts All node layouts for obstacle detection.
      * @param gridSize Grid size for snapping (0 uses default).
      * @param otherEdges Optional other edges to avoid overlapping with.
+     * @param movedNodes Set of nodes that were moved (for soft constraint on endpoint modification).
      */
     void recalculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges = nullptr);
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges = nullptr,
+        const std::unordered_set<NodeId>* movedNodes = nullptr);
 
     /**
      * @brief Check if an EdgeLayout has fresh (non-stale) bendPoints.
@@ -80,13 +82,15 @@ private:
      * @param nodeLayouts All node layouts.
      * @param effectiveGridSize Grid size for calculations.
      * @param otherEdges Other edges to avoid (may be modified by CooperativeRerouter).
+     * @param movedNodes Set of nodes that were moved (for soft constraint).
      * @return true if a valid path was found.
      */
     bool tryAStarPathfinding(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float effectiveGridSize,
-        std::unordered_map<EdgeId, EdgeLayout>& otherEdges);
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_set<NodeId>* movedNodes = nullptr);
 
     /// Initialize or return the unified retry chain
     UnifiedRetryChain& getRetryChain(float gridSize);

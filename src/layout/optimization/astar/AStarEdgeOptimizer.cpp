@@ -131,11 +131,75 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     result[presult.edgeId] = presult.best.layout;
                     assignedLayouts[presult.edgeId] = presult.best.layout;
                 } else {
-                    // Use original layout for failed edges
+                    // Mark as failed - will be processed in Phase 1.5
                     auto it = currentLayouts.find(presult.edgeId);
                     if (it != currentLayouts.end()) {
                         result[presult.edgeId] = it->second;
                         assignedLayouts[presult.edgeId] = it->second;
+                    }
+                }
+            }
+
+            // ===== PHASE 1.5: Sequential retry chain for failed edges =====
+            // Process failed edges (those with diagonal paths) using UnifiedRetryChain
+            // This must be done sequentially because CooperativeRerouter modifies other edges
+            std::vector<EdgeId> failedEdgesInParallel;
+            for (EdgeId edgeId : edges) {
+                if (resolvedEdges.count(edgeId)) continue;
+
+                auto it = result.find(edgeId);
+                if (it == result.end()) continue;
+
+                const EdgeLayout& layout = it->second;
+                if (layout.from == layout.to) continue;  // Skip self-loops
+
+                // Check if edge has diagonal path
+                bool hasDiagonal = false;
+                if (layout.bendPoints.empty()) {
+                    float dx = std::abs(layout.sourcePoint.x - layout.targetPoint.x);
+                    float dy = std::abs(layout.sourcePoint.y - layout.targetPoint.y);
+                    hasDiagonal = (dx > 1.0f && dy > 1.0f);
+                } else {
+                    float dx_src = std::abs(layout.sourcePoint.x - layout.bendPoints[0].position.x);
+                    float dy_src = std::abs(layout.sourcePoint.y - layout.bendPoints[0].position.y);
+                    const auto& lastBend = layout.bendPoints.back();
+                    float dx_tgt = std::abs(lastBend.position.x - layout.targetPoint.x);
+                    float dy_tgt = std::abs(lastBend.position.y - layout.targetPoint.y);
+                    hasDiagonal = (dx_src > 1.0f && dy_src > 1.0f) || (dx_tgt > 1.0f && dy_tgt > 1.0f);
+                }
+
+                if (hasDiagonal) {
+                    failedEdgesInParallel.push_back(edgeId);
+                }
+            }
+
+            // Process failed edges sequentially with UnifiedRetryChain
+            for (EdgeId edgeId : failedEdgesInParallel) {
+                auto it = result.find(edgeId);
+                if (it == result.end()) continue;
+
+                auto& retryChain = getRetryChain(gridSize);
+
+                UnifiedRetryChain::RetryConfig config;
+                config.maxSnapRetries = 9;
+                config.maxNodeEdgeCombinations = 16;
+                config.enableCooperativeReroute = true;
+                config.gridSize = gridSize;
+                config.movedNodes = movedNodes_.empty() ? nullptr : &movedNodes_;
+
+                auto retryResult = retryChain.calculatePath(
+                    edgeId, it->second, assignedLayouts, nodeLayouts, config);
+
+                if (retryResult.success) {
+                    result[edgeId] = retryResult.layout;
+                    assignedLayouts[edgeId] = retryResult.layout;
+
+                    // Update rerouted edges
+                    for (const auto& reroutedLayout : retryResult.reroutedEdges) {
+                        if (result.count(reroutedLayout.id)) {
+                            result[reroutedLayout.id] = reroutedLayout;
+                        }
+                        assignedLayouts[reroutedLayout.id] = reroutedLayout;
                     }
                 }
             }
@@ -193,9 +257,34 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     edgeId, baseLayout, assignedLayouts, nodeLayouts, forbiddenZones);
 
                 if (combinations.empty()) {
-                    failedEdges.push_back(edgeId);
-                    result[edgeId] = baseLayout;
-                    assignedLayouts[edgeId] = baseLayout;
+                    // All 16 combinations failed - use UnifiedRetryChain as fallback
+                    auto& retryChain = getRetryChain(gridSize);
+
+                    UnifiedRetryChain::RetryConfig config;
+                    config.maxSnapRetries = 9;
+                    config.maxNodeEdgeCombinations = 16;
+                    config.enableCooperativeReroute = true;
+                    config.gridSize = gridSize;
+                    config.movedNodes = movedNodes_.empty() ? nullptr : &movedNodes_;
+
+                    auto retryResult = retryChain.calculatePath(
+                        edgeId, baseLayout, assignedLayouts, nodeLayouts, config);
+
+                    if (retryResult.success) {
+                        result[edgeId] = retryResult.layout;
+                        assignedLayouts[edgeId] = retryResult.layout;
+                        // Update rerouted edges
+                        for (const auto& reroutedLayout : retryResult.reroutedEdges) {
+                            if (result.count(reroutedLayout.id)) {
+                                result[reroutedLayout.id] = reroutedLayout;
+                            }
+                            assignedLayouts[reroutedLayout.id] = reroutedLayout;
+                        }
+                    } else {
+                        failedEdges.push_back(edgeId);
+                        result[edgeId] = baseLayout;
+                        assignedLayouts[edgeId] = baseLayout;
+                    }
                     continue;
                 }
 
@@ -984,6 +1073,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         config.maxNodeEdgeCombinations = 0;  // Disable NodeEdge switching for regenerate
         config.enableCooperativeReroute = true;
         config.gridSize = gridSize;
+        config.movedNodes = movedNodes_.empty() ? nullptr : &movedNodes_;
 
         // Create mutable copy of edgeLayouts for retry chain
         std::unordered_map<EdgeId, EdgeLayout> otherEdges = edgeLayouts;
@@ -1065,6 +1155,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             config.maxNodeEdgeCombinations = 16;
             config.enableCooperativeReroute = true;
             config.gridSize = gridSize;
+            config.movedNodes = movedNodes_.empty() ? nullptr : &movedNodes_;
 
             auto result = retryChain.calculatePath(
                 dirtyId, layout, edgeLayouts, nodeLayouts, config);

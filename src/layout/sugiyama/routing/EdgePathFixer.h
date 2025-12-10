@@ -79,12 +79,14 @@ private:
      * @param nodeLayouts All node layouts.
      * @param effectiveGridSize Grid size for calculations.
      * @param otherEdges Other edges to avoid (can be nullptr).
+     * @param movedNodes Set of nodes that were moved (for soft constraint on endpoint modification).
      */
     void recalculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float effectiveGridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges);
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const std::unordered_set<NodeId>* movedNodes = nullptr);
 
     IPathFinder& pathFinder_;
     std::unique_ptr<UnifiedRetryChain> retryChain_;

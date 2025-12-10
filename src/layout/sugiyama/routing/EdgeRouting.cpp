@@ -116,11 +116,12 @@ void EdgeRouting::recalculateBendPoints(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize,
-    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
+    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+    const std::unordered_set<NodeId>* movedNodes) {
     
     // Delegate to PathCalculator which encapsulates bend point calculation logic
     PathCalculator calculator(activePathFinder());
-    calculator.recalculateBendPoints(layout, nodeLayouts, gridSize, otherEdges);
+    calculator.recalculateBendPoints(layout, nodeLayouts, gridSize, otherEdges, movedNodes);
 }
 
 std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
@@ -382,8 +383,9 @@ EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     auto recalcFunc = [this](EdgeLayout& layout,
                              const std::unordered_map<NodeId, NodeLayout>& nodes,
                              float gs,
-                             const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
-        recalculateBendPoints(layout, nodes, gs, otherEdges);
+                             const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+                             const std::unordered_set<NodeId>* moved) {
+        recalculateBendPoints(layout, nodes, gs, otherEdges, moved);
     };
 
     auto detectFixFunc = [this](EdgeId edgeId,
@@ -437,8 +439,9 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodes,
         float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
-        recalculateBendPoints(layout, nodes, gridSize, otherEdges);
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const std::unordered_set<NodeId>* moved) {
+        recalculateBendPoints(layout, nodes, gridSize, otherEdges, moved);
     };
 
     // Delegate to DragOptimizationHandler

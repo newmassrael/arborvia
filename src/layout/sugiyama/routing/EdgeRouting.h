@@ -251,11 +251,13 @@ private:
     /// @param nodeLayouts All node layouts for intersection checking
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
     /// @param otherEdges Other edge layouts to avoid overlapping with (optional)
+    /// @param movedNodes Set of nodes that were moved (for soft constraint on endpoint modification)
     void recalculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize = 0.0f,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges = nullptr);
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges = nullptr,
+        const std::unordered_set<NodeId>* movedNodes = nullptr);
 
     /// Count total connections on a node edge from all edge layouts
     /// @param edgeLayouts All edge layouts to count from

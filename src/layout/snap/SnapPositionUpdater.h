@@ -44,11 +44,13 @@ struct SnapUpdateResult {
 class SnapPositionUpdater {
 public:
     /// Function type for recalculating bend points
+    /// @param movedNodes Set of nodes that were moved (for soft constraint on endpoint modification)
     using RecalcBendPointsFunc = std::function<void(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges)>;
+        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+        const std::unordered_set<NodeId>* movedNodes)>;
 
     /// Function type for detecting and fixing diagonals
     using DetectFixDiagonalsFunc = std::function<bool(

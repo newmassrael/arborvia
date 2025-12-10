@@ -318,59 +318,13 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
         }
     }
 
-    // Save original endpoints for ALL processed edges BEFORE the loop
-    // This protects against cross-edge modifications during swap operations
-    struct SavedEndpoints {
-        Point sourcePoint;
-        Point targetPoint;
-        int sourceSnapIndex;
-        int targetSnapIndex;
-        bool srcNodeMoved;
-        bool tgtNodeMoved;
-    };
-    std::unordered_map<EdgeId, SavedEndpoints> originalEndpoints;
-
-    for (EdgeId edgeId : result.processedEdges) {
-        auto it = edgeLayouts.find(edgeId);
-        if (it == edgeLayouts.end()) continue;
-        bool srcMoved = movedNodes.empty() || movedNodes.count(it->second.from) > 0;
-        bool tgtMoved = movedNodes.empty() || movedNodes.count(it->second.to) > 0;
-        originalEndpoints[edgeId] = {
-            it->second.sourcePoint,
-            it->second.targetPoint,
-            it->second.sourceSnapIndex,
-            it->second.targetSnapIndex,
-            srcMoved,
-            tgtMoved
-        };
-    }
-
+    // Process each edge - movedNodes constraint is enforced at source level in UnifiedRetryChain
     for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
 
-        // Check if nodes moved
-        bool srcNodeMoved = movedNodes.empty() || movedNodes.count(it->second.from) > 0;
-        bool tgtNodeMoved = movedNodes.empty() || movedNodes.count(it->second.to) > 0;
-
-        // Save original endpoints for unmoved nodes
-        Point originalSourcePoint = it->second.sourcePoint;
-        Point originalTargetPoint = it->second.targetPoint;
-        int originalSourceSnapIdx = it->second.sourceSnapIndex;
-        int originalTargetSnapIdx = it->second.targetSnapIndex;
-
-        // 1. A* pathfinding
-        recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges);
-
-        // Restore endpoints for unmoved nodes (A* may have modified them)
-        if (!srcNodeMoved) {
-            it->second.sourcePoint = originalSourcePoint;
-            it->second.sourceSnapIndex = originalSourceSnapIdx;
-        }
-        if (!tgtNodeMoved) {
-            it->second.targetPoint = originalTargetPoint;
-            it->second.targetSnapIndex = originalTargetSnapIdx;
-        }
+        // 1. A* pathfinding (movedNodes constraint enforced at source level)
+        recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges, &movedNodes);
 
         // 2. Diagonal detection and fix
         bool needsRetry = false;
@@ -408,24 +362,12 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
             it->second.bendPoints.push_back({fullPath[i]});
         }
 
+
         // 4. Direction validation
         bool directionWasFixed = validateFixFunc_(it->second, effectiveGridSize);
         if (directionWasFixed) {
-            Point savedSourcePoint = it->second.sourcePoint;
-            Point savedTargetPoint = it->second.targetPoint;
-            int savedSourceSnapIdx = it->second.sourceSnapIndex;
-            int savedTargetSnapIdx = it->second.targetSnapIndex;
-
-            recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges);
-
-            if (!srcNodeMoved) {
-                it->second.sourcePoint = savedSourcePoint;
-                it->second.sourceSnapIndex = savedSourceSnapIdx;
-            }
-            if (!tgtNodeMoved) {
-                it->second.targetPoint = savedTargetPoint;
-                it->second.targetSnapIndex = savedTargetSnapIdx;
-            }
+            // Recalculate with movedNodes constraint enforced at source level
+            recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges, &movedNodes);
         }
 
         // 5. Update other edges
@@ -435,28 +377,8 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
         it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
     }
 
-    // Phase 4b: Restore endpoints for UNMOVED nodes only
-    // Swap operations are intentional for fixing diagonals - don't restore moved node endpoints
-    for (const auto& [edgeId, saved] : originalEndpoints) {
-        auto it = edgeLayouts.find(edgeId);
-        if (it == edgeLayouts.end()) continue;
-
-        if (!saved.srcNodeMoved) {
-            if (it->second.sourcePoint.x != saved.sourcePoint.x ||
-                it->second.sourcePoint.y != saved.sourcePoint.y) {
-                it->second.sourcePoint = saved.sourcePoint;
-                it->second.sourceSnapIndex = saved.sourceSnapIndex;
-            }
-        }
-
-        if (!saved.tgtNodeMoved) {
-            if (it->second.targetPoint.x != saved.targetPoint.x ||
-                it->second.targetPoint.y != saved.targetPoint.y) {
-                it->second.targetPoint = saved.targetPoint;
-                it->second.targetSnapIndex = saved.targetSnapIndex;
-            }
-        }
-    }
+    // Note: endpoint restore removed - movedNodes constraint is now enforced at source level
+    // in UnifiedRetryChain, ensuring endpoints are never modified for unmoved nodes.
 
     // Full re-route handling - delegate to optimizer instead of direct pathfinding
     if (result.needsFullReroute && !result.edgesNeedingReroute.empty() && edgeOptimizer) {

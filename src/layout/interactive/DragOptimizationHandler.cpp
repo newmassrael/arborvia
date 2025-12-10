@@ -263,7 +263,7 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             for (EdgeId edgeId : finalPenetratingEdges) {
                 auto it = edgeLayouts.find(edgeId);
                 if (it != edgeLayouts.end()) {
-                    recalcFunc_(it->second, nodeLayouts, gridSize, nullptr);
+                    recalcFunc_(it->second, nodeLayouts, gridSize, nullptr, &movedNodes);
                 }
             }
         }

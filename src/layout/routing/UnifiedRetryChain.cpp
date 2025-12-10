@@ -185,47 +185,46 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
 
     RetryResult result;
 
-    // Get source node
+    // Soft constraint: determine which endpoints can be modified
+    bool canModifySource = !config.movedNodes || config.movedNodes->count(originalLayout.from) > 0;
+    bool canModifyTarget = !config.movedNodes || config.movedNodes->count(originalLayout.to) > 0;
+
+    // If neither endpoint can be modified, skip this step
+    if (!canModifySource && !canModifyTarget) {
+#ifdef EDGE_ROUTING_DEBUG
+        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+                  << " skipping snap variations (neither node moved)" << std::endl;
+#endif
+        result.failureReason = "Neither node moved, snap variations skipped";
+        return result;
+    }
+
+    // Get nodes
     auto srcNodeIt = nodeLayouts.find(originalLayout.from);
-    if (srcNodeIt == nodeLayouts.end()) {
-        result.failureReason = "Source node not found";
+    auto tgtNodeIt = nodeLayouts.find(originalLayout.to);
+    if (srcNodeIt == nodeLayouts.end() || tgtNodeIt == nodeLayouts.end()) {
+        result.failureReason = "Source or target node not found";
         return result;
     }
     const NodeLayout& srcNode = srcNodeIt->second;
+    const NodeLayout& tgtNode = tgtNodeIt->second;
 
     // Use snap ratios from constant, limited by config
     const size_t maxRatios = std::min(
         SNAP_RATIOS.size(),
         static_cast<size_t>(config.maxSnapRetries));
 
-    for (size_t i = 0; i < maxRatios; ++i) {
-        float ratio = SNAP_RATIOS[i];
-        EdgeLayout workingLayout = originalLayout;
-
-        // Calculate new source snap point
-        int candidateIndex = 0;
-        Point newSnapPoint = calculateSnapPointForRatio(
-            srcNode, workingLayout.sourceEdge, ratio, &candidateIndex);
-
-        // Skip if same as original
-        float dx = std::abs(newSnapPoint.x - originalLayout.sourcePoint.x);
-        float dy = std::abs(newSnapPoint.y - originalLayout.sourcePoint.y);
-        if (dx < 1.0f && dy < 1.0f) {
-            continue;
-        }
-
-        workingLayout.sourcePoint = newSnapPoint;
-        workingLayout.sourceSnapIndex = candidateIndex;
-
-        // Step 3a: Try A* with new snap point
+    // Helper lambda to try A* and cooperative reroute
+    auto tryWithReroute = [&](EdgeLayout& workingLayout) -> bool {
+        // Try A*
         result.astarAttempts++;
         if (tryAStarPath(workingLayout, nodeLayouts, otherEdges)) {
             result.success = true;
             result.layout = workingLayout;
-            return result;
+            return true;
         }
 
-        // Step 3b: Try CooperativeRerouter
+        // Try CooperativeRerouter
         if (config.enableCooperativeReroute) {
             result.cooperativeAttempts++;
             auto coopResult = tryCooperativeReroute(edgeId, workingLayout, otherEdges, nodeLayouts);
@@ -233,16 +232,70 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
                 result.success = true;
                 result.layout = coopResult.layout;
                 result.reroutedEdges = std::move(coopResult.reroutedEdges);
-                return result;
+                return true;
             }
         }
 
-        // Step 3c: Try A* again (rerouter may have moved other edges)
+        // Try A* again (rerouter may have moved other edges)
         result.astarAttempts++;
         if (tryAStarPath(workingLayout, nodeLayouts, otherEdges)) {
             result.success = true;
             result.layout = workingLayout;
-            return result;
+            return true;
+        }
+
+        return false;
+    };
+
+    // Try source snap variations if allowed
+    if (canModifySource) {
+        for (size_t i = 0; i < maxRatios; ++i) {
+            float ratio = SNAP_RATIOS[i];
+            EdgeLayout workingLayout = originalLayout;
+
+            int candidateIndex = 0;
+            Point newSnapPoint = calculateSnapPointForRatio(
+                srcNode, workingLayout.sourceEdge, ratio, &candidateIndex);
+
+            // Skip if same as original
+            float dx = std::abs(newSnapPoint.x - originalLayout.sourcePoint.x);
+            float dy = std::abs(newSnapPoint.y - originalLayout.sourcePoint.y);
+            if (dx < 1.0f && dy < 1.0f) {
+                continue;
+            }
+
+            workingLayout.sourcePoint = newSnapPoint;
+            workingLayout.sourceSnapIndex = candidateIndex;
+
+            if (tryWithReroute(workingLayout)) {
+                return result;
+            }
+        }
+    }
+
+    // Try target snap variations if allowed
+    if (canModifyTarget) {
+        for (size_t i = 0; i < maxRatios; ++i) {
+            float ratio = SNAP_RATIOS[i];
+            EdgeLayout workingLayout = originalLayout;
+
+            int candidateIndex = 0;
+            Point newSnapPoint = calculateSnapPointForRatio(
+                tgtNode, workingLayout.targetEdge, ratio, &candidateIndex);
+
+            // Skip if same as original
+            float dx = std::abs(newSnapPoint.x - originalLayout.targetPoint.x);
+            float dy = std::abs(newSnapPoint.y - originalLayout.targetPoint.y);
+            if (dx < 1.0f && dy < 1.0f) {
+                continue;
+            }
+
+            workingLayout.targetPoint = newSnapPoint;
+            workingLayout.targetSnapIndex = candidateIndex;
+
+            if (tryWithReroute(workingLayout)) {
+                return result;
+            }
         }
     }
 
@@ -258,6 +311,20 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
     const RetryConfig& config) {
 
     RetryResult result;
+
+    // Soft constraint: determine which endpoints can be modified
+    bool canModifySource = !config.movedNodes || config.movedNodes->count(originalLayout.from) > 0;
+    bool canModifyTarget = !config.movedNodes || config.movedNodes->count(originalLayout.to) > 0;
+
+    // If neither endpoint can be modified, skip this step
+    if (!canModifySource && !canModifyTarget) {
+#ifdef EDGE_ROUTING_DEBUG
+        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+                  << " skipping NodeEdge switch (neither node moved)" << std::endl;
+#endif
+        result.failureReason = "Neither node moved, NodeEdge switch skipped";
+        return result;
+    }
 
     auto srcNodeIt = nodeLayouts.find(originalLayout.from);
     auto tgtNodeIt = nodeLayouts.find(originalLayout.to);
@@ -277,10 +344,17 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
 
     int combinationsTried = 0;
 
-    for (NodeEdge srcEdge : allEdges) {
+    // If source can't be modified, only iterate original sourceEdge
+    // If target can't be modified, only iterate original targetEdge
+    auto srcEdgesToTry = canModifySource ? std::vector<NodeEdge>(allEdges.begin(), allEdges.end())
+                                          : std::vector<NodeEdge>{originalLayout.sourceEdge};
+    auto tgtEdgesToTry = canModifyTarget ? std::vector<NodeEdge>(allEdges.begin(), allEdges.end())
+                                          : std::vector<NodeEdge>{originalLayout.targetEdge};
+
+    for (NodeEdge srcEdge : srcEdgesToTry) {
         if (combinationsTried >= config.maxNodeEdgeCombinations) break;
 
-        for (NodeEdge tgtEdge : allEdges) {
+        for (NodeEdge tgtEdge : tgtEdgesToTry) {
             if (combinationsTried >= config.maxNodeEdgeCombinations) break;
             combinationsTried++;
 
@@ -292,13 +366,20 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             int srcCandidateCount = GridSnapCalculator::getCandidateCount(srcNode, srcEdge, gridSize);
             int tgtCandidateCount = GridSnapCalculator::getCandidateCount(tgtNode, tgtEdge, gridSize);
 
-            // Try center positions for this NodeEdge combination
-            int srcCandidateIdx = 0;
-            int tgtCandidateIdx = 0;
-            Point newSrc = GridSnapCalculator::calculateSnapPosition(
-                srcNode, srcEdge, 0, std::max(1, srcCandidateCount), gridSize, &srcCandidateIdx);
-            Point newTgt = GridSnapCalculator::calculateSnapPosition(
-                tgtNode, tgtEdge, 0, std::max(1, tgtCandidateCount), gridSize, &tgtCandidateIdx);
+            // Calculate new positions only for modifiable endpoints
+            int srcCandidateIdx = originalLayout.sourceSnapIndex;
+            int tgtCandidateIdx = originalLayout.targetSnapIndex;
+            Point newSrc = originalLayout.sourcePoint;
+            Point newTgt = originalLayout.targetPoint;
+
+            if (canModifySource) {
+                newSrc = GridSnapCalculator::calculateSnapPosition(
+                    srcNode, srcEdge, 0, std::max(1, srcCandidateCount), gridSize, &srcCandidateIdx);
+            }
+            if (canModifyTarget) {
+                newTgt = GridSnapCalculator::calculateSnapPosition(
+                    tgtNode, tgtEdge, 0, std::max(1, tgtCandidateCount), gridSize, &tgtCandidateIdx);
+            }
 
             EdgeLayout workingLayout = originalLayout;
             workingLayout.sourceEdge = srcEdge;

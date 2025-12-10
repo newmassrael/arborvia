@@ -224,11 +224,14 @@ void LayoutUtils::updateEdgePositions(
     }
     
     // Recalculate edges passing through moved nodes' forbidden zones
+    // These edges are NOT connected to moved nodes, so don't apply endpoint constraints
+    // (passing empty set allows free rerouting to find valid paths around moved nodes)
     if (!edgesToRecalculate.empty()) {
-        std::cout << "[LayoutUtils] Re-routing " << edgesToRecalculate.size() 
+        std::cout << "[LayoutUtils] Re-routing " << edgesToRecalculate.size()
                   << " edges using A*" << std::endl;
+        std::unordered_set<NodeId> emptySet;  // No endpoint constraints for pass-through edges
         routing.updateEdgeRoutingWithOptimization(
-            edgeLayouts, nodeLayouts, edgesToRecalculate, postDropOptions, movedNodes);
+            edgeLayouts, nodeLayouts, edgesToRecalculate, postDropOptions, emptySet);
     }
 }
 

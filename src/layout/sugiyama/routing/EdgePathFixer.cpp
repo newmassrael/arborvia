@@ -3,6 +3,7 @@
 #include "../../routing/UnifiedRetryChain.h"
 #include "PathCleanup.h"
 #include <cmath>
+#include <iostream>
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -30,10 +31,11 @@ void EdgePathFixer::recalculateBendPoints(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float effectiveGridSize,
-    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
+    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
+    const std::unordered_set<NodeId>* movedNodes) {
 
     PathCalculator calculator(pathFinder_);
-    calculator.recalculateBendPoints(layout, nodeLayouts, effectiveGridSize, otherEdges);
+    calculator.recalculateBendPoints(layout, nodeLayouts, effectiveGridSize, otherEdges, movedNodes);
 }
 
 bool EdgePathFixer::detectAndFixDiagonals(
@@ -97,6 +99,7 @@ bool EdgePathFixer::detectAndFixDiagonals(
     config.maxNodeEdgeCombinations = 16;
     config.enableCooperativeReroute = true;
     config.gridSize = effectiveGridSize;
+    config.movedNodes = &movedNodes;
 
     auto result = retryChain.calculatePath(
         edgeId, layout, edgeLayouts, nodeLayouts, config);
