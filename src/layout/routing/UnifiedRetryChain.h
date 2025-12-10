@@ -1,0 +1,134 @@
+#pragma once
+
+#include "arborvia/layout/api/IPathFinder.h"
+#include "arborvia/layout/config/LayoutResult.h"
+#include "CooperativeRerouter.h"
+
+#include <memory>
+#include <unordered_map>
+#include <vector>
+#include <string>
+
+namespace arborvia {
+
+/// Unified retry chain for A* pathfinding with CooperativeRerouter fallback
+///
+/// Retry sequence:
+/// 1. A* attempt with current snap points
+/// 2. CooperativeRerouter (reroute blocking edges)
+/// 3. Snap point variation + A* + rerouter (for each snap position)
+/// 4. NodeEdge switch + rerouter
+/// 5. Final exhaustive A*
+///
+/// This class consolidates retry logic from PathCalculator and EdgePathFixer
+/// into a single, unified retry chain. It is designed to be used by the library
+/// API to automatically handle A* pathfinding failures.
+class UnifiedRetryChain {
+public:
+    /// Configuration for retry behavior
+    struct RetryConfig {
+        int maxSnapRetries = 9;           ///< Number of snap point variations to try
+        int maxNodeEdgeCombinations = 16; ///< Maximum NodeEdge combinations (4x4)
+        bool enableCooperativeReroute = true; ///< Enable CooperativeRerouter fallback
+        float gridSize = 10.0f;           ///< Grid size for snap calculations
+    };
+
+    /// Result of retry chain execution
+    struct RetryResult {
+        bool success = false;                          ///< Whether path was found
+        EdgeLayout layout;                             ///< Final edge layout (with bend points)
+        std::vector<EdgeLayout> reroutedEdges;         ///< Edges rerouted by CooperativeRerouter
+        int astarAttempts = 0;                         ///< Number of A* attempts made
+        int cooperativeAttempts = 0;                   ///< Number of CooperativeRerouter attempts
+        std::string failureReason;                     ///< Reason for failure (if any)
+    };
+
+    /// Constructor
+    /// @param pathFinder A* pathfinder implementation
+    /// @param gridSize Grid size for snap calculations
+    UnifiedRetryChain(
+        std::shared_ptr<IPathFinder> pathFinder,
+        float gridSize);
+
+    ~UnifiedRetryChain();
+
+    /// Main entry point: Calculate path with full retry chain
+    ///
+    /// Executes the following retry sequence:
+    /// 1. Basic A* attempt with current snap points
+    /// 2. CooperativeRerouter (if A* fails)
+    /// 3. For each snap position: A* → CooperativeRerouter → A*
+    /// 4. NodeEdge switch with rerouter attempts
+    ///
+    /// @param edgeId ID of the edge being routed
+    /// @param layout Current edge layout (snap points fixed)
+    /// @param otherEdges Other edges in the layout (may be modified by rerouter)
+    /// @param nodeLayouts Node positions
+    /// @param config Retry configuration
+    /// @return Result containing success status, layout, and rerouted edges
+    RetryResult calculatePath(
+        EdgeId edgeId,
+        const EdgeLayout& layout,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const RetryConfig& config);
+
+    /// @overload Convenience overload with default config
+    RetryResult calculatePath(
+        EdgeId edgeId,
+        const EdgeLayout& layout,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Update grid size
+    void setGridSize(float gridSize);
+
+private:
+    std::shared_ptr<IPathFinder> pathFinder_;
+    std::unique_ptr<CooperativeRerouter> cooperativeRerouter_;
+    float gridSize_;
+
+    /// Step 1: Basic A* attempt
+    /// @return true if path found, false otherwise
+    bool tryAStarPath(
+        EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges);
+
+    /// Step 2: CooperativeRerouter attempt
+    CooperativeRerouter::RerouteResult tryCooperativeReroute(
+        EdgeId edgeId,
+        const EdgeLayout& layout,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
+    /// Step 3: Snap point variation with A* + rerouter
+    /// For each snap ratio: A* → CooperativeRerouter → A*
+    RetryResult trySnapPointVariations(
+        EdgeId edgeId,
+        const EdgeLayout& originalLayout,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const RetryConfig& config);
+
+    /// Step 4: NodeEdge switch with rerouter attempts
+    /// Tries all 16 NodeEdge combinations with A* + CooperativeRerouter
+    RetryResult tryNodeEdgeSwitch(
+        EdgeId edgeId,
+        const EdgeLayout& originalLayout,
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const RetryConfig& config);
+
+    /// Calculate snap point position for a given ratio
+    Point calculateSnapPointForRatio(
+        const NodeLayout& node,
+        NodeEdge edge,
+        float ratio,
+        int* outCandidateIndex = nullptr) const;
+
+    /// Get effective grid size (handles <= 0 case)
+    float effectiveGridSize() const;
+};
+
+}  // namespace arborvia

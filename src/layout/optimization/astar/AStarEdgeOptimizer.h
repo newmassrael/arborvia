@@ -12,8 +12,9 @@
 
 namespace arborvia {
 
-// Forward declaration
+// Forward declarations
 class ObstacleMap;
+class UnifiedRetryChain;
 
 
 /// A* based edge routing optimizer
@@ -34,6 +35,9 @@ public:
     explicit AStarEdgeOptimizer(
         std::shared_ptr<IPathFinder> pathFinder = nullptr,
         float gridSize = 0.0f);
+
+    /// Destructor (defined in .cpp for unique_ptr with forward-declared type)
+    ~AStarEdgeOptimizer();
 
     /// Optimize edge routing by evaluating all 16 combinations per edge
     /// Uses A* pathfinding for each combination to find optimal paths
@@ -68,8 +72,13 @@ public:
 
 private:
     std::shared_ptr<IPathFinder> pathFinder_;
+    std::unique_ptr<UnifiedRetryChain> retryChain_;
     float gridSize_ = 0.0f;
+    float lastRetryChainGridSize_ = 0.0f;
     bool parallelEnabled_ = true;
+
+    /// Initialize or return the unified retry chain
+    UnifiedRetryChain& getRetryChain(float gridSize);
     
     // Constraint state inherited from IEdgeOptimizer:
     // - originalLayouts_, movedNodes_, isNodeFixed(), setConstraintState()
@@ -243,6 +252,22 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::vector<ForbiddenZone>& forbiddenZones);
+
+    /// Resolve all overlapping pairs using resolveOverlappingPair + CooperativeRerouter fallback
+    /// @param overlappingPairs Pairs of overlapping edge IDs
+    /// @param result Map to update with resolved layouts
+    /// @param assignedLayouts All assigned layouts (updated with resolved layouts)
+    /// @param nodeLayouts Node positions
+    /// @param forbiddenZones Pre-calculated forbidden zones
+    /// @param resolvedEdges Optional set to track which edges were resolved (for parallel mode)
+    /// @return true if any overlaps were resolved
+    bool resolveAllOverlaps(
+        const std::vector<std::pair<EdgeId, EdgeId>>& overlappingPairs,
+        std::unordered_map<EdgeId, EdgeLayout>& result,
+        std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<ForbiddenZone>& forbiddenZones,
+        std::unordered_set<EdgeId>* resolvedEdges = nullptr);
 };
 
 

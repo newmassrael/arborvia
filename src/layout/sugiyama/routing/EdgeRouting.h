@@ -39,43 +39,6 @@ struct ChannelRegion {
     std::vector<EdgeId> edges;  // Edges routed through this region
 };
 
-/// Configuration for A* retry when initial pathfinding fails
-struct SnapRetryConfig {
-    int maxSnapRetries = 5;              ///< Maximum snap index attempts per NodeEdge
-    bool enableNodeEdgeSwitch = true;    ///< Allow switching to different NodeEdge
-    bool preserveDirections = false;     ///< If true, disables NodeEdge switching
-};
-
-/// Result of A* retry attempt
-struct SnapRetryResult {
-    bool success = false;
-    std::vector<BendPoint> bendPoints;
-
-    // Snap Index change info
-    bool snapIndexChanged = false;
-    int newSourceSnapIndex = -1;
-    int newTargetSnapIndex = -1;
-    Point newSourcePoint;  // Exact source point used during retry
-
-    // Neighbor Adjustment info
-    bool neighborAdjusted = false;
-    EdgeId adjustedNeighborId = 0;
-
-    // NodeEdge change info
-    bool nodeEdgeChanged = false;
-    NodeEdge newSourceEdge = NodeEdge::Bottom;
-    NodeEdge newTargetEdge = NodeEdge::Top;
-
-    // Full re-route flag: when true, all affected edges need re-routing
-    // because retry was done without other edge segments as obstacles
-    bool needsFullReroute = false;
-
-    // Debug info
-    int snapRetryCount = 0;
-    int neighborAdjustCount = 0;
-    int edgeCombinationCount = 0;
-};
-
 /// Routes edges with appropriate bend points
 class EdgeRouting {
 public:

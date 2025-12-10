@@ -2,10 +2,14 @@
 
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace arborvia {
+
+// Forward declaration
+class UnifiedRetryChain;
 
 /**
  * @brief Calculates bend points for edge paths using A* pathfinding.
@@ -20,6 +24,9 @@ public:
      * @param pathFinder Reference to the pathfinder to use for A* calculations.
      */
     explicit PathCalculator(IPathFinder& pathFinder);
+
+    /// Destructor (defined in .cpp for unique_ptr with forward-declared type)
+    ~PathCalculator();
 
     /**
      * @brief Recalculate bend points for an edge layout using A* pathfinding.
@@ -68,20 +75,25 @@ private:
 
     /**
      * @brief Try A* pathfinding with multiple snap position attempts.
-     * 
+     *
      * @param layout The edge layout to update.
      * @param nodeLayouts All node layouts.
      * @param effectiveGridSize Grid size for calculations.
-     * @param otherEdges Other edges to avoid.
+     * @param otherEdges Other edges to avoid (may be modified by CooperativeRerouter).
      * @return true if a valid path was found.
      */
     bool tryAStarPathfinding(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float effectiveGridSize,
-        const std::unordered_map<EdgeId, EdgeLayout>* otherEdges);
+        std::unordered_map<EdgeId, EdgeLayout>& otherEdges);
+
+    /// Initialize or return the unified retry chain
+    UnifiedRetryChain& getRetryChain(float gridSize);
 
     IPathFinder& pathFinder_;
+    std::unique_ptr<UnifiedRetryChain> retryChain_;
+    float lastGridSize_ = 0.0f;
 };
 
 } // namespace arborvia

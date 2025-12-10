@@ -2,10 +2,14 @@
 
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace arborvia {
+
+// Forward declaration
+class UnifiedRetryChain;
 
 /**
  * @brief Fixes edge path issues including diagonal segments and direction constraint violations.
@@ -23,6 +27,9 @@ public:
      * @param pathFinder Reference to the pathfinder for A* calculations.
      */
     explicit EdgePathFixer(IPathFinder& pathFinder);
+
+    /// Destructor (defined in .cpp for unique_ptr with forward-declared type)
+    ~EdgePathFixer();
 
     /**
      * @brief Detect and fix diagonal segments in an edge layout.
@@ -80,6 +87,11 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>* otherEdges);
 
     IPathFinder& pathFinder_;
+    std::unique_ptr<UnifiedRetryChain> retryChain_;
+    float lastGridSize_ = 0.0f;
+
+    /// Initialize or return the unified retry chain
+    UnifiedRetryChain& getRetryChain(float gridSize);
 };
 
 } // namespace arborvia

@@ -38,7 +38,6 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/optimization/BuiltinPenalties.cpp
     src/layout/optimization/astar/AStarEdgeOptimizer.cpp
     src/layout/optimization/astar/AStarOptimizerFactory.cpp
-    src/layout/optimization/astar/AStarRetrySystem.cpp
     src/layout/optimization/geometric/GeometricEdgeOptimizer.cpp
     src/layout/optimization/geometric/GeometricOptimizerFactory.cpp
 
@@ -63,6 +62,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/routing/OrthogonalRouter.cpp
     src/layout/routing/EdgeNudger.cpp
     src/layout/routing/CooperativeRerouter.cpp
+    src/layout/routing/UnifiedRetryChain.cpp
 )
 
 set(ARBORVIA_LAYOUT_HEADERS

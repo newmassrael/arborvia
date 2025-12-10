@@ -1,10 +1,8 @@
 #include "EdgePathFixer.h"
 #include "PathCalculator.h"
-#include "../../snap/GridSnapCalculator.h"
-#include "../../pathfinding/ObstacleMap.h"
+#include "../../routing/UnifiedRetryChain.h"
 #include "PathCleanup.h"
 #include <cmath>
-#include <array>
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -14,6 +12,18 @@ namespace arborvia {
 
 EdgePathFixer::EdgePathFixer(IPathFinder& pathFinder)
     : pathFinder_(pathFinder) {
+}
+
+EdgePathFixer::~EdgePathFixer() = default;
+
+UnifiedRetryChain& EdgePathFixer::getRetryChain(float gridSize) {
+    if (!retryChain_ || lastGridSize_ != gridSize) {
+        // Create shared_ptr with null deleter (we don't own pathFinder_)
+        auto pathFinderPtr = std::shared_ptr<IPathFinder>(&pathFinder_, [](IPathFinder*){});
+        retryChain_ = std::make_unique<UnifiedRetryChain>(pathFinderPtr, gridSize);
+        lastGridSize_ = gridSize;
+    }
+    return *retryChain_;
 }
 
 void EdgePathFixer::recalculateBendPoints(
@@ -32,7 +42,7 @@ bool EdgePathFixer::detectAndFixDiagonals(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::unordered_set<NodeId>& movedNodes,
     float effectiveGridSize,
-    std::unordered_map<EdgeId, EdgeLayout>& otherEdges) {
+    std::unordered_map<EdgeId, EdgeLayout>& /* otherEdges */) {
 
     auto shouldUpdateNode = [&movedNodes](NodeId nid) -> bool {
         return movedNodes.empty() || movedNodes.count(nid) > 0;
@@ -44,6 +54,7 @@ bool EdgePathFixer::detectAndFixDiagonals(
     EdgeLayout& layout = it->second;
     bool needsRetry = false;
 
+    // Diagonal detection logic
     if (layout.bendPoints.empty()) {
         float dx = std::abs(layout.sourcePoint.x - layout.targetPoint.x);
         float dy = std::abs(layout.sourcePoint.y - layout.targetPoint.y);
@@ -75,242 +86,45 @@ bool EdgePathFixer::detectAndFixDiagonals(
         return true;  // Skip retry for stationary nodes
     }
 
-    // Save original state
-    Point originalSourcePoint = layout.sourcePoint;
-    Point originalTargetPoint = layout.targetPoint;
-    int originalSourceSnapIndex = layout.sourceSnapIndex;
-    int originalTargetSnapIndex = layout.targetSnapIndex;
-    std::vector<BendPoint> originalBendPoints = layout.bendPoints;
-    NodeEdge origSrcEdge = layout.sourceEdge;
-    NodeEdge origTgtEdge = layout.targetEdge;
+    // Save original state for rollback
+    EdgeLayout originalLayout = layout;
 
-    bool swapSucceeded = false;
+    // Use UnifiedRetryChain for full retry sequence
+    auto& retryChain = getRetryChain(effectiveGridSize);
 
-    // Try source-side swaps
-    std::vector<EdgeId> srcSwapCandidates;
-    for (const auto& [otherEdgeId, otherLayout] : edgeLayouts) {
-        if (otherEdgeId == edgeId) continue;
-        if (otherLayout.from == layout.from && otherLayout.sourceEdge == layout.sourceEdge) {
-            // Only swap with edges whose source node moved (if movedNodes is specified)
-            if (!movedNodes.empty() && movedNodes.count(otherLayout.from) == 0) {
-                continue;  // Skip - other edge's source node didn't move
-            }
-            srcSwapCandidates.push_back(otherEdgeId);
+    UnifiedRetryChain::RetryConfig config;
+    config.maxSnapRetries = 9;
+    config.maxNodeEdgeCombinations = 16;
+    config.enableCooperativeReroute = true;
+    config.gridSize = effectiveGridSize;
+
+    auto result = retryChain.calculatePath(
+        edgeId, layout, edgeLayouts, nodeLayouts, config);
+
+    if (result.success) {
+        layout = result.layout;
+
+        // Update other edges if they were rerouted
+        for (const auto& reroutedLayout : result.reroutedEdges) {
+            edgeLayouts[reroutedLayout.id] = reroutedLayout;
         }
+
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[EdgePathFixer] Edge " << edgeId << " fixed via UnifiedRetryChain"
+                  << " astarAttempts=" << result.astarAttempts
+                  << " cooperativeAttempts=" << result.cooperativeAttempts << std::endl;
+#endif
+        return true;
     }
 
-    for (EdgeId swapWithId : srcSwapCandidates) {
-        if (swapSucceeded) break;
-        auto swapIt = edgeLayouts.find(swapWithId);
-        if (swapIt == edgeLayouts.end()) continue;
+    // Retry failed - restore original layout
+    layout = originalLayout;
 
-        Point swapOriginalSourcePoint = swapIt->second.sourcePoint;
-        int swapOriginalSnapIndex = swapIt->second.sourceSnapIndex;
-        std::vector<BendPoint> swapOriginalBendPoints = swapIt->second.bendPoints;
-        // Also save target points - recalculateBendPoints might modify them
-        Point layoutOriginalTargetPoint = layout.targetPoint;
-        int layoutOriginalTargetSnapIndex = layout.targetSnapIndex;
-        Point swapOriginalTargetPoint = swapIt->second.targetPoint;
-        int swapOriginalTargetSnapIndex = swapIt->second.targetSnapIndex;
-
-        std::swap(layout.sourcePoint, swapIt->second.sourcePoint);
-        std::swap(layout.sourceSnapIndex, swapIt->second.sourceSnapIndex);
-
-        recalculateBendPoints(layout, nodeLayouts, effectiveGridSize, nullptr);
-        recalculateBendPoints(swapIt->second, nodeLayouts, effectiveGridSize, nullptr);
-
-        // Restore target points for unmoved target nodes (recalculateBendPoints may have modified them)
-        if (!movedNodes.empty()) {
-            if (movedNodes.count(layout.to) == 0) {
-                layout.targetPoint = layoutOriginalTargetPoint;
-                layout.targetSnapIndex = layoutOriginalTargetSnapIndex;
-            }
-            if (movedNodes.count(swapIt->second.to) == 0) {
-                swapIt->second.targetPoint = swapOriginalTargetPoint;
-                swapIt->second.targetSnapIndex = swapOriginalTargetSnapIndex;
-            }
-        }
-
-        bool stillDiagonal = false;
-        if (layout.bendPoints.empty()) {
-            float dx = std::abs(layout.sourcePoint.x - layout.targetPoint.x);
-            float dy = std::abs(layout.sourcePoint.y - layout.targetPoint.y);
-            stillDiagonal = (dx > 1.0f && dy > 1.0f);
-        }
-
-        bool swapBecameDiagonal = false;
-        if (swapIt->second.bendPoints.empty()) {
-            float dx = std::abs(swapIt->second.sourcePoint.x - swapIt->second.targetPoint.x);
-            float dy = std::abs(swapIt->second.sourcePoint.y - swapIt->second.targetPoint.y);
-            swapBecameDiagonal = (dx > 1.0f && dy > 1.0f);
-        }
-
-        if (!stillDiagonal && !swapBecameDiagonal) {
-            swapSucceeded = true;
-        } else {
-            layout.sourcePoint = originalSourcePoint;
-            layout.sourceSnapIndex = originalSourceSnapIndex;
-            layout.bendPoints = originalBendPoints;
-            swapIt->second.sourcePoint = swapOriginalSourcePoint;
-            swapIt->second.sourceSnapIndex = swapOriginalSnapIndex;
-            swapIt->second.bendPoints = swapOriginalBendPoints;
-        }
-    }
-
-    // Try target-side swaps if source swaps failed
-    if (!swapSucceeded) {
-        std::vector<EdgeId> tgtSwapCandidates;
-        for (const auto& [otherEdgeId, otherLayout] : edgeLayouts) {
-            if (otherEdgeId == edgeId) continue;
-            if (otherLayout.to == layout.to && otherLayout.targetEdge == layout.targetEdge) {
-                // Only swap with edges whose target node moved (if movedNodes is specified)
-                if (!movedNodes.empty() && movedNodes.count(otherLayout.to) == 0) {
-                    continue;  // Skip - other edge's target node didn't move
-                }
-                tgtSwapCandidates.push_back(otherEdgeId);
-            }
-        }
-
-        for (EdgeId swapWithId : tgtSwapCandidates) {
-            if (swapSucceeded) break;
-            auto swapIt = edgeLayouts.find(swapWithId);
-            if (swapIt == edgeLayouts.end()) continue;
-
-            Point swapOriginalTargetPoint = swapIt->second.targetPoint;
-            int swapOriginalSnapIndex = swapIt->second.targetSnapIndex;
-            std::vector<BendPoint> swapOriginalBendPoints = swapIt->second.bendPoints;
-            // Also save source points - recalculateBendPoints might modify them
-            Point layoutOriginalSourcePoint = layout.sourcePoint;
-            int layoutOriginalSourceSnapIndex = layout.sourceSnapIndex;
-            Point swapOriginalSourcePoint = swapIt->second.sourcePoint;
-            int swapOriginalSourceSnapIndex = swapIt->second.sourceSnapIndex;
-
-            std::swap(layout.targetPoint, swapIt->second.targetPoint);
-            std::swap(layout.targetSnapIndex, swapIt->second.targetSnapIndex);
-
-            recalculateBendPoints(layout, nodeLayouts, effectiveGridSize, nullptr);
-            recalculateBendPoints(swapIt->second, nodeLayouts, effectiveGridSize, nullptr);
-
-            // Restore source points for unmoved source nodes (recalculateBendPoints may have modified them)
-            if (!movedNodes.empty()) {
-                if (movedNodes.count(layout.from) == 0) {
-                    layout.sourcePoint = layoutOriginalSourcePoint;
-                    layout.sourceSnapIndex = layoutOriginalSourceSnapIndex;
-                }
-                if (movedNodes.count(swapIt->second.from) == 0) {
-                    swapIt->second.sourcePoint = swapOriginalSourcePoint;
-                    swapIt->second.sourceSnapIndex = swapOriginalSourceSnapIndex;
-                }
-            }
-
-            bool stillDiagonal = false;
-            if (layout.bendPoints.empty()) {
-                float dx = std::abs(layout.sourcePoint.x - layout.targetPoint.x);
-                float dy = std::abs(layout.sourcePoint.y - layout.targetPoint.y);
-                stillDiagonal = (dx > 1.0f && dy > 1.0f);
-            }
-
-            bool swapBecameDiagonal = false;
-            if (swapIt->second.bendPoints.empty()) {
-                float dx = std::abs(swapIt->second.sourcePoint.x - swapIt->second.targetPoint.x);
-                float dy = std::abs(swapIt->second.sourcePoint.y - swapIt->second.targetPoint.y);
-                swapBecameDiagonal = (dx > 1.0f && dy > 1.0f);
-            }
-
-            if (!stillDiagonal && !swapBecameDiagonal) {
-                swapSucceeded = true;
-            } else {
-                layout.targetPoint = originalTargetPoint;
-                layout.targetSnapIndex = originalTargetSnapIndex;
-                layout.bendPoints = originalBendPoints;
-                swapIt->second.targetPoint = swapOriginalTargetPoint;
-                swapIt->second.targetSnapIndex = swapOriginalSnapIndex;
-                swapIt->second.bendPoints = swapOriginalBendPoints;
-            }
-        }
-    }
-
-    // Exhaustive NodeEdge search if swaps failed
-    if (!swapSucceeded) {
-        auto srcNodeIt = nodeLayouts.find(layout.from);
-        auto tgtNodeIt = nodeLayouts.find(layout.to);
-
-        if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
-            const auto& srcNode = srcNodeIt->second;
-            const auto& tgtNode = tgtNodeIt->second;
-
-            constexpr std::array<NodeEdge, 4> allEdges = {
-                NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
-            };
-
-            bool exhaustiveSuccess = false;
-
-            for (NodeEdge srcEdge : allEdges) {
-                if (exhaustiveSuccess) break;
-                for (NodeEdge tgtEdge : allEdges) {
-                    if (exhaustiveSuccess) break;
-
-                    int srcCandidateCount = GridSnapCalculator::getCandidateCount(srcNode, srcEdge, effectiveGridSize);
-                    int tgtCandidateCount = GridSnapCalculator::getCandidateCount(tgtNode, tgtEdge, effectiveGridSize);
-
-                    for (int srcConnIdx = 0; srcConnIdx < std::max(1, srcCandidateCount) && !exhaustiveSuccess; ++srcConnIdx) {
-                        for (int tgtConnIdx = 0; tgtConnIdx < std::max(1, tgtCandidateCount) && !exhaustiveSuccess; ++tgtConnIdx) {
-                            int srcCandidateIdx = 0, tgtCandidateIdx = 0;
-                            Point newSrc = GridSnapCalculator::calculateSnapPosition(srcNode, srcEdge, srcConnIdx, std::max(1, srcCandidateCount), effectiveGridSize, &srcCandidateIdx);
-                            Point newTgt = GridSnapCalculator::calculateSnapPosition(tgtNode, tgtEdge, tgtConnIdx, std::max(1, tgtCandidateCount), effectiveGridSize, &tgtCandidateIdx);
-
-                            if (srcEdge == origSrcEdge && tgtEdge == origTgtEdge &&
-                                srcCandidateIdx == originalSourceSnapIndex && tgtCandidateIdx == originalTargetSnapIndex) {
-                                continue;
-                            }
-
-                            ObstacleMap obstacles;
-                            obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);
-
-                            GridPoint startGrid = obstacles.pixelToGrid(newSrc);
-                            GridPoint goalGrid = obstacles.pixelToGrid(newTgt);
-
-                            PathResult pathResult = pathFinder_.findPath(
-                                startGrid, goalGrid, obstacles,
-                                layout.from, layout.to,
-                                srcEdge, tgtEdge,
-                                {}, {});
-
-                            if (pathResult.found && pathResult.path.size() >= 2) {
-                                layout.sourceEdge = srcEdge;
-                                layout.targetEdge = tgtEdge;
-                                layout.sourcePoint = newSrc;
-                                layout.targetPoint = newTgt;
-                                layout.sourceSnapIndex = srcCandidateIdx;
-                                layout.targetSnapIndex = tgtCandidateIdx;
-                                layout.bendPoints.clear();
-
-                                for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-                                    const auto& gp = pathResult.path[i];
-                                    Point pixelPoint = obstacles.gridToPixel(gp.x, gp.y);
-                                    layout.bendPoints.push_back(BendPoint{pixelPoint, false});
-                                }
-                                exhaustiveSuccess = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (!exhaustiveSuccess) {
-                layout.sourcePoint = originalSourcePoint;
-                layout.targetPoint = originalTargetPoint;
-                layout.sourceSnapIndex = originalSourceSnapIndex;
-                layout.targetSnapIndex = originalTargetSnapIndex;
-                layout.sourceEdge = origSrcEdge;
-                layout.targetEdge = origTgtEdge;
-                layout.bendPoints = originalBendPoints;
-                return false;
-            }
-        }
-    }
-
-    return true;
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[EdgePathFixer] Edge " << edgeId << " fix FAILED: "
+              << result.failureReason << std::endl;
+#endif
+    return false;
 }
 
 bool EdgePathFixer::validateAndFixDirectionConstraints(

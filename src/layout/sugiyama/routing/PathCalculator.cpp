@@ -1,5 +1,6 @@
 #include "PathCalculator.h"
 #include "../../pathfinding/ObstacleMap.h"
+#include "../../routing/UnifiedRetryChain.h"
 #include "EdgeRoutingUtils.h"
 #include "arborvia/layout/config/LayoutOptions.h"
 #include "arborvia/core/GeometryUtils.h"
@@ -14,6 +15,18 @@ namespace arborvia {
 
 PathCalculator::PathCalculator(IPathFinder& pathFinder)
     : pathFinder_(pathFinder) {
+}
+
+PathCalculator::~PathCalculator() = default;
+
+UnifiedRetryChain& PathCalculator::getRetryChain(float gridSize) {
+    if (!retryChain_ || lastGridSize_ != gridSize) {
+        // Create shared_ptr with null deleter (we don't own pathFinder_)
+        auto pathFinderPtr = std::shared_ptr<IPathFinder>(&pathFinder_, [](IPathFinder*){});
+        retryChain_ = std::make_unique<UnifiedRetryChain>(pathFinderPtr, gridSize);
+        lastGridSize_ = gridSize;
+    }
+    return *retryChain_;
 }
 
 bool PathCalculator::hasFreshBendPoints(const EdgeLayout& layout, float gridSize) {
@@ -108,137 +121,42 @@ bool PathCalculator::tryAStarPathfinding(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float effectiveGridSize,
-    const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
-    
-    // Get source node
-    auto srcNodeIt = nodeLayouts.find(layout.from);
-    if (srcNodeIt == nodeLayouts.end()) {
-        return false;
-    }
-    const NodeLayout& srcNode = srcNodeIt->second;
-    
-    // Calculate edge length for snap positions
-    float edgeLength = 0.0f;
-    if (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom) {
-        edgeLength = srcNode.size.width;
-    } else {
-        edgeLength = srcNode.size.height;
-    }
-    
-    // Generate snap positions to try
-    std::vector<float> snapPositions;
-    
-    // Calculate current position ratio
-    float currentRatio = 0.5f;
-    if (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom) {
-        currentRatio = (layout.sourcePoint.x - srcNode.position.x) / edgeLength;
-    } else {
-        currentRatio = (layout.sourcePoint.y - srcNode.position.y) / edgeLength;
-    }
-    
-    // Add current position first
-    snapPositions.push_back(currentRatio);
-    
-    // Add alternative positions
-    std::vector<float> alternatives = {0.2f, 0.4f, 0.5f, 0.6f, 0.8f, 0.1f, 0.9f, 0.3f, 0.7f};
-    for (float alt : alternatives) {
-        if (std::abs(alt - currentRatio) > 0.05f) {
-            snapPositions.push_back(alt);
+    std::unordered_map<EdgeId, EdgeLayout>& otherEdges) {
+
+    // Use UnifiedRetryChain for full retry sequence
+    auto& retryChain = getRetryChain(effectiveGridSize);
+
+    UnifiedRetryChain::RetryConfig config;
+    config.maxSnapRetries = 9;
+    config.enableCooperativeReroute = true;
+    config.gridSize = effectiveGridSize;
+
+    auto result = retryChain.calculatePath(
+        layout.id, layout, otherEdges, nodeLayouts, config);
+
+    if (result.success) {
+        layout = result.layout;
+
+        // Update other edges if they were rerouted (within local copy)
+        for (const auto& reroutedLayout : result.reroutedEdges) {
+            otherEdges[reroutedLayout.id] = reroutedLayout;
         }
-    }
-    
-    Point originalSourcePoint = layout.sourcePoint;
-    
-    for (size_t attempt = 0; attempt < snapPositions.size(); ++attempt) {
-        float ratio = snapPositions[attempt];
-        
-        // Calculate source point for this ratio
-        Point trySourcePoint;
-        if (layout.sourceEdge == NodeEdge::Top) {
-            trySourcePoint = {srcNode.position.x + edgeLength * ratio, srcNode.position.y};
-        } else if (layout.sourceEdge == NodeEdge::Bottom) {
-            trySourcePoint = {srcNode.position.x + edgeLength * ratio, srcNode.position.y + srcNode.size.height};
-        } else if (layout.sourceEdge == NodeEdge::Left) {
-            trySourcePoint = {srcNode.position.x, srcNode.position.y + edgeLength * ratio};
-        } else {
-            trySourcePoint = {srcNode.position.x + srcNode.size.width, srcNode.position.y + edgeLength * ratio};
-        }
-        
-        // Quantize to grid
-        trySourcePoint.x = std::round(trySourcePoint.x / effectiveGridSize) * effectiveGridSize;
-        trySourcePoint.y = std::round(trySourcePoint.y / effectiveGridSize) * effectiveGridSize;
-        
-        // Build obstacle map
-        ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);
-        
-        GridPoint startGrid = obstacles.pixelToGrid(trySourcePoint);
-        GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
-        
-        // Find additional nodes to exclude
-        std::unordered_set<NodeId> extraStartExcludes;
-        std::unordered_set<NodeId> extraGoalExcludes;
-        
-        for (const auto& [nodeId, node] : nodeLayouts) {
-            if (nodeId == layout.from || nodeId == layout.to) continue;
-            
-            if (trySourcePoint.x >= node.position.x &&
-                trySourcePoint.x <= node.position.x + node.size.width &&
-                trySourcePoint.y >= node.position.y &&
-                trySourcePoint.y <= node.position.y + node.size.height) {
-                extraStartExcludes.insert(nodeId);
-            }
-            
-            if (layout.targetPoint.x >= node.position.x &&
-                layout.targetPoint.x <= node.position.x + node.size.width &&
-                layout.targetPoint.y >= node.position.y &&
-                layout.targetPoint.y <= node.position.y + node.size.height) {
-                extraGoalExcludes.insert(nodeId);
-            }
-        }
-        
-        // Add other edges as obstacles
-        if (otherEdges) {
-            std::unordered_map<EdgeId, EdgeLayout> freshEdges;
-            for (const auto& [edgeId, edgeLayout] : *otherEdges) {
-                if (hasFreshBendPoints(edgeLayout, effectiveGridSize)) {
-                    freshEdges[edgeId] = edgeLayout;
-                }
-            }
-            obstacles.addEdgeSegments(freshEdges, layout.id);
-        }
-        
-        // Try A* pathfinding
-        PathResult pathResult = pathFinder_.findPath(
-            startGrid, goalGrid, obstacles,
-            layout.from, layout.to,
-            layout.sourceEdge, layout.targetEdge,
-            extraStartExcludes, extraGoalExcludes);
-        
-        if (pathResult.found && pathResult.path.size() >= 2) {
-            layout.sourcePoint = trySourcePoint;
-            layout.bendPoints.clear();
-            for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-                Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
-                layout.bendPoints.push_back({pixelPoint});
-            }
-            
+
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[PathCalculator] Edge " << layout.id << " SUCCESS"
-                      << (attempt > 0 ? " (after retry)" : "")
-                      << ": path.size=" << pathResult.path.size()
-                      << " bends=" << layout.bendPoints.size() << std::endl;
+        std::cout << "[PathCalculator] Edge " << layout.id << " SUCCESS via UnifiedRetryChain"
+                  << " astarAttempts=" << result.astarAttempts
+                  << " cooperativeAttempts=" << result.cooperativeAttempts
+                  << " bends=" << layout.bendPoints.size() << std::endl;
 #endif
-            return true;
-        }
+        return true;
     }
-    
+
     // All attempts failed
-    layout.sourcePoint = originalSourcePoint;
     layout.bendPoints.clear();
-    
+
 #if EDGE_ROUTING_DEBUG
-    std::cout << "[PathCalculator] Edge " << layout.id << " ALL RETRIES FAILED!" << std::endl;
+    std::cout << "[PathCalculator] Edge " << layout.id << " ALL RETRIES FAILED! "
+              << "reason=" << result.failureReason << std::endl;
 #endif
     return false;
 }
@@ -248,23 +166,29 @@ void PathCalculator::recalculateBendPoints(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize,
     const std::unordered_map<EdgeId, EdgeLayout>* otherEdges) {
-    
+
     float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
-    
+
     auto srcNodeIt = nodeLayouts.find(layout.from);
     if (srcNodeIt == nodeLayouts.end()) {
         return;
     }
     const NodeLayout& srcNode = srcNodeIt->second;
-    
+
     // Handle self-loops specially
     if (layout.from == layout.to) {
         handleSelfLoop(layout, srcNode, effectiveGridSize);
         return;
     }
-    
-    // Regular edge - use A* pathfinding
-    tryAStarPathfinding(layout, nodeLayouts, effectiveGridSize, otherEdges);
+
+    // Regular edge - use A* pathfinding with UnifiedRetryChain
+    // Note: otherEdges is passed as const, so we create a local copy for
+    // the retry chain. Rerouted edges are not propagated back to caller.
+    std::unordered_map<EdgeId, EdgeLayout> mutableOtherEdges;
+    if (otherEdges) {
+        mutableOtherEdges = *otherEdges;
+    }
+    tryAStarPathfinding(layout, nodeLayouts, effectiveGridSize, mutableOtherEdges);
 }
 
 } // namespace arborvia
