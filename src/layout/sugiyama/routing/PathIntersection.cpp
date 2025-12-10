@@ -584,6 +584,71 @@ float findAlternativeY(
     return originalY + gridSpacing;
 }
 
+// =========================================================================
+// Bulk Overlap Detection (with bounding box optimization)
+// =========================================================================
+
+std::vector<std::pair<EdgeId, EdgeId>> findAllOverlappingPairs(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
+
+    std::vector<std::pair<EdgeId, EdgeId>> overlappingPairs;
+
+    // Pre-calculate bounding boxes for early rejection
+    struct EdgeBounds {
+        EdgeId id;
+        const EdgeLayout* layout;
+        float minX, minY, maxX, maxY;
+    };
+
+    std::vector<EdgeBounds> edgeBounds;
+    edgeBounds.reserve(edgeLayouts.size());
+
+    for (const auto& [id, layout] : edgeLayouts) {
+        EdgeBounds bounds;
+        bounds.id = id;
+        bounds.layout = &layout;
+
+        // Calculate bounding box from all points
+        bounds.minX = bounds.maxX = layout.sourcePoint.x;
+        bounds.minY = bounds.maxY = layout.sourcePoint.y;
+
+        auto updateBounds = [&](const Point& p) {
+            bounds.minX = std::min(bounds.minX, p.x);
+            bounds.minY = std::min(bounds.minY, p.y);
+            bounds.maxX = std::max(bounds.maxX, p.x);
+            bounds.maxY = std::max(bounds.maxY, p.y);
+        };
+
+        for (const auto& bp : layout.bendPoints) {
+            updateBounds(bp.position);
+        }
+        updateBounds(layout.targetPoint);
+
+        edgeBounds.push_back(bounds);
+    }
+
+    // Check all pairs with bounding box pre-filter
+    for (size_t i = 0; i < edgeBounds.size(); ++i) {
+        for (size_t j = i + 1; j < edgeBounds.size(); ++j) {
+            const EdgeBounds& a = edgeBounds[i];
+            const EdgeBounds& b = edgeBounds[j];
+
+            // Early rejection: bounding boxes don't overlap
+            if (a.maxX < b.minX || b.maxX < a.minX ||
+                a.maxY < b.minY || b.maxY < a.minY) {
+                continue;
+            }
+
+            // Bounding boxes overlap - do actual segment overlap check
+            if (hasSegmentOverlap(*a.layout, *b.layout)) {
+                overlappingPairs.emplace_back(a.id, b.id);
+            }
+        }
+    }
+
+    return overlappingPairs;
+}
+
 }  // namespace PathIntersection
 
 

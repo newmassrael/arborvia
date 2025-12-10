@@ -5,6 +5,7 @@
 
 #include <arborvia/arborvia.h>
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
+#include <arborvia/layout/api/LayoutController.h>
 #include "../../src/layout/interactive/ValidRegionCalculator.h"
 #include <arborvia/layout/interactive/SnapPointController.h>
 #include "../../src/layout/pathfinding/ObstacleMap.h"
@@ -290,6 +291,10 @@ public:
         // Sync snap configs from edge layouts (for Auto mode snap point visibility)
         syncSnapConfigsFromEdges();
 
+        // Initialize LayoutController with current state
+        layoutController_ = std::make_unique<LayoutController>(graph_, layoutOptions_);
+        layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+
         // Offset for centering
         offset_ = {100.0f, 50.0f};
     }
@@ -499,6 +504,10 @@ public:
             // Pre-calculate forbidden zones based on edge direction counts
             forbiddenZones_ = ValidRegionCalculator::calculate(
                 draggedNode_, nodeLayouts_, edgeLayouts_, gridSize_);
+            // Sync LayoutController state before drag
+            if (layoutController_) {
+                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+            }
             // Notify coordinator that drag started
             routingCoordinator_->onDragStart(affectedEdges_);
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
@@ -543,18 +552,37 @@ public:
             draggingBendPoint_.clear();
 
             if (draggedNode_ != INVALID_NODE) {
-                // Check if drop position is valid
-                if (isInvalidDragPosition_) {
-                    // Revert to last valid position
-                    auto& layout = nodeLayouts_[draggedNode_];
-                    layout.position = lastValidPosition_;
-                    manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
+                auto& layout = nodeLayouts_[draggedNode_];
+                
+                // Use LayoutController for final validation with all constraints
+                if (layoutController_) {
+                    auto result = layoutController_->completeDrag(draggedNode_, layout.position);
+                    
+                    if (!result.success) {
+                        // Constraint validation failed - revert to original position
+                        layout.position = lastValidPosition_;
+                        manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
+                        std::cout << "[Demo] Drag rejected: " << result.reason << std::endl;
+                    } else {
+                        // Success - sync from controller's validated state
+                        for (const auto& [id, nodeLayout] : layoutController_->nodeLayouts()) {
+                            nodeLayouts_[id] = nodeLayout;
+                        }
+                        for (const auto& [id, edgeLayout] : layoutController_->edgeLayouts()) {
+                            edgeLayouts_[id] = edgeLayout;
+                        }
+                        manualManager_->setNodePosition(draggedNode_, result.actualPosition);
+                    }
+                } else {
+                    // Fallback: old behavior if controller not available
+                    if (isInvalidDragPosition_) {
+                        layout.position = lastValidPosition_;
+                        manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
+                    }
+                    rerouteAffectedEdges();
                 }
-                // Finalize edge routing with fast pathfinder
-                rerouteAffectedEdges();
 
                 // Signal drag end - coordinator will schedule optimization after delay
-                // Pass movedNodes before draggedNode_ is reset
                 routingCoordinator_->onDragEnd({draggedNode_});
             }
             draggedNode_ = INVALID_NODE;
@@ -1494,6 +1522,7 @@ private:
     LayoutResult layoutResult_;
     std::shared_ptr<ManualLayoutManager> manualManager_;
     std::shared_ptr<PathRoutingCoordinator> routingCoordinator_;
+    std::unique_ptr<LayoutController> layoutController_;  // Centralized constraint enforcement
     LayoutOptions layoutOptions_;
 
     Point offset_ = {0, 0};

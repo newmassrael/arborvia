@@ -59,6 +59,9 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/constraints/MinDistanceConstraint.cpp
     src/layout/constraints/ConstraintSolver.cpp
 
+    # API (centralized controllers)
+    src/layout/api/LayoutController.cpp
+
     # Routing utilities
     src/layout/routing/OrthogonalRouter.cpp
     src/layout/routing/EdgeNudger.cpp

@@ -165,6 +165,13 @@ MoveResult LayoutUtils::moveNode(
     // Use the position from ConstraintSolver (may be adjusted)
     result.actualPosition = placementResult.finalPosition;
 
+    // Save original position for potential rollback
+    Point originalPosition = nodeIt->second.position;
+    auto originalEdgeLayouts = edgeLayouts;
+
+    // Apply the new position
+    nodeIt->second.position = result.actualPosition;
+
     // Get connected edges and update routing
     result.affectedEdges = graph.getConnectedEdges(nodeId);
 
@@ -172,6 +179,20 @@ MoveResult LayoutUtils::moveNode(
     EdgeRouting routing;
     routing.updateEdgeRoutingWithOptimization(
         edgeLayouts, nodeLayouts, result.affectedEdges, options, {nodeId});
+
+    // Final validation: check ALL constraints on the result
+    auto constraintResult = solver.validateAll(nodeLayouts, edgeLayouts, graph);
+    
+    if (!constraintResult.satisfied) {
+        // Rollback: restore original state
+        nodeIt->second.position = originalPosition;
+        edgeLayouts = originalEdgeLayouts;
+        
+        result.success = false;
+        result.reason = constraintResult.summary();
+        result.actualPosition = originalPosition;
+        return result;
+    }
 
     result.success = true;
     return result;

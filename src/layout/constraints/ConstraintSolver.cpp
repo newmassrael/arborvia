@@ -1,12 +1,27 @@
 #include "arborvia/layout/constraints/ConstraintSolver.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
+#include "sugiyama/routing/PathIntersection.h"
 
 #include <cmath>
 #include <queue>
 #include <set>
+#include <sstream>
 
 namespace arborvia {
+
+// ConstraintValidationResult implementation
+std::string ConstraintValidationResult::summary() const {
+    if (satisfied) return "All constraints satisfied";
+    
+    std::ostringstream ss;
+    ss << "Constraint violations: ";
+    if (hasNodeOverlap()) ss << overlappingNodes.size() << " node overlaps, ";
+    if (hasInvalidPaths()) ss << invalidPathEdges.size() << " invalid paths, ";
+    if (hasDiagonals()) ss << diagonalEdges.size() << " diagonals, ";
+    if (hasEdgeOverlap()) ss << overlappingEdgePairs.size() << " edge overlaps";
+    return ss.str();
+}
 
 ConstraintSolver::ConstraintSolver(const Config& config)
     : config_(config) {}
@@ -300,6 +315,95 @@ Point ConstraintSolver::calculateSnapPointOnEdge(
     }
 
     return basePoint;
+}
+
+// =========================================================================
+// Unified Constraint Validation Implementation
+// =========================================================================
+
+ConstraintValidationResult ConstraintSolver::validateAll(
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    [[maybe_unused]] const Graph& graph) const {
+
+    ConstraintValidationResult result;
+
+    // 1. Check node overlaps
+    result.overlappingNodes = findOverlappingNodes(nodeLayouts);
+
+    // 2. Check diagonal edges
+    result.diagonalEdges = findDiagonalEdges(edgeLayouts);
+
+    // 3. Check edge overlaps (uses PathIntersection)
+    result.overlappingEdgePairs = findOverlappingEdgePairs(edgeLayouts);
+
+    // 4. Determine overall status
+    result.satisfied = result.overlappingNodes.empty() &&
+                       result.invalidPathEdges.empty() &&
+                       result.diagonalEdges.empty() &&
+                       result.overlappingEdgePairs.empty();
+
+    return result;
+}
+
+std::vector<std::pair<EdgeId, EdgeId>> ConstraintSolver::findOverlappingEdgePairs(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+    // Delegate to PathIntersection (Single Source of Truth)
+    return PathIntersection::findAllOverlappingPairs(edgeLayouts);
+}
+
+std::vector<EdgeId> ConstraintSolver::findDiagonalEdges(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+
+    std::vector<EdgeId> diagonals;
+
+    for (const auto& [edgeId, edge] : edgeLayouts) {
+        auto points = edge.allPoints();
+        if (points.size() < 2) continue;
+
+        for (size_t i = 0; i + 1 < points.size(); ++i) {
+            float dx = std::abs(points[i + 1].x - points[i].x);
+            float dy = std::abs(points[i + 1].y - points[i].y);
+            if (dx > 1.0f && dy > 1.0f) {
+                diagonals.push_back(edgeId);
+                break;  // Only count each edge once
+            }
+        }
+    }
+
+    return diagonals;
+}
+
+std::vector<NodeId> ConstraintSolver::findOverlappingNodes(
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const {
+
+    std::set<NodeId> overlapping;
+
+    // Convert to vector for indexed access
+    std::vector<std::pair<NodeId, const NodeLayout*>> nodes;
+    nodes.reserve(nodeLayouts.size());
+    for (const auto& [id, layout] : nodeLayouts) {
+        nodes.emplace_back(id, &layout);
+    }
+
+    // Check all pairs
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            const auto& a = *nodes[i].second;
+            const auto& b = *nodes[j].second;
+
+            // AABB intersection check
+            if (a.position.x < b.position.x + b.size.width &&
+                a.position.x + a.size.width > b.position.x &&
+                a.position.y < b.position.y + b.size.height &&
+                a.position.y + a.size.height > b.position.y) {
+                overlapping.insert(nodes[i].first);
+                overlapping.insert(nodes[j].first);
+            }
+        }
+    }
+
+    return std::vector<NodeId>(overlapping.begin(), overlapping.end());
 }
 
 }  // namespace arborvia

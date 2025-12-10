@@ -161,6 +161,17 @@ namespace PathIntersection {
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         float gridSpacing = 20.0f);
 
+    // =========================================================================
+    // Bulk Overlap Detection (with bounding box optimization)
+    // =========================================================================
+
+    /// Find all pairs of edges that have overlapping segments
+    /// Uses bounding box pre-filtering for O(n²) performance with early rejection
+    /// @param edgeLayouts All edge layouts to check
+    /// @return Vector of edge ID pairs that overlap
+    std::vector<std::pair<EdgeId, EdgeId>> findAllOverlappingPairs(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts);
+
 }  // namespace PathIntersection
 
 

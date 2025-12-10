@@ -7,8 +7,25 @@
 #include <unordered_map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace arborvia {
+
+/// Result of full constraint validation
+struct ConstraintValidationResult {
+    bool satisfied = true;
+    std::vector<NodeId> overlappingNodes;           ///< Nodes that overlap
+    std::vector<EdgeId> invalidPathEdges;           ///< Edges without valid A* path
+    std::vector<EdgeId> diagonalEdges;              ///< Edges with diagonal segments
+    std::vector<std::pair<EdgeId, EdgeId>> overlappingEdgePairs; ///< Edge pairs that overlap
+    
+    bool hasNodeOverlap() const { return !overlappingNodes.empty(); }
+    bool hasInvalidPaths() const { return !invalidPathEdges.empty(); }
+    bool hasDiagonals() const { return !diagonalEdges.empty(); }
+    bool hasEdgeOverlap() const { return !overlappingEdgePairs.empty(); }
+    
+    std::string summary() const;
+};
 
 /// Result of constraint-satisfying node placement
 struct ConstraintPlacementResult {
@@ -94,6 +111,39 @@ public:
         Size size,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float margin = 0.0f) const;
+
+    // =========================================================================
+    // Unified Constraint Validation (Single Entry Point)
+    // =========================================================================
+
+    /// Validate all constraints on the current layout state
+    /// This is the SINGLE entry point for all constraint checking
+    /// @param nodeLayouts All node layouts
+    /// @param edgeLayouts All edge layouts
+    /// @param graph Graph for connectivity
+    /// @return Detailed validation result
+    ConstraintValidationResult validateAll(
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const Graph& graph) const;
+
+    /// Check for edge overlap (segment overlap between edge pairs)
+    /// @param edgeLayouts All edge layouts
+    /// @return Vector of overlapping edge pairs
+    std::vector<std::pair<EdgeId, EdgeId>> findOverlappingEdgePairs(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+
+    /// Check for diagonal segments in edges
+    /// @param edgeLayouts All edge layouts
+    /// @return Vector of edge IDs with diagonal segments
+    std::vector<EdgeId> findDiagonalEdges(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+
+    /// Check for node overlaps
+    /// @param nodeLayouts All node layouts
+    /// @return Vector of overlapping node IDs
+    std::vector<NodeId> findOverlappingNodes(
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
 
 private:
     /// Find the nearest position that satisfies all constraints

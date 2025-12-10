@@ -1678,63 +1678,8 @@ AStarEdgeOptimizer::ParallelEdgeResult AStarEdgeOptimizer::evaluateEdgeIndepende
 
 std::vector<std::pair<EdgeId, EdgeId>> AStarEdgeOptimizer::detectOverlaps(
     const std::unordered_map<EdgeId, EdgeLayout>& layouts) {
-
-    std::vector<std::pair<EdgeId, EdgeId>> overlappingPairs;
-
-    // Pre-calculate bounding boxes for early rejection
-    struct EdgeBounds {
-        EdgeId id;
-        const EdgeLayout* layout;
-        float minX, minY, maxX, maxY;
-    };
-
-    std::vector<EdgeBounds> edgeBounds;
-    edgeBounds.reserve(layouts.size());
-
-    for (const auto& [id, layout] : layouts) {
-        EdgeBounds bounds;
-        bounds.id = id;
-        bounds.layout = &layout;
-
-        // Calculate bounding box from all points
-        bounds.minX = bounds.maxX = layout.sourcePoint.x;
-        bounds.minY = bounds.maxY = layout.sourcePoint.y;
-
-        auto updateBounds = [&](const Point& p) {
-            bounds.minX = std::min(bounds.minX, p.x);
-            bounds.minY = std::min(bounds.minY, p.y);
-            bounds.maxX = std::max(bounds.maxX, p.x);
-            bounds.maxY = std::max(bounds.maxY, p.y);
-        };
-
-        for (const auto& bp : layout.bendPoints) {
-            updateBounds(bp.position);
-        }
-        updateBounds(layout.targetPoint);
-
-        edgeBounds.push_back(bounds);
-    }
-
-    // Check all pairs with bounding box pre-filter
-    for (size_t i = 0; i < edgeBounds.size(); ++i) {
-        for (size_t j = i + 1; j < edgeBounds.size(); ++j) {
-            const EdgeBounds& a = edgeBounds[i];
-            const EdgeBounds& b = edgeBounds[j];
-
-            // Early rejection: bounding boxes don't overlap
-            if (a.maxX < b.minX || b.maxX < a.minX ||
-                a.maxY < b.minY || b.maxY < a.minY) {
-                continue;  // No possible overlap
-            }
-
-            // Bounding boxes overlap - do direct segment overlap check (no copies)
-            if (PathIntersection::hasSegmentOverlap(*a.layout, *b.layout)) {
-                overlappingPairs.emplace_back(a.id, b.id);
-            }
-        }
-    }
-
-    return overlappingPairs;
+    // Delegate to PathIntersection (Single Source of Truth)
+    return PathIntersection::findAllOverlappingPairs(layouts);
 }
 
 bool AStarEdgeOptimizer::resolveAllOverlaps(
