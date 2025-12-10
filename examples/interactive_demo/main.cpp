@@ -1599,7 +1599,7 @@ public:
 private:
     void processCommand(const Command& cmd) {
         if (cmd.name == "drag" && cmd.args.size() >= 3) {
-            // drag <node_id> <dx> <dy> - uses moveNode() API with validation
+            // drag <node_id> <dx> <dy> - uses LayoutController API with validation
             NodeId nodeId = std::stoi(cmd.args[0]);
             float dx = std::stof(cmd.args[1]);
             float dy = std::stof(cmd.args[2]);
@@ -1610,11 +1610,18 @@ private:
                     nodeLayouts_[nodeId].position.y + dy
                 };
 
-                auto result = LayoutUtils::moveNode(
-                    nodeId, proposedPos, nodeLayouts_, edgeLayouts_,
-                    graph_, layoutOptions_);
+                // Sync controller state and use LayoutController for move
+                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+                auto result = layoutController_->moveNode(nodeId, proposedPos);
 
                 if (result.success) {
+                    // Sync layouts from controller
+                    for (const auto& [id, layout] : layoutController_->nodeLayouts()) {
+                        nodeLayouts_[id] = layout;
+                    }
+                    for (const auto& [id, layout] : layoutController_->edgeLayouts()) {
+                        edgeLayouts_[id] = layout;
+                    }
                     // Collect ALL edges for A* optimization (same as GUI drag)
                     std::vector<EdgeId> allEdges;
                     allEdges.reserve(edgeLayouts_.size());
@@ -1652,17 +1659,24 @@ private:
                 // Simulate drag start
                 routingCoordinator_->onDragStart(affected);
 
-                auto result = LayoutUtils::moveNode(
-                    nodeId, proposedPos, nodeLayouts_, edgeLayouts_,
-                    graph_, layoutOptions_);
+                // Sync controller state and use LayoutController for move
+                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+                auto result = layoutController_->moveNode(nodeId, proposedPos);
 
                 if (result.success) {
+                    // Sync layouts from controller
+                    for (const auto& [id, layout] : layoutController_->nodeLayouts()) {
+                        nodeLayouts_[id] = layout;
+                    }
+                    for (const auto& [id, layout] : layoutController_->edgeLayouts()) {
+                        edgeLayouts_[id] = layout;
+                    }
                     // Update affectedEdges_ for coordinator callback
                     affectedEdges_ = affected;
-                    
+
                     // Trigger drag end - this schedules A* optimization
                     routingCoordinator_->onDragEnd({nodeId});
-                    
+
                     commandServer_.sendResponse("OK set_pos " + std::to_string(nodeId));
                 } else {
                     routingCoordinator_->cancelPendingOptimization();

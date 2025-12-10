@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
+#include <arborvia/layout/api/LayoutController.h>
 #include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
 #include <sstream>
 #include <iomanip>
@@ -5116,10 +5117,20 @@ TEST(EdgeRoutingTransitionTest, DragNode_EdgeMustRemainOrthogonal) {
     LayoutOptions options;
     options.gridConfig.cellSize = 20.0f;
 
-    MoveResult moveResult = LayoutUtils::moveNode(
-        idle, newIdlePos, nodeLayouts, edgeLayouts, graph, options);
+    // Use LayoutController for move with full constraint validation
+    LayoutController controller(graph, options);
+    controller.initializeFrom(nodeLayouts, edgeLayouts);
+    auto moveResult = controller.moveNode(idle, newIdlePos);
 
     ASSERT_TRUE(moveResult.success) << "Drag should succeed";
+
+    // Sync layouts from controller
+    for (const auto& [id, layout] : controller.nodeLayouts()) {
+        nodeLayouts[id] = layout;
+    }
+    for (const auto& [id, layout] : controller.edgeLayouts()) {
+        edgeLayouts[id] = layout;
+    }
 
     // Verify edge is still orthogonal
     const EdgeLayout& updatedEdge = edgeLayouts[edge0];

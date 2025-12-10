@@ -21,55 +21,10 @@ namespace arborvia {
 class PathRoutingCoordinator;
 class ConstraintManager;
 
-/// Result of node move operation
-struct MoveResult {
-    bool success = false;           ///< True if move was successful
-    Point actualPosition{0, 0};     ///< Actual position after move (may be clamped)
-    std::string reason;             ///< Failure reason if !success
-    std::vector<EdgeId> affectedEdges;  ///< Edges that were re-routed
-};
-
 /// Utility functions for interactive layout manipulation
+/// NOTE: For node moves, use LayoutController::moveNode() instead
 class LayoutUtils {
 public:
-    // ========== Primary API (use these) ==========
-
-    /// Move a node with full validation and edge re-routing
-    /// This is the main API for interactive node dragging
-    /// @param nodeId Node to move
-    /// @param newPosition Desired new position
-    /// @param nodeLayouts Node layouts (modified in place if successful)
-    /// @param edgeLayouts Edge layouts (modified in place for re-routing)
-    /// @param graph Graph for edge connectivity
-    /// @param options Layout options for edge routing
-    /// @return MoveResult indicating success/failure and affected edges
-    static MoveResult moveNode(
-        NodeId nodeId,
-        Point newPosition,
-        std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const Graph& graph,
-        const LayoutOptions& options);
-
-    /// Move a node with pre-calculated forbidden zones (faster for continuous drag)
-    /// Use this when drag starts - calculate zones once, then use for all moves
-    /// @param nodeId Node to move
-    /// @param newPosition Desired new position
-    /// @param nodeLayouts Node layouts (modified in place if successful)
-    /// @param edgeLayouts Edge layouts (modified in place for re-routing)
-    /// @param graph Graph for edge connectivity
-    /// @param options Layout options for edge routing
-    /// @param preCalculatedZones Forbidden zones calculated at drag start
-    /// @return MoveResult indicating success/failure and affected edges
-    static MoveResult moveNode(
-        NodeId nodeId,
-        Point newPosition,
-        std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const Graph& graph,
-        const LayoutOptions& options,
-        const std::vector<ForbiddenZone>& preCalculatedZones);
-
     /// Result of edge hit test with insertion info
     struct EdgeHitResult {
         bool hit = false;              ///< True if point is near the edge
@@ -242,7 +197,7 @@ public:
 
     // ========== Internal API (for advanced use) ==========
     // These are exposed for cases where you need fine-grained control
-    // Prefer using moveNode() for most use cases
+    // Prefer using LayoutController for node moves
 
     /// Result of drag validation check
     struct DragValidation {

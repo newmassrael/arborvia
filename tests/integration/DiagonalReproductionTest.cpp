@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
+#include <arborvia/layout/api/LayoutController.h>
 #include <iostream>
 #include <unordered_map>
 #include <unordered_set>
@@ -71,20 +72,28 @@ protected:
         return false;
     }
 
-    // Helper: Simulate drag and update edges using moveNode() with rejection
+    // Helper: Simulate drag and update edges using LayoutController
     void simulateDrag(NodeId nodeId, float dx, float dy) {
         Point newPosition = nodeLayouts_[nodeId].position;
         newPosition.x += dx;
         newPosition.y += dy;
-        
-        // Use moveNode() which has built-in rejection for invalid positions
-        auto result = LayoutUtils::moveNode(
-            nodeId, newPosition,
-            nodeLayouts_, edgeLayouts_,
-            graph_, options_, {});
-        
+
+        // Initialize controller with current state
+        LayoutController controller(graph_, options_);
+        controller.initializeFrom(nodeLayouts_, edgeLayouts_);
+
+        // Use LayoutController::moveNode() with full constraint validation
+        auto result = controller.moveNode(nodeId, newPosition);
+
         if (result.success) {
-            // Update manager with actual position (may be adjusted)
+            // Sync layouts from controller
+            for (const auto& [id, layout] : controller.nodeLayouts()) {
+                nodeLayouts_[id] = layout;
+            }
+            for (const auto& [id, layout] : controller.edgeLayouts()) {
+                edgeLayouts_[id] = layout;
+            }
+            // Update manager with actual position
             manager_->setNodePosition(nodeId, result.actualPosition);
         }
     }
