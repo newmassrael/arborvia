@@ -275,6 +275,24 @@ public:
         const LayoutOptions& options,
         const std::unordered_set<NodeId>& movedNodes = {});
 
+    /// Update edge positions with constraint-satisfying node adjustment
+    /// If A* fails for any edge, automatically adjusts moved node positions
+    /// to satisfy all constraints (A* paths exist, no diagonal segments)
+    /// @param edgeLayouts Edge layouts to update
+    /// @param nodeLayouts Node layouts (may be modified if adjustment needed)
+    /// @param affectedEdges Edges to route
+    /// @param graph Graph for connectivity info
+    /// @param options Layout options
+    /// @param movedNodes Nodes that were moved (will be adjusted if needed)
+    /// @return true if all edges have valid paths (possibly with node adjustments)
+    static bool updateEdgePositionsWithConstraints(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const Graph& graph,
+        const LayoutOptions& options,
+        const std::unordered_set<NodeId>& movedNodes = {});
+
     /// Check if a node can be moved to a specific position (internal)
     static DragValidation canMoveNodeTo(
         NodeId nodeId,

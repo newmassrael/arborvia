@@ -10,6 +10,10 @@
 
 namespace arborvia {
 
+// Forward declarations
+class Graph;
+struct ConstraintPlacementResult;
+
 /// Positioned node in the layout result
 struct NodeLayout {
     NodeId id = INVALID_NODE;
@@ -47,6 +51,10 @@ struct EdgeLayout {
     
     // Channel routing information
     float channelY = -1.0f;                   // Channel Y position for orthogonal routing (-1 = not set)
+    
+    // Grid size used for A* pathfinding (Single Source of Truth)
+    // This ensures consistent gridSize across layout creation and subsequent operations
+    float usedGridSize = 0.0f;                // 0 = use default PATHFINDING_GRID_SIZE
     
     // Label positioning
     Point labelPosition;                      // Pre-computed label position (path midpoint)
@@ -99,12 +107,49 @@ struct EdgeLayout {
     }
 };
 
+/// Result of node placement validation
+struct NodePlacementResult {
+    bool success = false;           ///< True if placement is valid
+    NodeId conflictingNode = INVALID_NODE;  ///< Node that would be overlapped (if any)
+    std::string reason;             ///< Failure reason if !success
+};
+
 /// Complete layout result for a graph
 class LayoutResult {
 public:
     LayoutResult() = default;
     
-    // Node layout operations
+    // ========== Validated Node Placement API (Single Source of Truth) ==========
+    
+    /// Check if a node can be placed at the given position without overlap
+    /// @param layout The node layout to check
+    /// @param margin Minimum gap between nodes (default 0)
+    /// @return true if placement is valid (no overlap with existing nodes)
+    bool canPlaceNode(const NodeLayout& layout, float margin = 0.0f) const;
+    
+    /// Try to place a node with validation - rejects overlapping placements
+    /// This is the recommended API for adding nodes to ensure no overlaps
+    /// @param layout The node layout to place
+    /// @param margin Minimum gap between nodes (default 0)
+    /// @return NodePlacementResult indicating success or failure with reason
+    NodePlacementResult tryPlaceNode(const NodeLayout& layout, float margin = 0.0f);
+    
+    // ========== Constraint-Satisfying Placement API ==========
+    
+    /// Place a node at a position that satisfies all constraints (A* paths, no overlap)
+    /// If the desired position violates constraints, automatically finds nearest valid position
+    /// @param layout The node layout with desired position
+    /// @param graph The graph for connectivity information
+    /// @param gridSize Grid size for A* pathfinding (default 10.0)
+    /// @return ConstraintPlacementResult with final position or failure reason
+    struct ConstraintPlacementResult placeNodeWithConstraints(
+        const NodeLayout& layout,
+        const class Graph& graph,
+        float gridSize = 10.0f);
+    
+    // ========== Legacy Node Operations (no validation) ==========
+    // Note: setNodeLayout does NOT check for overlaps - prefer tryPlaceNode
+    
     void setNodeLayout(NodeId id, const NodeLayout& layout);
     const NodeLayout* getNodeLayout(NodeId id) const;
     NodeLayout* getNodeLayout(NodeId id);

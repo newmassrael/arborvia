@@ -57,6 +57,7 @@ set(ARBORVIA_LAYOUT_SOURCES
 
     # Constraints
     src/layout/constraints/MinDistanceConstraint.cpp
+    src/layout/constraints/ConstraintSolver.cpp
 
     # Routing utilities
     src/layout/routing/OrthogonalRouter.cpp
@@ -91,6 +92,9 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/config/ConstraintConfig.h
     include/arborvia/layout/config/OptimizerConfig.h
     include/arborvia/layout/config/MoveDirection.h
+
+    # Public API - Constraints
+    include/arborvia/layout/constraints/ConstraintSolver.h
 
     # Public API - Interactive
     include/arborvia/layout/interactive/ManualLayoutManager.h

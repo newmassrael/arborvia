@@ -1,10 +1,78 @@
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/util/LayoutSerializer.h"
+#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/core/Graph.h"
 
 #include <algorithm>
 #include <limits>
 
 namespace arborvia {
+
+// ========== Validated Node Placement API ==========
+
+bool LayoutResult::canPlaceNode(const NodeLayout& layout, float margin) const {
+    // Get proposed node's bounds with margin
+    float x1 = layout.position.x - margin;
+    float y1 = layout.position.y - margin;
+    float x2 = layout.position.x + layout.size.width + margin;
+    float y2 = layout.position.y + layout.size.height + margin;
+
+    // Check overlap with all existing nodes
+    for (const auto& [otherId, otherNode] : nodeLayouts_) {
+        // Skip if checking the same node (for updates)
+        if (otherId == layout.id) continue;
+
+        float ox1 = otherNode.position.x;
+        float oy1 = otherNode.position.y;
+        float ox2 = ox1 + otherNode.size.width;
+        float oy2 = oy1 + otherNode.size.height;
+
+        // Check for AABB intersection
+        bool overlaps = (x1 < ox2 && x2 > ox1 && y1 < oy2 && y2 > oy1);
+        if (overlaps) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+NodePlacementResult LayoutResult::tryPlaceNode(const NodeLayout& layout, float margin) {
+    NodePlacementResult result;
+
+    // Get proposed node's bounds with margin
+    float x1 = layout.position.x - margin;
+    float y1 = layout.position.y - margin;
+    float x2 = layout.position.x + layout.size.width + margin;
+    float y2 = layout.position.y + layout.size.height + margin;
+
+    // Check overlap with all existing nodes
+    for (const auto& [otherId, otherNode] : nodeLayouts_) {
+        // Skip if updating the same node
+        if (otherId == layout.id) continue;
+
+        float ox1 = otherNode.position.x;
+        float oy1 = otherNode.position.y;
+        float ox2 = ox1 + otherNode.size.width;
+        float oy2 = oy1 + otherNode.size.height;
+
+        // Check for AABB intersection
+        bool overlaps = (x1 < ox2 && x2 > ox1 && y1 < oy2 && y2 > oy1);
+        if (overlaps) {
+            result.success = false;
+            result.conflictingNode = otherId;
+            result.reason = "Node overlaps with existing node " + std::to_string(otherId);
+            return result;
+        }
+    }
+
+    // No overlap - place the node
+    nodeLayouts_[layout.id] = layout;
+    result.success = true;
+    return result;
+}
+
+// ========== Legacy Node Operations ==========
 
 void LayoutResult::setNodeLayout(NodeId id, const NodeLayout& layout) {
     nodeLayouts_[id] = layout;
@@ -181,6 +249,24 @@ void LayoutResult::removeFromEdgeIndex(EdgeId edgeId) {
         auto& toEdges = nodeToEdges_[layout.to];
         toEdges.erase(std::remove(toEdges.begin(), toEdges.end(), edgeId), toEdges.end());
     }
+}
+
+// ========== Constraint-Satisfying Placement API ==========
+
+ConstraintPlacementResult LayoutResult::placeNodeWithConstraints(
+    const NodeLayout& layout,
+    const Graph& graph,
+    float gridSize) {
+    
+    ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+    
+    return solver.placeNode(
+        layout.id,
+        layout.position,
+        layout.size,
+        nodeLayouts_,
+        edgeLayouts_,
+        graph);
 }
 
 }  // namespace arborvia

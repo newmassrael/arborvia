@@ -1,12 +1,15 @@
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/core/Graph.h"
+#include "arborvia/layout/constraints/ConstraintSolver.h"
 #include "interactive/ConstraintManager.h"
 #include "interactive/ValidRegionCalculator.h"
 #include "arborvia/layout/config/ConstraintConfig.h"
 #include "arborvia/layout/interactive/PathRoutingCoordinator.h"
 #include "sugiyama/routing/EdgeRouting.h"
 #include "snap/GridSnapCalculator.h"
+#include "pathfinding/ObstacleMap.h"
+#include "pathfinding/AStarPathFinder.h"
 #include <cmath>
 #include <iostream>
 #include <algorithm>
@@ -134,9 +137,27 @@ MoveResult LayoutUtils::moveNode(
         return result;
     }
 
-    // Move is valid - update position
-    nodeIt->second.position = newPosition;
-    result.actualPosition = newPosition;
+    // Use ConstraintSolver to find valid position satisfying A* paths
+    float gridSize = options.gridConfig.cellSize > 0 ? options.gridConfig.cellSize : 10.0f;
+    ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+    
+    auto placementResult = solver.placeNode(
+        nodeId,
+        newPosition,
+        nodeIt->second.size,
+        nodeLayouts,
+        edgeLayouts,
+        graph);
+
+    if (!placementResult.success) {
+        result.success = false;
+        result.reason = placementResult.reason;
+        result.actualPosition = nodeIt->second.position;  // Keep current position
+        return result;
+    }
+
+    // Use the position from ConstraintSolver (may be adjusted)
+    result.actualPosition = placementResult.finalPosition;
 
     // Get connected edges and update routing
     result.affectedEdges = graph.getConnectedEdges(nodeId);
@@ -233,6 +254,93 @@ void LayoutUtils::updateEdgePositions(
         routing.updateEdgeRoutingWithOptimization(
             edgeLayouts, nodeLayouts, edgesToRecalculate, postDropOptions, emptySet);
     }
+}
+
+// Helper: Check if edge has diagonal segments
+static bool hasDiagonalSegments(const EdgeLayout& edge) {
+    auto points = edge.allPoints();
+    if (points.size() < 2) return false;
+    
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        float dx = std::abs(points[i + 1].x - points[i].x);
+        float dy = std::abs(points[i + 1].y - points[i].y);
+        if (dx > 1.0f && dy > 1.0f) {
+            return true;  // Diagonal detected
+        }
+    }
+    return false;
+}
+
+bool LayoutUtils::updateEdgePositionsWithConstraints(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    const Graph& graph,
+    const LayoutOptions& options,
+    const std::unordered_set<NodeId>& movedNodes) {
+
+    constexpr int MAX_ADJUSTMENT_ITERATIONS = 5;
+    float gridSize = options.gridConfig.cellSize > 0 ? options.gridConfig.cellSize : 10.0f;
+    
+    for (int iteration = 0; iteration < MAX_ADJUSTMENT_ITERATIONS; ++iteration) {
+        // Step 1: Try to route edges with current node positions
+        updateEdgePositions(edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes);
+        
+        // Step 2: Check for diagonal segments (A* failures)
+        std::vector<EdgeId> diagonalEdges;
+        for (EdgeId edgeId : affectedEdges) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it != edgeLayouts.end() && hasDiagonalSegments(it->second)) {
+                diagonalEdges.push_back(edgeId);
+            }
+        }
+        
+        if (diagonalEdges.empty()) {
+            // All edges have valid orthogonal paths
+            return true;
+        }
+        
+        std::cout << "[updateEdgePositionsWithConstraints] Iteration " << iteration + 1
+                  << ": Found " << diagonalEdges.size() << " diagonal edges, adjusting node positions"
+                  << std::endl;
+        
+        // Step 3: Use ConstraintSolver to find valid positions for moved nodes
+        ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+        
+        bool anyAdjusted = false;
+        for (NodeId nodeId : movedNodes) {
+            auto nodeIt = nodeLayouts.find(nodeId);
+            if (nodeIt == nodeLayouts.end()) continue;
+            
+            // Try to find a valid position for this node
+            auto result = solver.placeNode(
+                nodeId,
+                nodeIt->second.position,
+                nodeIt->second.size,
+                nodeLayouts,
+                edgeLayouts,
+                graph);
+            
+            if (result.success && result.positionAdjusted) {
+                std::cout << "[updateEdgePositionsWithConstraints] Node " << nodeId
+                          << " adjusted from (" << result.requestedPosition.x << "," 
+                          << result.requestedPosition.y << ") to ("
+                          << result.finalPosition.x << "," << result.finalPosition.y << ")"
+                          << std::endl;
+                anyAdjusted = true;
+            }
+        }
+        
+        if (!anyAdjusted) {
+            // Could not find better positions, return with current state
+            std::cout << "[updateEdgePositionsWithConstraints] Could not find valid node positions"
+                      << std::endl;
+            return false;
+        }
+    }
+    
+    // Max iterations reached
+    return false;
 }
 
 float LayoutUtils::pointToSegmentDistance(
@@ -603,6 +711,54 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     result.actualPosition = GridSnapCalculator::getPositionFromCandidateIndex(
         node, newEdge, newSnapIndex, gridSize);
     result.newEdge = newEdge;
+    result.newSnapIndex = newSnapIndex;
+
+    // === Pre-validation: Check if A* path exists to this position ===
+    // This prevents moving to blocked positions (same validation as SnapPointController)
+    {
+        // Single Source of Truth: use edge's stored gridSize if available
+        // This ensures consistent gridSize with the original layout creation
+        float validationGridSize = edge.usedGridSize > 0.0f 
+            ? edge.usedGridSize 
+            : GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
+        
+        // Build obstacle map
+        ObstacleMap obstacles;
+        obstacles.buildFromNodes(nodeLayouts, validationGridSize, 0);
+        obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Other edges as obstacles
+        
+        // Get the other endpoint
+        Point otherEndpoint = isSource ? edge.targetPoint : edge.sourcePoint;
+        NodeEdge otherNodeEdge = isSource ? edge.targetEdge : edge.sourceEdge;
+        NodeId otherNodeId = isSource ? edge.to : edge.from;
+        
+        // Calculate grid points
+        GridPoint startGrid = obstacles.pixelToGrid(result.actualPosition);
+        GridPoint goalGrid = obstacles.pixelToGrid(otherEndpoint);
+        
+        // Determine source/target for pathfinding
+        NodeEdge srcEdge = isSource ? newEdge : otherNodeEdge;
+        NodeEdge tgtEdge = isSource ? otherNodeEdge : newEdge;
+        NodeId srcNode = isSource ? nodeId : otherNodeId;
+        NodeId tgtNode = isSource ? otherNodeId : nodeId;
+        GridPoint pathStart = isSource ? startGrid : goalGrid;
+        GridPoint pathGoal = isSource ? goalGrid : startGrid;
+        
+        // Try A* pathfinding
+        AStarPathFinder pathFinder;
+        auto pathResult = pathFinder.findPath(
+            pathStart, pathGoal, obstacles,
+            srcNode, tgtNode,
+            srcEdge, tgtEdge,
+            {}, {});
+        
+        if (!pathResult.found || pathResult.path.size() < 2) {
+            result.success = false;
+            result.reason = "No valid A* path to target position";
+            return result;
+        }
+    }
+
     result.success = true;
 
     // Check if another edge occupies the target position - if so, SWAP
@@ -631,6 +787,14 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     }
 
     // Update the moving edge's snap point
+    std::cout << "[moveSnapPoint] Edge " << edgeId 
+              << " BEFORE update: src=(" << edge.sourcePoint.x << "," << edge.sourcePoint.y << ")"
+              << " tgt=(" << edge.targetPoint.x << "," << edge.targetPoint.y << ")"
+              << " isSource=" << isSource << std::endl;
+    std::cout << "[moveSnapPoint] actualPosition=(" << result.actualPosition.x << "," << result.actualPosition.y << ")"
+              << " newEdge=" << static_cast<int>(newEdge)
+              << " newSnapIndex=" << newSnapIndex << std::endl;
+
     if (isSource) {
         edge.sourcePoint = result.actualPosition;
         edge.sourceEdge = newEdge;
@@ -640,6 +804,10 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         edge.targetEdge = newEdge;
         edge.targetSnapIndex = newSnapIndex;
     }
+
+    std::cout << "[moveSnapPoint] Edge " << edgeId 
+              << " AFTER update: src=(" << edge.sourcePoint.x << "," << edge.sourcePoint.y << ")"
+              << " tgt=(" << edge.targetPoint.x << "," << edge.targetPoint.y << ")" << std::endl;
 
     // If swap partner found, move it to the original position
     if (swapEdgeId != INVALID_EDGE) {
@@ -669,6 +837,17 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     toReroute.insert(toReroute.end(),
         result.redistributedEdges.begin(), result.redistributedEdges.end());
 
+    std::cout << "[moveSnapPoint] BEFORE regenerateBendPointsOnly:" << std::endl;
+    for (EdgeId eid : toReroute) {
+        auto it = edgeLayouts.find(eid);
+        if (it != edgeLayouts.end()) {
+            std::cout << "  Edge " << eid 
+                      << " src=(" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y << ")"
+                      << " tgt=(" << it->second.targetPoint.x << "," << it->second.targetPoint.y << ")"
+                      << " bends=" << it->second.bendPoints.size() << std::endl;
+        }
+    }
+
     if (regenerator) {
         // Use custom callback (allows decoupling from EdgeRouting)
         regenerator(edgeLayouts, nodeLayouts, toReroute, options);
@@ -676,6 +855,21 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         // Default: use EdgeRouting::regenerateBendPointsOnly
         EdgeRouting routing;
         routing.regenerateBendPointsOnly(edgeLayouts, nodeLayouts, toReroute, options);
+    }
+
+    std::cout << "[moveSnapPoint] AFTER regenerateBendPointsOnly:" << std::endl;
+    for (EdgeId eid : toReroute) {
+        auto it = edgeLayouts.find(eid);
+        if (it != edgeLayouts.end()) {
+            std::cout << "  Edge " << eid 
+                      << " src=(" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y << ")"
+                      << " tgt=(" << it->second.targetPoint.x << "," << it->second.targetPoint.y << ")";
+            for (size_t i = 0; i < it->second.bendPoints.size(); ++i) {
+                std::cout << " bend[" << i << "]=(" << it->second.bendPoints[i].position.x 
+                          << "," << it->second.bendPoints[i].position.y << ")";
+            }
+            std::cout << std::endl;
+        }
     }
 
     return result;
