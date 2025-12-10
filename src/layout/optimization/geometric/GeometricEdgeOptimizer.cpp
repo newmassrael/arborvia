@@ -35,7 +35,11 @@ GeometricEdgeOptimizer::GeometricEdgeOptimizer(float gridSize)
 std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
     const std::vector<EdgeId>& edges,
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_set<NodeId>& movedNodes) {
+
+    // Store constraint state in base class for FixedEndpointPenalty
+    setConstraintState(currentLayouts, movedNodes);
 
     // Initialize with edges NOT being optimized (so constraints check against them)
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts;
@@ -157,7 +161,7 @@ GeometricEdgeOptimizer::evaluateCombinations(
         // Preserve existing direction - only evaluate current combination
         evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
     } else {
-        // Optimize directions - evaluate all 16 combinations (4 source × 4 target)
+        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
         constexpr std::array<NodeEdge, 4> allEdges = {
             NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
         };
@@ -192,7 +196,12 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     candidate.sourceEdge = sourceEdge;
     candidate.targetEdge = targetEdge;
 
+    // Check if endpoints should be preserved (on fixed nodes)
+    bool srcFixed = isNodeFixed(base.from);
+    bool tgtFixed = isNodeFixed(base.to);
+
     // When edge routing changes, mark snap indices for redistribution
+    // But preserve snap index if the endpoint is on a fixed node
     if (sourceEdge != base.sourceEdge) {
         candidate.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
     }
@@ -207,9 +216,25 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         return candidate;
     }
 
-    // Calculate source/target points from edge centers
-    Point sourcePoint = calculateEdgeCenter(srcIt->second, sourceEdge);
-    Point targetPoint = calculateEdgeCenter(tgtIt->second, targetEdge);
+    // Calculate source/target points
+    // Preserve existing position for fixed endpoints
+    Point sourcePoint, targetPoint;
+    
+    if (srcFixed && sourceEdge == base.sourceEdge) {
+        // Source is fixed - preserve existing position and snap index
+        sourcePoint = base.sourcePoint;
+        candidate.sourceSnapIndex = base.sourceSnapIndex;
+    } else {
+        sourcePoint = calculateEdgeCenter(srcIt->second, sourceEdge);
+    }
+    
+    if (tgtFixed && targetEdge == base.targetEdge) {
+        // Target is fixed - preserve existing position and snap index
+        targetPoint = base.targetPoint;
+        candidate.targetSnapIndex = base.targetSnapIndex;
+    } else {
+        targetPoint = calculateEdgeCenter(tgtIt->second, targetEdge);
+    }
 
     // === Step 1: Create greedy orthogonal path with node avoidance ===
     auto bendPoints = createPathWithObstacleAvoidance(
@@ -904,6 +929,8 @@ int GeometricEdgeOptimizer::scoreGeometricPath(
     PenaltyContext ctx{assignedLayouts, nodeLayouts, emptyZones, gridSize_};
     ctx.sourceNodeId = candidate.from;
     ctx.targetNodeId = candidate.to;
+    ctx.originalLayouts = originalLayouts_;
+    ctx.movedNodes = movedNodes_;
     return penaltySystem()->calculateTotalPenalty(candidate, ctx);
 }
 
@@ -1487,6 +1514,8 @@ GeometricEdgeOptimizer::evaluateSelfLoopCombinations(
         PenaltyContext ctx{assignedLayouts, nodeLayouts, emptyZones, gridSize_};
         ctx.sourceNodeId = candidate.from;
         ctx.targetNodeId = candidate.to;
+        ctx.originalLayouts = originalLayouts_;
+        ctx.movedNodes = movedNodes_;
 
         // Check hard constraints (segment overlap, etc.)
         // For GeometricEdgeOptimizer, we check if score exceeds hard constraint threshold

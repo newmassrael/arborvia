@@ -182,13 +182,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     const std::unordered_set<NodeId>& movedNodes,
     std::shared_ptr<IEdgeOptimizer>& edgeOptimizer) {
 
-    std::cout << "[DEBUG-DragOptHandler] updateEdgeRoutingWithOptimization called" << std::endl;
-    std::cout << "[DEBUG-DragOptHandler] affectedEdges.size()=" << affectedEdges.size() << std::endl;
-    std::cout << "[DEBUG-DragOptHandler] movedNodes.size()=" << movedNodes.size() << std::endl;
-    std::cout << "[DEBUG-DragOptHandler] dragAlgorithm="
-              << static_cast<int>(options.optimizationOptions.dragAlgorithm)
-              << " (0=None, 1=Geometric, 2=AStar, 3=HideUntilDrop)" << std::endl;
-
     float gridSize = options.gridConfig.cellSize;
     bool usedDragOptimizer = false;
 
@@ -220,7 +213,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
         }
 
         if (optimizer) {
-            std::cout << "[DEBUG-DragOptHandler] Optimizer created, running optimize()..." << std::endl;
             edgeOptimizer = std::move(optimizer);
 
             std::vector<EdgeId> edgesToOptimize;
@@ -231,42 +223,23 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
                 }
             }
 
-            auto optimizedLayouts = edgeOptimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts);
-            std::cout << "[DEBUG-DragOptHandler] optimize() returned " << optimizedLayouts.size() << " layouts" << std::endl;
+            // Pass movedNodes to optimizer - FixedEndpointPenalty will handle constraints
+            auto optimizedLayouts = edgeOptimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts, movedNodes);
 
+            // Copy optimized layouts
+            // The optimizer respects constraints, preserving positions and snap indices
+            // for endpoints connected to unmoved nodes
             for (auto& [edgeId, layout] : optimizedLayouts) {
                 auto it = edgeLayouts.find(edgeId);
                 if (it != edgeLayouts.end()) {
-                    std::cout << "[DEBUG-DragOptHandler] Edge " << edgeId
-                              << " BEFORE: snapIdx=(" << it->second.sourceSnapIndex << "," << it->second.targetSnapIndex << ")"
-                              << " src=" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y
-                              << " tgt=" << it->second.targetPoint.x << "," << it->second.targetPoint.y << std::endl;
-
-                    it->second.sourceEdge = layout.sourceEdge;
-                    it->second.targetEdge = layout.targetEdge;
-                    it->second.sourcePoint = layout.sourcePoint;
-                    it->second.targetPoint = layout.targetPoint;
-                    it->second.bendPoints = layout.bendPoints;
-                    it->second.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-                    it->second.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-
-                    std::cout << "[DEBUG-DragOptHandler] Edge " << edgeId
-                              << " AFTER: snapIdx=(" << it->second.sourceSnapIndex << "," << it->second.targetSnapIndex << ")"
-                              << " src=" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y
-                              << " tgt=" << it->second.targetPoint.x << "," << it->second.targetPoint.y << std::endl;
+                    it->second = layout;
                 }
             }
 
-            std::cout << "[DEBUG-DragOptHandler] Calling snapUpdateFunc_ with skipBendPointRecalc=true" << std::endl;
             snapUpdateFunc_(edgeLayouts, nodeLayouts, edgesToOptimize, movedNodes, gridSize, true);
             usedDragOptimizer = true;
-            std::cout << "[DEBUG-DragOptHandler] usedDragOptimizer=true, will SKIP A* post-processing" << std::endl;
-        } else {
-            std::cout << "[DEBUG-DragOptHandler] No optimizer created for dragAlgorithm="
-                      << static_cast<int>(options.optimizationOptions.dragAlgorithm) << std::endl;
         }
     } else {
-        std::cout << "[DEBUG-DragOptHandler] dragAlgorithm is None or affectedEdges empty, calling snapUpdateFunc_ directly" << std::endl;
         snapUpdateFunc_(edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize, false);
     }
 

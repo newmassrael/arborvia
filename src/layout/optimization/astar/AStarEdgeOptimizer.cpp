@@ -54,7 +54,11 @@ float AStarEdgeOptimizer::effectiveGridSize() const {
 std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     const std::vector<EdgeId>& edges,
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_set<NodeId>& movedNodes) {
+
+    // Store constraint state in base class for FixedEndpointPenalty
+    setConstraintState(currentLayouts, movedNodes);
 
     // Calculate forbidden zones once for all edges
     float gridSize = effectiveGridSize();
@@ -304,6 +308,8 @@ AStarEdgeOptimizer::evaluateCombinations(
             PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
             ctx.sourceNodeId = baseLayout.from;
             ctx.targetNodeId = baseLayout.to;
+            ctx.originalLayouts = originalLayouts_;
+            ctx.movedNodes = movedNodes_;
             
             if (passesHardConstraints(baseLayout, ctx)) {
                 int score = calculatePenalty(baseLayout, ctx);
@@ -347,6 +353,8 @@ AStarEdgeOptimizer::evaluateCombinations(
         PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
         ctx.sourceNodeId = candidate.from;
         ctx.targetNodeId = candidate.to;
+        ctx.originalLayouts = originalLayouts_;
+        ctx.movedNodes = movedNodes_;
 
         // Check hard constraints first
         if (!passesHardConstraints(candidate, ctx)) {
@@ -361,6 +369,7 @@ AStarEdgeOptimizer::evaluateCombinations(
         // Preserve existing direction - only evaluate current combination
         evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
     } else {
+        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
         // Optimize directions with smart ordering based on node positions
         // Threshold for early return: score below this means acceptable path found
         constexpr int EARLY_RETURN_SCORE_THRESHOLD = 100;
@@ -529,6 +538,8 @@ AStarEdgeOptimizer::evaluateCombinations(
             PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
             ctx.sourceNodeId = baseLayout.from;
             ctx.targetNodeId = baseLayout.to;
+            ctx.originalLayouts = originalLayouts_;
+            ctx.movedNodes = movedNodes_;
             
             if (passesHardConstraints(baseLayout, ctx)) {
                 int score = calculatePenalty(baseLayout, ctx);
@@ -550,6 +561,8 @@ AStarEdgeOptimizer::evaluateCombinations(
         PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
         ctx.sourceNodeId = candidate.from;
         ctx.targetNodeId = candidate.to;
+        ctx.originalLayouts = originalLayouts_;
+        ctx.movedNodes = movedNodes_;
 
         if (!passesHardConstraints(candidate, ctx)) {
             return;
@@ -560,8 +573,10 @@ AStarEdgeOptimizer::evaluateCombinations(
     };
 
     if (preserveDirections()) {
+        // Preserve existing direction - only evaluate current combination
         evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
     } else {
+        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
         constexpr int EARLY_RETURN_SCORE_THRESHOLD = 100;
         
         auto srcNodeIt = nodeLayouts.find(baseLayout.from);
@@ -695,11 +710,42 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
 
     float gridSize = effectiveGridSize();
 
-    GridPoint startGrid = calculateGridPosition(srcIt->second, sourceEdge, gridSize);
-    GridPoint goalGrid = calculateGridPosition(tgtIt->second, targetEdge, gridSize);
+    // === Fixed Endpoint Optimization ===
+    // This is a PERFORMANCE OPTIMIZATION that works with FixedEndpointPenalty:
+    // - Here: Preserve position/snapIndex early to avoid generating invalid candidates
+    // - FixedEndpointPenalty: Final enforcement that rejects any violations
+    // Both check: (1) node is fixed, (2) edge matches original
+    // If edge differs, new position is generated and FixedEndpointPenalty will reject it
+    bool srcFixed = isNodeFixed(base.from);
+    bool tgtFixed = isNodeFixed(base.to);
 
-    candidate.sourcePoint = obstacles.gridToPixel(startGrid.x, startGrid.y);
-    candidate.targetPoint = obstacles.gridToPixel(goalGrid.x, goalGrid.y);
+    GridPoint startGrid, goalGrid;
+    
+    if (srcFixed && sourceEdge == base.sourceEdge) {
+        // Source is fixed - preserve existing position
+        candidate.sourcePoint = base.sourcePoint;
+        candidate.sourceSnapIndex = base.sourceSnapIndex;  // Preserve snap index
+        startGrid = {
+            static_cast<int>(std::round(base.sourcePoint.x / gridSize)),
+            static_cast<int>(std::round(base.sourcePoint.y / gridSize))
+        };
+    } else {
+        startGrid = calculateGridPosition(srcIt->second, sourceEdge, gridSize);
+        candidate.sourcePoint = obstacles.gridToPixel(startGrid.x, startGrid.y);
+    }
+    
+    if (tgtFixed && targetEdge == base.targetEdge) {
+        // Target is fixed - preserve existing position
+        candidate.targetPoint = base.targetPoint;
+        candidate.targetSnapIndex = base.targetSnapIndex;  // Preserve snap index
+        goalGrid = {
+            static_cast<int>(std::round(base.targetPoint.x / gridSize)),
+            static_cast<int>(std::round(base.targetPoint.y / gridSize))
+        };
+    } else {
+        goalGrid = calculateGridPosition(tgtIt->second, targetEdge, gridSize);
+        candidate.targetPoint = obstacles.gridToPixel(goalGrid.x, goalGrid.y);
+    }
 
     // Use provided pathfinder (thread-safe)
     PathResult pathResult = pathFinder.findPath(
@@ -1065,6 +1111,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
             PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
             ctxA.sourceNodeId = layoutA.from;
             ctxA.targetNodeId = layoutA.to;
+            ctxA.originalLayouts = originalLayouts_;
+            ctxA.movedNodes = movedNodes_;
             int scoreA = calculatePenalty(layoutA, ctxA);
 
             std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
@@ -1072,6 +1120,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
             PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
             ctxB.sourceNodeId = adjustedB.from;
             ctxB.targetNodeId = adjustedB.to;
+            ctxB.originalLayouts = originalLayouts_;
+            ctxB.movedNodes = movedNodes_;
             int scoreB = calculatePenalty(adjustedB, ctxB);
 
             result.layoutA = layoutA;
@@ -1097,11 +1147,15 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
             PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
             ctxA.sourceNodeId = adjustedA.from;
             ctxA.targetNodeId = adjustedA.to;
+            ctxA.originalLayouts = originalLayouts_;
+            ctxA.movedNodes = movedNodes_;
             int scoreA = calculatePenalty(adjustedA, ctxA);
 
             PenaltyContext ctxB{withAdjA, nodeLayouts, forbiddenZones, gridSize};
             ctxB.sourceNodeId = layoutB.from;
             ctxB.targetNodeId = layoutB.to;
+            ctxB.originalLayouts = originalLayouts_;
+            ctxB.movedNodes = movedNodes_;
             int scoreB = calculatePenalty(layoutB, ctxB);
 
             result.layoutA = adjustedA;
@@ -1165,6 +1219,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
                         PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
                         ctxA.sourceNodeId = layoutA.from;
                         ctxA.targetNodeId = layoutA.to;
+                        ctxA.originalLayouts = originalLayouts_;
+                        ctxA.movedNodes = movedNodes_;
                         int scoreA = calculatePenalty(layoutA, ctxA);
 
                         std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
@@ -1172,6 +1228,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
                         PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
                         ctxB.sourceNodeId = adjustedB.from;
                         ctxB.targetNodeId = adjustedB.to;
+                        ctxB.originalLayouts = originalLayouts_;
+                        ctxB.movedNodes = movedNodes_;
                         int scoreB = calculatePenalty(adjustedB, ctxB);
 
                         result.layoutA = layoutA;
@@ -1225,6 +1283,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
                     PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
                     ctxA.sourceNodeId = layoutA.from;
                     ctxA.targetNodeId = layoutA.to;
+                    ctxA.originalLayouts = originalLayouts_;
+                    ctxA.movedNodes = movedNodes_;
                     int scoreA = calculatePenalty(layoutA, ctxA);
 
                     std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
@@ -1232,6 +1292,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
                     PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
                     ctxB.sourceNodeId = adjustedB.from;
                     ctxB.targetNodeId = adjustedB.to;
+                    ctxB.originalLayouts = originalLayouts_;
+                    ctxB.movedNodes = movedNodes_;
                     int scoreB = calculatePenalty(adjustedB, ctxB);
 
                     result.layoutA = layoutA;
@@ -1291,6 +1353,8 @@ AStarEdgeOptimizer::evaluateSelfLoopCombinations(
         PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
         ctx.sourceNodeId = candidate.from;
         ctx.targetNodeId = candidate.to;
+        ctx.originalLayouts = originalLayouts_;
+        ctx.movedNodes = movedNodes_;
 
         // Check hard constraints (segment overlap, etc.)
         if (!passesHardConstraints(candidate, ctx)) {
@@ -1371,6 +1435,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
             PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
             ctxA.sourceNodeId = candidateA.from;
             ctxA.targetNodeId = candidateA.to;
+            ctxA.originalLayouts = originalLayouts_;
+            ctxA.movedNodes = movedNodes_;
             if (!passesHardConstraints(candidateA, ctxA)) continue;
             ++passedHardA;
 
@@ -1396,6 +1462,8 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
                     PenaltyContext ctxB{withA, nodeLayouts, forbiddenZones, gridSize};
                     ctxB.sourceNodeId = candidateB.from;
                     ctxB.targetNodeId = candidateB.to;
+                    ctxB.originalLayouts = originalLayouts_;
+                    ctxB.movedNodes = movedNodes_;
                     if (!passesHardConstraints(candidateB, ctxB)) continue;
                     ++passedHardB;
 

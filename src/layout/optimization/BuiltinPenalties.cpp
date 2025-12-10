@@ -449,4 +449,56 @@ int OrthogonalityPenalty::calculatePenalty(
     return 0;  // All segments are orthogonal
 }
 
+// === FixedEndpointPenalty ===
+
+int FixedEndpointPenalty::calculatePenalty(
+    const EdgeLayout& candidate,
+    const PenaltyContext& context) const {
+    
+    // If no constraints are set, no penalty
+    if (context.movedNodes.empty() || context.originalLayouts == nullptr) {
+        return 0;
+    }
+    
+    // Find original layout for this edge
+    auto originalIt = context.originalLayouts->find(candidate.id);
+    if (originalIt == context.originalLayouts->end()) {
+        return 0;  // No original layout to compare against
+    }
+    const EdgeLayout& original = originalIt->second;
+    
+    // Single violation flag - any violation returns HARD_CONSTRAINT_PENALTY
+    // This is the SINGLE SOURCE OF TRUTH for endpoint constraint checking
+    
+    // Check source endpoint - if source node is fixed, edge AND position must match
+    if (context.isEndpointFixed(candidate.from)) {
+        // Edge direction must match
+        if (candidate.sourceEdge != original.sourceEdge) {
+            return defaultWeight();
+        }
+        // Position must match within tolerance
+        float srcDx = std::abs(candidate.sourcePoint.x - original.sourcePoint.x);
+        float srcDy = std::abs(candidate.sourcePoint.y - original.sourcePoint.y);
+        if (srcDx > tolerance_ || srcDy > tolerance_) {
+            return defaultWeight();
+        }
+    }
+    
+    // Check target endpoint - if target node is fixed, edge AND position must match
+    if (context.isEndpointFixed(candidate.to)) {
+        // Edge direction must match
+        if (candidate.targetEdge != original.targetEdge) {
+            return defaultWeight();
+        }
+        // Position must match within tolerance
+        float tgtDx = std::abs(candidate.targetPoint.x - original.targetPoint.x);
+        float tgtDy = std::abs(candidate.targetPoint.y - original.targetPoint.y);
+        if (tgtDx > tolerance_ || tgtDy > tolerance_) {
+            return defaultWeight();
+        }
+    }
+    
+    return 0;
+}
+
 }  // namespace arborvia

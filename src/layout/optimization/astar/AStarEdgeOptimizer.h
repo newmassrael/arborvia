@@ -40,11 +40,13 @@ public:
     /// @param edges Edges to optimize (processed in order)
     /// @param currentLayouts Current edge layouts (used as base for combinations)
     /// @param nodeLayouts Node positions
+    /// @param movedNodes Nodes that were moved (endpoints on other nodes are fixed)
     /// @return Map of optimized edge layouts
     std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
         const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_set<NodeId>& movedNodes = {}) override;
 
     const char* algorithmName() const override { return "AStar"; }
 
@@ -68,6 +70,10 @@ private:
     std::shared_ptr<IPathFinder> pathFinder_;
     float gridSize_ = 0.0f;
     bool parallelEnabled_ = true;
+    
+    // Constraint state inherited from IEdgeOptimizer:
+    // - originalLayouts_, movedNodes_, isNodeFixed(), setConstraintState()
+    // - createPenaltyContext() for consistent PenaltyContext creation
 
     /// Result of evaluating a single edge combination (uses shared type)
     using CombinationResult = EdgeCombinationResult;

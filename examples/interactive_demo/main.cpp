@@ -11,6 +11,7 @@
 #include "../../src/layout/snap/GridSnapCalculator.h"
 #include "../../src/layout/pathfinding/AStarPathFinder.h"
 #include "../../src/layout/routing/OrthogonalRouter.h"
+#include "../../src/layout/routing/CooperativeRerouter.h"
 #include "CommandServer.h"
 
 #include <unordered_map>
@@ -185,7 +186,9 @@ public:
         // Configure routing coordinator
         routingCoordinator_->setDebounceDelay(0);  // Immediate A* after drop (no delay)
         routingCoordinator_->setListener(this);
-        routingCoordinator_->setOptimizationCallback([this](const std::vector<EdgeId>& /*affectedEdges*/) {
+        routingCoordinator_->setOptimizationCallback(
+            [this](const std::vector<EdgeId>& /*affectedEdges*/,
+                   const std::unordered_set<NodeId>& movedNodes) {
             // Re-route ALL edges with A* after drop
             // This ensures all transitions are recalculated, including self-loops
             std::vector<EdgeId> allEdges;
@@ -194,35 +197,12 @@ public:
                 allEdges.push_back(edgeId);
             }
 
-            std::cout << "[DEBUG-optimizationCallback] Called with " << allEdges.size() << " edges" << std::endl;
-            std::cout << "[DEBUG-optimizationCallback] movedNodes passed as EMPTY set (BUG?)" << std::endl;
-            std::cout << "[DEBUG-optimizationCallback] dragAlgorithm="
-                      << static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm)
-                      << " postDragAlgorithm="
-                      << static_cast<int>(layoutOptions_.optimizationOptions.postDragAlgorithm) << std::endl;
+            std::cout << "[DEBUG-optimizationCallback] allEdges.size()=" << allEdges.size() 
+                      << " movedNodes.size()=" << movedNodes.size() << std::endl;
 
-            // Dump edge layouts BEFORE optimization
-            std::cout << "[DEBUG-optimizationCallback] Edge layouts BEFORE:" << std::endl;
-            for (const auto& [edgeId, layout] : edgeLayouts_) {
-                std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
-                          << "," << layout.targetSnapIndex << ") src=" << layout.sourcePoint.x
-                          << "," << layout.sourcePoint.y << " tgt=" << layout.targetPoint.x
-                          << "," << layout.targetPoint.y << std::endl;
-            }
-
-            // Use overload with LayoutOptions to trigger A* optimization
             LayoutUtils::updateEdgePositions(
                 edgeLayouts_, nodeLayouts_, allEdges,
-                layoutOptions_, {});
-
-            // Dump edge layouts AFTER optimization
-            std::cout << "[DEBUG-optimizationCallback] Edge layouts AFTER:" << std::endl;
-            for (const auto& [edgeId, layout] : edgeLayouts_) {
-                std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
-                          << "," << layout.targetSnapIndex << ") src=" << layout.sourcePoint.x
-                          << "," << layout.sourcePoint.y << " tgt=" << layout.targetPoint.x
-                          << "," << layout.targetPoint.y << std::endl;
-            }
+                layoutOptions_, movedNodes);
         });
 
         setupGraph();
@@ -574,7 +554,8 @@ public:
                 rerouteAffectedEdges();
 
                 // Signal drag end - coordinator will schedule optimization after delay
-                routingCoordinator_->onDragEnd();
+                // Pass movedNodes before draggedNode_ is reset
+                routingCoordinator_->onDragEnd({draggedNode_});
             }
             draggedNode_ = INVALID_NODE;
             // Don't clear affectedEdges_ here when HideUntilDrop is active
@@ -1613,7 +1594,7 @@ private:
                     }
                     // Trigger A* optimization callback (same as GUI drag end)
                     routingCoordinator_->onDragStart(allEdges);
-                    routingCoordinator_->onDragEnd();
+                    routingCoordinator_->onDragEnd({nodeId});
                     commandServer_.sendResponse("OK drag " + std::to_string(nodeId));
                 } else {
                     commandServer_.sendResponse("BLOCKED " + result.reason);
@@ -1651,7 +1632,7 @@ private:
                     affectedEdges_ = affected;
                     
                     // Trigger drag end - this schedules A* optimization
-                    routingCoordinator_->onDragEnd();
+                    routingCoordinator_->onDragEnd({nodeId});
                     
                     commandServer_.sendResponse("OK set_pos " + std::to_string(nodeId));
                 } else {
@@ -1734,6 +1715,99 @@ private:
                 commandServer_.sendResponse("ERROR edge not found");
             }
         }
+        else if (cmd.name == "test_coop_reroute" && cmd.args.size() >= 1) {
+            // test_coop_reroute <edge_id> - Test cooperative rerouting for single edge
+            // New algorithm: find my path, identify blocking edges that overlap (not cross),
+            // reroute blocking edges with my path as obstacle to force them around
+            EdgeId edgeId = std::stoi(cmd.args[0]);
+
+            if (edgeLayouts_.count(edgeId)) {
+                std::cout << "\n========== TEST_COOP_REROUTE START ==========" << std::endl;
+                std::cout << "[coop_reroute] Edge " << edgeId << std::endl;
+
+                const EdgeLayout& currentLayout = edgeLayouts_[edgeId];
+                std::cout << "[coop_reroute] BEFORE: src=(" << currentLayout.sourcePoint.x 
+                          << "," << currentLayout.sourcePoint.y << ") srcEdge=" 
+                          << static_cast<int>(currentLayout.sourceEdge) << std::endl;
+                std::cout << "[coop_reroute] BEFORE: tgt=(" << currentLayout.targetPoint.x 
+                          << "," << currentLayout.targetPoint.y << ") tgtEdge=" 
+                          << static_cast<int>(currentLayout.targetEdge) << std::endl;
+                std::cout << "[coop_reroute] BEFORE: bendPoints=" << currentLayout.bendPoints.size() << std::endl;
+
+                // Build other layouts (excluding this edge)
+                std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
+                for (const auto& [eid, layout] : edgeLayouts_) {
+                    if (eid != edgeId) {
+                        otherLayouts[eid] = layout;
+                    }
+                }
+
+                // Create cooperative rerouter
+                CooperativeRerouter rerouter(nullptr, gridSize_);
+                auto result = rerouter.rerouteWithCooperation(edgeId, currentLayout, otherLayouts, nodeLayouts_);
+
+                std::cout << "[coop_reroute] Result: success=" << result.success 
+                          << " attempts=" << result.attempts
+                          << " reroutedEdges=" << result.reroutedEdges.size() << std::endl;
+
+                if (result.success) {
+                    std::cout << "[coop_reroute] AFTER: src=(" << result.layout.sourcePoint.x 
+                              << "," << result.layout.sourcePoint.y << ") srcEdge=" 
+                              << static_cast<int>(result.layout.sourceEdge) << std::endl;
+                    std::cout << "[coop_reroute] AFTER: tgt=(" << result.layout.targetPoint.x 
+                              << "," << result.layout.targetPoint.y << ") tgtEdge=" 
+                              << static_cast<int>(result.layout.targetEdge) << std::endl;
+                    std::cout << "[coop_reroute] AFTER: bendPoints=" << result.layout.bendPoints.size() << std::endl;
+                    
+                    // Apply the result (my layout)
+                    edgeLayouts_[edgeId] = result.layout;
+                    std::cout << "[coop_reroute] My layout applied." << std::endl;
+
+                    // Apply rerouted blocking edges
+                    for (const auto& reroutedLayout : result.reroutedEdges) {
+                        edgeLayouts_[reroutedLayout.id] = reroutedLayout;
+                        std::cout << "[coop_reroute] Blocking edge " << reroutedLayout.id 
+                                  << " rerouted." << std::endl;
+                    }
+
+                    // Also update otherLayouts back to edgeLayouts_ (they may have been modified)
+                    for (const auto& [eid, layout] : otherLayouts) {
+                        edgeLayouts_[eid] = layout;
+                    }
+                } else {
+                    std::cout << "[coop_reroute] Failed: " << result.failureReason << std::endl;
+                }
+
+                std::cout << "========== TEST_COOP_REROUTE END ==========\n" << std::endl;
+                commandServer_.sendResponse(result.success ? "OK test_coop_reroute" : "FAILED " + result.failureReason);
+            } else {
+                commandServer_.sendResponse("ERROR edge not found");
+            }
+        }
+        else if (cmd.name == "test_coop_pair" && cmd.args.size() >= 2) {
+            // test_coop_pair <edge_id_a> <edge_id_b> - Check if two edges have segment overlap
+            // This is now a simple overlap check, not rerouting
+            EdgeId edgeIdA = std::stoi(cmd.args[0]);
+            EdgeId edgeIdB = std::stoi(cmd.args[1]);
+
+            if (edgeLayouts_.count(edgeIdA) && edgeLayouts_.count(edgeIdB)) {
+                std::cout << "\n========== TEST_COOP_PAIR START ==========" << std::endl;
+                std::cout << "[coop_pair] Checking overlap between edges " << edgeIdA << " and " << edgeIdB << std::endl;
+
+                const EdgeLayout& layoutA = edgeLayouts_[edgeIdA];
+                const EdgeLayout& layoutB = edgeLayouts_[edgeIdB];
+
+                bool hasOverlap = CooperativeRerouter::hasSegmentOverlap(layoutA, layoutB);
+
+                std::cout << "[coop_pair] Result: hasOverlap=" << (hasOverlap ? "true" : "false") << std::endl;
+                std::cout << "[coop_pair] (Cross intersections allowed, parallel segment overlaps forbidden)" << std::endl;
+
+                std::cout << "========== TEST_COOP_PAIR END ==========\n" << std::endl;
+                commandServer_.sendResponse(hasOverlap ? "OVERLAP" : "NO_OVERLAP");
+            } else {
+                commandServer_.sendResponse("ERROR one or both edges not found");
+            }
+        }
         else if (cmd.name == "test_drag" && cmd.args.size() >= 3) {
             // test_drag <node_id> <dx> <dy> - Full drag simulation with detailed logging
             NodeId nodeId = std::stoi(cmd.args[0]);
@@ -1788,7 +1862,7 @@ private:
                 std::cout << "[test_drag] Calling onDragEnd()..." << std::endl;
                 std::cout << "[test_drag] dragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm)
                           << " postDragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.postDragAlgorithm) << std::endl;
-                routingCoordinator_->onDragEnd();
+                routingCoordinator_->onDragEnd({nodeId});
                 std::cout << "[test_drag] routingCoordinator state after onDragEnd: "
                           << static_cast<int>(routingCoordinator_->state()) << std::endl;
 

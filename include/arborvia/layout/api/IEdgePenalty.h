@@ -6,6 +6,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace arborvia {
@@ -28,6 +29,21 @@ struct PenaltyContext {
     /// Source and target node IDs (for exclusion in collision checks)
     NodeId sourceNodeId = INVALID_NODE;
     NodeId targetNodeId = INVALID_NODE;
+    
+    /// Original edge layouts before optimization (for FixedEndpointPenalty)
+    /// Empty if no endpoint constraints apply
+    const std::unordered_map<EdgeId, EdgeLayout>* originalLayouts = nullptr;
+    
+    /// Nodes that were moved during drag operation
+    /// Endpoints on nodes NOT in this set should be preserved
+    /// Empty set means no constraints (all endpoints can change)
+    std::unordered_set<NodeId> movedNodes = {};
+    
+    /// Check if a node's endpoint should be fixed (not moved)
+    bool isEndpointFixed(NodeId nodeId) const {
+        if (movedNodes.empty()) return false;
+        return movedNodes.count(nodeId) == 0;
+    }
 };
 
 /// Hard constraint penalty value (200,000)

@@ -19,7 +19,8 @@ public:
     std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
         const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_set<NodeId>& movedNodes = {}) override;
 
     const char* algorithmName() const override { return "Geometric"; }
 
@@ -178,6 +179,10 @@ private:
         NodeId targetNodeId);
 
     float gridSize_ = 20.0f;
+    
+    // Constraint state inherited from IEdgeOptimizer:
+    // - originalLayouts_, movedNodes_, isNodeFixed(), setConstraintState()
+    // - createPenaltyContext() for consistent PenaltyContext creation
 };
 
 }  // namespace arborvia

@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
+#include <unordered_set>
 
 namespace arborvia {
 
@@ -109,7 +110,8 @@ public:
 
     /// Call when drag operation ends (mouse released)
     /// Transitions to Pending state and starts debounce timer
-    void onDragEnd();
+    /// @param movedNodes Nodes that were moved during drag (stored for optimization callback)
+    void onDragEnd(const std::unordered_set<NodeId>& movedNodes);
 
     /// Add additional edges to the pending optimization queue
     /// Useful for adding edges that penetrate a newly positioned node
@@ -152,8 +154,10 @@ public:
     // === Optimization Execution ===
 
     /// Callback type for optimization execution
-    /// The callback receives the edges to optimize and should use dropPathFinder()
-    using OptimizationCallback = std::function<void(const std::vector<EdgeId>&)>;
+    /// The callback receives the edges to optimize and moved nodes, and should use dropPathFinder()
+    using OptimizationCallback = std::function<void(
+        const std::vector<EdgeId>&,
+        const std::unordered_set<NodeId>&)>;
 
     /// Set callback for executing the actual optimization
     /// This allows the coordinator to trigger re-routing through EdgeRouting
@@ -168,6 +172,7 @@ private:
     uint32_t debounceDelayMs_ = DEFAULT_DEBOUNCE_DELAY_MS;
 
     std::vector<EdgeId> pendingEdges_;
+    std::unordered_set<NodeId> movedNodes_;
     IRoutingListener* listener_ = nullptr;
     OptimizationCallback optimizationCallback_;
 

@@ -59,10 +59,13 @@ void PathRoutingCoordinator::onDragStart(const std::vector<EdgeId>& affectedEdge
     dropTimeMs_ = 0;
 }
 
-void PathRoutingCoordinator::onDragEnd() {
+void PathRoutingCoordinator::onDragEnd(const std::unordered_set<NodeId>& movedNodes) {
     if (state_ != RoutingState::Dragging) {
         return;  // Not dragging, nothing to do
     }
+
+    // Store moved nodes for optimization callback
+    movedNodes_ = movedNodes;
 
     if (debounceDelayMs_ == 0) {
         // No delay, execute immediately
@@ -109,6 +112,7 @@ void PathRoutingCoordinator::cancelPendingOptimization() {
     if (state_ == RoutingState::Pending) {
         state_ = RoutingState::Idle;
         pendingEdges_.clear();
+        movedNodes_.clear();
         dropTimeMs_ = 0;
     }
 }
@@ -156,7 +160,7 @@ void PathRoutingCoordinator::executeOptimization() {
 
     // Execute the optimization callback if set
     if (optimizationCallback_) {
-        optimizationCallback_(pendingEdges_);
+        optimizationCallback_(pendingEdges_, movedNodes_);
     }
 
     // Notify listener
@@ -164,9 +168,10 @@ void PathRoutingCoordinator::executeOptimization() {
         listener_->onOptimizationComplete(pendingEdges_);
     }
 
-    // Clear pending edges
+    // Clear pending state
     std::vector<EdgeId> optimizedEdges = std::move(pendingEdges_);
     pendingEdges_.clear();
+    movedNodes_.clear();
     dropTimeMs_ = 0;
 }
 

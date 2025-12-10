@@ -8,6 +8,7 @@
 #include "arborvia/layout/util/LayoutUtils.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -78,15 +79,28 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
     const NodeLayout& node = nodeIt->second;
     int candidateCount = GridSnapCalculator::getCandidateCount(node, nodeEdge, effectiveGridSize);
 
-    // For unmoved nodes, just clamp out-of-range indices without redistributing
+    // For unmoved nodes, fix invalid indices without full redistribution
     if (!shouldUpdateNode(nodeId)) {
         for (const auto& [edgeId, isSource] : connections) {
             auto it = edgeLayouts.find(edgeId);
             if (it != edgeLayouts.end()) {
                 int& snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
                 Point& snapPoint = isSource ? it->second.sourcePoint : it->second.targetPoint;
-                if (snapIdx < 0 || snapIdx >= candidateCount) {
-                    snapIdx = std::max(0, std::min(snapIdx, candidateCount - 1));
+                
+                bool needsUpdate = false;
+                
+                if (snapIdx < 0) {
+                    // UNASSIGNED: find nearest snap index from current position
+                    snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                        node, nodeEdge, snapPoint, effectiveGridSize);
+                    needsUpdate = true;
+                } else if (snapIdx >= candidateCount) {
+                    // Out of range: clamp to valid range
+                    snapIdx = candidateCount - 1;
+                    needsUpdate = true;
+                }
+                
+                if (needsUpdate) {
                     snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                         node, nodeEdge, snapIdx, effectiveGridSize);
                 }

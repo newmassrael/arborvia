@@ -17,6 +17,7 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createDefault() {
     system->addPenalty(std::make_unique<SelfOverlapPenalty>(20.0f));
     system->addPenalty(std::make_unique<ForbiddenZonePenalty>());
     system->addPenalty(std::make_unique<OrthogonalityPenalty>());
+    system->addPenalty(std::make_unique<FixedEndpointPenalty>());
 
     // Soft penalties
     system->addPenalty(std::make_unique<PathIntersectionPenalty>(1000));

@@ -123,4 +123,22 @@ public:
     bool isHardConstraint() const override { return true; }
 };
 
+/// Penalty for changing endpoints on fixed (unmoved) nodes
+/// When a node was not moved during drag, its edge endpoints should be preserved
+/// Weight: 200,000 (hard constraint)
+class FixedEndpointPenalty : public IEdgePenalty {
+public:
+    explicit FixedEndpointPenalty(float tolerance = 1.0f)
+        : tolerance_(tolerance) {}
+
+    int calculatePenalty(const EdgeLayout& candidate,
+                         const PenaltyContext& context) const override;
+    std::string name() const override { return "FixedEndpoint"; }
+    int defaultWeight() const override { return HARD_CONSTRAINT_PENALTY; }
+    bool isHardConstraint() const override { return true; }
+
+private:
+    float tolerance_;
+};
+
 }  // namespace arborvia
