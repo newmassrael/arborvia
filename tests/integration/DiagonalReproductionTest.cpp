@@ -71,26 +71,22 @@ protected:
         return false;
     }
 
-    // Helper: Simulate drag and update edges with constraint-satisfying adjustment
+    // Helper: Simulate drag and update edges using moveNode() with rejection
     void simulateDrag(NodeId nodeId, float dx, float dy) {
-        nodeLayouts_[nodeId].position.x += dx;
-        nodeLayouts_[nodeId].position.y += dy;
-        manager_->setNodePosition(nodeId, nodeLayouts_[nodeId].position);
-
-        std::vector<EdgeId> affected = graph_.getConnectedEdges(nodeId);
+        Point newPosition = nodeLayouts_[nodeId].position;
+        newPosition.x += dx;
+        newPosition.y += dy;
         
-        // Use constraint-satisfying API that adjusts node position if A* fails
-        bool success = LayoutUtils::updateEdgePositionsWithConstraints(
-            edgeLayouts_, nodeLayouts_, affected,
-            graph_, options_, {nodeId});
+        // Use moveNode() which has built-in rejection for invalid positions
+        auto result = LayoutUtils::moveNode(
+            nodeId, newPosition,
+            nodeLayouts_, edgeLayouts_,
+            graph_, options_, {});
         
-        if (!success) {
-            std::cout << "[simulateDrag] Warning: Could not find valid node position for node "
-                      << nodeId << std::endl;
+        if (result.success) {
+            // Update manager with actual position (may be adjusted)
+            manager_->setNodePosition(nodeId, result.actualPosition);
         }
-        
-        // Update manager with potentially adjusted position
-        manager_->setNodePosition(nodeId, nodeLayouts_[nodeId].position);
     }
 
     // Helper: Do initial layout

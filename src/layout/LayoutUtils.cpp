@@ -13,11 +13,17 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <set>
 
 namespace arborvia {
 
 namespace {
     constexpr float EPSILON_LEN2 = 0.0001f;  // Minimum squared length for valid segment
+    
+    // ConstraintSolver configuration constants
+    constexpr float CONSTRAINT_SEARCH_RADIUS = 400.0f;  // Max distance to search for valid position
+    constexpr int CONSTRAINT_MAX_ITERATIONS = 2000;     // Max BFS iterations
+    constexpr float NODE_AREA_MARGIN = 5.0f;            // Margin for indirect edge detection
 
     // Check if a line segment intersects a rectangle (AABB)
     bool segmentIntersectsRect(const Point& p1, const Point& p2,
@@ -139,7 +145,7 @@ MoveResult LayoutUtils::moveNode(
 
     // Use ConstraintSolver to find valid position satisfying A* paths
     float gridSize = options.gridConfig.cellSize > 0 ? options.gridConfig.cellSize : 10.0f;
-    ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+    ConstraintSolver solver({gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
     
     auto placementResult = solver.placeNode(
         nodeId,
@@ -271,6 +277,82 @@ static bool hasDiagonalSegments(const EdgeLayout& edge) {
     return false;
 }
 
+// Helper: Check if a segment passes through node area (for indirect edge detection)
+static bool segmentPassesThroughNodeArea(
+    Point p1, Point p2,
+    float nodeX, float nodeY, float nodeW, float nodeH) {
+    
+    // Expand node area slightly for margin
+    float margin = NODE_AREA_MARGIN;
+    float minX = nodeX - margin;
+    float maxX = nodeX + nodeW + margin;
+    float minY = nodeY - margin;
+    float maxY = nodeY + nodeH + margin;
+    
+    // Check if segment endpoints are inside node area
+    bool p1Inside = (p1.x >= minX && p1.x <= maxX && p1.y >= minY && p1.y <= maxY);
+    bool p2Inside = (p2.x >= minX && p2.x <= maxX && p2.y >= minY && p2.y <= maxY);
+    if (p1Inside || p2Inside) return true;
+    
+    // Check if segment crosses node boundaries
+    // Horizontal segment
+    if (std::abs(p1.y - p2.y) < 1.0f) {
+        float segMinX = std::min(p1.x, p2.x);
+        float segMaxX = std::max(p1.x, p2.x);
+        if (p1.y >= minY && p1.y <= maxY && segMinX <= maxX && segMaxX >= minX) {
+            return true;
+        }
+    }
+    // Vertical segment
+    if (std::abs(p1.x - p2.x) < 1.0f) {
+        float segMinY = std::min(p1.y, p2.y);
+        float segMaxY = std::max(p1.y, p2.y);
+        if (p1.x >= minX && p1.x <= maxX && segMinY <= maxY && segMaxY >= minY) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Helper: Get all edges affected by node movement (direct + indirect)
+static std::vector<EdgeId> getExpandedAffectedEdges(
+    const std::vector<EdgeId>& directEdges,
+    const std::unordered_set<NodeId>& movedNodes,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
+    
+    std::set<EdgeId> affected(directEdges.begin(), directEdges.end());
+    
+    // For each moved node, find edges that pass through its area
+    for (NodeId nodeId : movedNodes) {
+        auto nodeIt = nodeLayouts.find(nodeId);
+        if (nodeIt == nodeLayouts.end()) continue;
+        
+        const auto& node = nodeIt->second;
+        float nodeX = node.position.x;
+        float nodeY = node.position.y;
+        float nodeW = node.size.width;
+        float nodeH = node.size.height;
+        
+        for (const auto& [edgeId, edge] : edgeLayouts) {
+            if (affected.count(edgeId)) continue;  // Already in list
+            
+            // Check if any segment of this edge passes through node area
+            auto points = edge.allPoints();
+            for (size_t i = 0; i + 1 < points.size(); ++i) {
+                if (segmentPassesThroughNodeArea(points[i], points[i + 1], 
+                                          nodeX, nodeY, nodeW, nodeH)) {
+                    affected.insert(edgeId);
+                    break;
+                }
+            }
+        }
+    }
+    
+    return std::vector<EdgeId>(affected.begin(), affected.end());
+}
+
 bool LayoutUtils::updateEdgePositionsWithConstraints(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -282,15 +364,18 @@ bool LayoutUtils::updateEdgePositionsWithConstraints(
     constexpr int MAX_ADJUSTMENT_ITERATIONS = 5;
     float gridSize = options.gridConfig.cellSize > 0 ? options.gridConfig.cellSize : 10.0f;
     
+    // Expand affected edges to include indirectly affected ones
+    std::vector<EdgeId> expandedAffectedEdges = getExpandedAffectedEdges(
+        affectedEdges, movedNodes, nodeLayouts, edgeLayouts);
+    
     for (int iteration = 0; iteration < MAX_ADJUSTMENT_ITERATIONS; ++iteration) {
         // Step 1: Try to route edges with current node positions
-        updateEdgePositions(edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes);
+        updateEdgePositions(edgeLayouts, nodeLayouts, expandedAffectedEdges, options, movedNodes);
         
-        // Step 2: Check for diagonal segments (A* failures)
+        // Step 2: Check for diagonal segments (A* failures) in ALL edges
         std::vector<EdgeId> diagonalEdges;
-        for (EdgeId edgeId : affectedEdges) {
-            auto it = edgeLayouts.find(edgeId);
-            if (it != edgeLayouts.end() && hasDiagonalSegments(it->second)) {
+        for (const auto& [edgeId, edge] : edgeLayouts) {
+            if (hasDiagonalSegments(edge)) {
                 diagonalEdges.push_back(edgeId);
             }
         }
@@ -300,12 +385,8 @@ bool LayoutUtils::updateEdgePositionsWithConstraints(
             return true;
         }
         
-        std::cout << "[updateEdgePositionsWithConstraints] Iteration " << iteration + 1
-                  << ": Found " << diagonalEdges.size() << " diagonal edges, adjusting node positions"
-                  << std::endl;
-        
         // Step 3: Use ConstraintSolver to find valid positions for moved nodes
-        ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+        ConstraintSolver solver({gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
         
         bool anyAdjusted = false;
         for (NodeId nodeId : movedNodes) {
@@ -322,19 +403,12 @@ bool LayoutUtils::updateEdgePositionsWithConstraints(
                 graph);
             
             if (result.success && result.positionAdjusted) {
-                std::cout << "[updateEdgePositionsWithConstraints] Node " << nodeId
-                          << " adjusted from (" << result.requestedPosition.x << "," 
-                          << result.requestedPosition.y << ") to ("
-                          << result.finalPosition.x << "," << result.finalPosition.y << ")"
-                          << std::endl;
                 anyAdjusted = true;
             }
         }
         
         if (!anyAdjusted) {
             // Could not find better positions, return with current state
-            std::cout << "[updateEdgePositionsWithConstraints] Could not find valid node positions"
-                      << std::endl;
             return false;
         }
     }
