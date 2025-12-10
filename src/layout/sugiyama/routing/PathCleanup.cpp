@@ -122,8 +122,8 @@ void PathCleanup::removeSpikesAndDuplicates(std::vector<Point>& points) {
     }
 }
 
-void PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
-    if (layout.bendPoints.empty()) return;
+bool PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
+    if (layout.bendPoints.empty()) return true;
 
     // Remove first bend if it duplicates sourcePoint
     while (!layout.bendPoints.empty() &&
@@ -131,11 +131,10 @@ void PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
         layout.bendPoints.erase(layout.bendPoints.begin());
     }
 
-    // Remove last bend if it duplicates targetPoint, but ensure proper approach direction
+    // Remove last bend if it duplicates targetPoint
     while (!layout.bendPoints.empty() &&
            isPointDuplicate(layout.bendPoints.back().position, layout.targetPoint)) {
         // Check if removing this bend would violate direction constraint
-        // Get the previous point (either previous bend or sourcePoint)
         Point prevPoint = layout.bendPoints.size() > 1
             ? layout.bendPoints[layout.bendPoints.size() - 2].position
             : layout.sourcePoint;
@@ -153,29 +152,9 @@ void PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
 
         if ((needsVerticalApproach && !isVertical) ||
             (needsHorizontalApproach && !isHorizontal)) {
-            // Removing this bend would violate direction constraint
-            // Instead of removing, adjust the bend to provide proper approach
-            Point& lastBend = layout.bendPoints.back().position;
-            if (needsVerticalApproach) {
-                // Move bend to be directly above/below target
-                lastBend.x = layout.targetPoint.x;
-                // Keep Y at previous segment's Y (or offset from target)
-                if (layout.targetEdge == NodeEdge::Top) {
-                    lastBend.y = std::min(lastBend.y, layout.targetPoint.y - DEFAULT_MARGIN);
-                } else {
-                    lastBend.y = std::max(lastBend.y, layout.targetPoint.y + DEFAULT_MARGIN);
-                }
-            } else {
-                // Move bend to be directly left/right of target
-                lastBend.y = layout.targetPoint.y;
-                // Keep X at previous segment's X (or offset from target)
-                if (layout.targetEdge == NodeEdge::Left) {
-                    lastBend.x = std::min(lastBend.x, layout.targetPoint.x - DEFAULT_MARGIN);
-                } else {
-                    lastBend.x = std::max(lastBend.x, layout.targetPoint.x + DEFAULT_MARGIN);
-                }
-            }
-            break;  // Don't remove, we adjusted it
+            // Removing this bend would create diagonal - signal that path needs regeneration
+            // DO NOT insert connector points here - that's the optimizer's job
+            return false;
         }
 
         layout.bendPoints.pop_back();
@@ -190,6 +169,8 @@ void PathCleanup::removeEndpointDuplicates(EdgeLayout& layout) {
             ++i;
         }
     }
+
+    return true;
 }
 
 void PathCleanup::moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& targetNode, float margin) {
@@ -203,7 +184,8 @@ void PathCleanup::moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& tar
     for (auto& bend : layout.bendPoints) {
         Point& p = bend.position;
 
-        // Check if point is inside or on boundary of target node
+        // Check if point is inside OR on boundary of target node
+        // Boundary points should also be moved slightly outside for visual clarity
         bool insideX = (p.x >= nodeLeft && p.x <= nodeRight);
         bool insideY = (p.y >= nodeTop && p.y <= nodeBottom);
 
@@ -235,6 +217,17 @@ void PathCleanup::moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& tar
                     }
                     break;
             }
+        }
+    }
+}
+
+void PathCleanup::removeConsecutiveDuplicates(EdgeLayout& layout) {
+    for (size_t i = 0; i + 1 < layout.bendPoints.size(); ) {
+        if (isPointDuplicate(layout.bendPoints[i].position,
+                            layout.bendPoints[i + 1].position)) {
+            layout.bendPoints.erase(layout.bendPoints.begin() + static_cast<long>(i + 1));
+        } else {
+            ++i;
         }
     }
 }

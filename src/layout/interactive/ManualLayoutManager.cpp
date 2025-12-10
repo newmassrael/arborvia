@@ -208,20 +208,13 @@ void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result) const {
         layout->sourceSnapIndex = routing.sourceSnapIndex;
         layout->targetSnapIndex = routing.targetSnapIndex;
 
-        // Apply bend points - manual takes priority over auto
-        layout->bendPoints.clear();
+        // Apply bend points - only override if user set manual bends
+        // Otherwise preserve optimizer output (do NOT overwrite with midY)
         if (routing.hasManualBendPoints()) {
-            // Use manual bend points
+            layout->bendPoints.clear();
             layout->bendPoints = routing.manualBendPoints;
-        } else {
-            // Auto orthogonal bend points
-            if (std::abs(layout->sourcePoint.x - layout->targetPoint.x) > 1.0f ||
-                std::abs(layout->sourcePoint.y - layout->targetPoint.y) > 1.0f) {
-                float midY = (layout->sourcePoint.y + layout->targetPoint.y) / 2.0f;
-                layout->bendPoints.push_back({{layout->sourcePoint.x, midY}});
-                layout->bendPoints.push_back({{layout->targetPoint.x, midY}});
-            }
         }
+        // When no manual bends: keep existing bendPoints from optimizer
     }
 }
 

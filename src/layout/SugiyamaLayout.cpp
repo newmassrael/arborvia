@@ -11,8 +11,10 @@
 #include "pathfinding/AStarPathFinder.h"
 #include "sugiyama/routing/EdgeRouting.h"
 #include "sugiyama/routing/PathCleanup.h"
+#include "optimization/geometric/GeometricEdgeOptimizer.h"
 
 #include <unordered_set>
+#include <iostream>
 
 namespace arborvia {
 
@@ -186,15 +188,58 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
 }
 
 void SugiyamaLayout::applyFinalCleanup() {
+    std::vector<EdgeId> needsRegeneration;
+
+    // First pass: cleanup and identify edges needing regeneration
     for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
         if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
-            PathCleanup::removeEndpointDuplicates(*layout);
+            // Try to cleanup - returns false if path would become invalid
+            if (!PathCleanup::removeEndpointDuplicates(*layout)) {
+                needsRegeneration.push_back(edgeId);
+                continue;  // Skip other cleanup, will regenerate
+            }
 
             // Move any bends that ended up inside the target node
             const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
             if (targetNode) {
                 float margin = std::max(options_.gridConfig.cellSize, PathCleanup::DEFAULT_MARGIN);
                 PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
+            }
+
+            // Remove any consecutive duplicates created by the above operations
+            PathCleanup::removeConsecutiveDuplicates(*layout);
+        }
+    }
+
+    // Second pass: regenerate invalid paths via optimizer
+    if (!needsRegeneration.empty()) {
+        // Collect current edge layouts for edges that need regeneration
+        std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+        for (EdgeId edgeId : needsRegeneration) {
+            if (const EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
+                edgeLayouts[edgeId] = *layout;
+            }
+        }
+
+        // Use GeometricEdgeOptimizer for fast path regeneration
+        GeometricEdgeOptimizer optimizer(options_.gridConfig.cellSize);
+        optimizer.setPreserveDirections(true);  // Keep existing source/target edges
+        optimizer.regenerateBendPoints(needsRegeneration, edgeLayouts, state_->result.nodeLayouts());
+
+        // Apply regenerated layouts
+        for (const auto& [edgeId, layout] : edgeLayouts) {
+            state_->result.setEdgeLayout(edgeId, layout);
+        }
+
+        // Final cleanup on regenerated paths
+        for (EdgeId edgeId : needsRegeneration) {
+            if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
+                const NodeLayout* targetNode = state_->result.getNodeLayout(layout->to);
+                if (targetNode) {
+                    float margin = std::max(options_.gridConfig.cellSize, PathCleanup::DEFAULT_MARGIN);
+                    PathCleanup::moveBendsOutsideNode(*layout, *targetNode, margin);
+                }
+                PathCleanup::removeConsecutiveDuplicates(*layout);
             }
         }
     }
@@ -323,6 +368,18 @@ void SugiyamaLayout::routeEdges() {
 
     // 3. Run optimizer on final snap positions to satisfy all constraints
     routing.optimizeRouting(result, state_->result.nodeLayouts(), options_);
+
+    // DEBUG: Log Edge 4 after optimizeRouting in SugiyamaLayout
+    {
+        auto it = result.edgeLayouts.find(EdgeId(4));
+        if (it != result.edgeLayouts.end()) {
+            std::cout << "[SugiyamaLayout] AFTER optimizeRouting Edge 4 bendPoints: ";
+            for (const auto& bp : it->second.bendPoints) {
+                std::cout << "(" << bp.position.x << "," << bp.position.y << ") ";
+            }
+            std::cout << std::endl;
+        }
+    }
 
     for (auto& [id, layout] : result.edgeLayouts) {
         state_->result.setEdgeLayout(id, layout);

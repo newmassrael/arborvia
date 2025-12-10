@@ -4,7 +4,6 @@
 #include "SnapIndexManager.h"
 #include "../sugiyama/routing/SelfLoopRouter.h"
 #include "../sugiyama/routing/PathCleanup.h"
-#include "../pathfinding/ObstacleMap.h"
 #include "arborvia/layout/util/LayoutUtils.h"
 #include <algorithm>
 #include <cmath>
@@ -459,8 +458,8 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
         }
     }
 
-    // Full re-route handling
-    if (result.needsFullReroute && !result.edgesNeedingReroute.empty()) {
+    // Full re-route handling - delegate to optimizer instead of direct pathfinding
+    if (result.needsFullReroute && !result.edgesNeedingReroute.empty() && edgeOptimizer) {
         std::vector<EdgeId> edgesToReroute;
         for (EdgeId edgeId : affectedEdges) {
             if (edgeLayouts.find(edgeId) != edgeLayouts.end()) {
@@ -468,61 +467,17 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
             }
         }
 
-        std::sort(edgesToReroute.begin(), edgesToReroute.end(), [&](EdgeId a, EdgeId b) {
-            auto itA = edgeLayouts.find(a);
-            auto itB = edgeLayouts.find(b);
-            if (itA == edgeLayouts.end() || itB == edgeLayouts.end()) return a < b;
-            auto srcA = nodeLayouts.find(itA->second.from);
-            auto srcB = nodeLayouts.find(itB->second.from);
-            if (srcA != nodeLayouts.end() && srcB != nodeLayouts.end()) {
-                if (srcA->second.layer != srcB->second.layer) {
-                    return srcA->second.layer < srcB->second.layer;
+        if (!edgesToReroute.empty()) {
+            // Use optimizer for path regeneration (single source of truth)
+            edgeOptimizer->regenerateBendPoints(edgesToReroute, edgeLayouts, nodeLayouts);
+
+            // Update label positions after regeneration
+            for (EdgeId edgeId : edgesToReroute) {
+                auto it = edgeLayouts.find(edgeId);
+                if (it != edgeLayouts.end()) {
+                    it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
                 }
             }
-            return a < b;
-        });
-
-        std::unordered_map<EdgeId, EdgeLayout> rerouteOtherEdges;
-        for (EdgeId edgeId : edgesToReroute) {
-            auto it = edgeLayouts.find(edgeId);
-            if (it == edgeLayouts.end()) continue;
-
-            ObstacleMap obstacles;
-            obstacles.buildFromNodes(nodeLayouts, effectiveGridSize);
-
-            if (!rerouteOtherEdges.empty()) {
-                obstacles.addEdgeSegments(rerouteOtherEdges, edgeId);
-            }
-
-            std::unordered_map<EdgeId, EdgeLayout> staticEdges;
-            for (const auto& [otherId, otherLayout] : edgeLayouts) {
-                if (otherId == edgeId) continue;
-                if (std::find(edgesToReroute.begin(), edgesToReroute.end(), otherId) != edgesToReroute.end()) continue;
-                if (hasFreshBendPoints(otherLayout, effectiveGridSize)) {
-                    staticEdges[otherId] = otherLayout;
-                }
-            }
-            obstacles.addEdgeSegments(staticEdges, edgeId);
-
-            GridPoint startGrid = obstacles.pixelToGrid(it->second.sourcePoint);
-            GridPoint goalGrid = obstacles.pixelToGrid(it->second.targetPoint);
-
-            PathResult pathResult = pathFinder_->findPath(
-                startGrid, goalGrid, obstacles,
-                it->second.from, it->second.to,
-                it->second.sourceEdge, it->second.targetEdge,
-                {}, {});
-
-            if (pathResult.found && pathResult.path.size() >= 2) {
-                it->second.bendPoints.clear();
-                for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-                    Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
-                    it->second.bendPoints.push_back({pixelPoint});
-                }
-            }
-
-            rerouteOtherEdges[edgeId] = it->second;
-            it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
         }
     }
 

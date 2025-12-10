@@ -1,6 +1,7 @@
 #include "AStarEdgeOptimizer.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
+#include "../../routing/CooperativeRerouter.h"
 #include "../../sugiyama/routing/PathIntersection.h"
 #include "../../sugiyama/routing/SelfLoopRouter.h"
 #include "arborvia/core/GeometryUtils.h"
@@ -130,6 +131,11 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
             // ===== PHASE 2: Detect overlaps =====
             auto overlappingPairs = detectOverlaps(result);
+            std::cout << "[AStarOpt] PHASE 2: detectOverlaps found " << overlappingPairs.size() 
+                      << " pairs (pass=" << pass << ", parallel=true)" << std::endl;
+            for (const auto& [a, b] : overlappingPairs) {
+                std::cout << "[AStarOpt]   Overlap: Edge " << a << " & Edge " << b << std::endl;
+            }
             if (!overlappingPairs.empty()) anyOverlapFound = true;
 
             // ===== PHASE 3: Resolve overlaps (serial - cooperative rerouting) =====
@@ -138,19 +144,73 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                 auto itB = result.find(idB);
                 if (itA == result.end() || itB == result.end()) continue;
 
+                std::cout << "[AStarOpt] PHASE 3: Resolving overlap Edge " << idA << " & " << idB << std::endl;
+                
                 EdgePairResult pairResult = resolveOverlappingPair(
                     idA, idB,
                     itA->second, itB->second,
                     assignedLayouts, nodeLayouts, forbiddenZones);
 
+                std::cout << "[AStarOpt]   resolveOverlappingPair: valid=" << pairResult.valid << std::endl;
+
                 if (pairResult.valid) {
+                    // Log the returned layouts to verify they don't overlap
+                    std::cout << "[AStarOpt]   layoutA bendPoints: ";
+                    for (const auto& bp : pairResult.layoutA.bendPoints) {
+                        std::cout << "(" << bp.position.x << "," << bp.position.y << ") ";
+                    }
+                    std::cout << std::endl;
+                    std::cout << "[AStarOpt]   layoutB bendPoints: ";
+                    for (const auto& bp : pairResult.layoutB.bendPoints) {
+                        std::cout << "(" << bp.position.x << "," << bp.position.y << ") ";
+                    }
+                    std::cout << std::endl;
+                    
+                    // Verify no overlap before applying
+                    bool stillOverlap = PathIntersection::hasSegmentOverlap(pairResult.layoutA, pairResult.layoutB);
+                    std::cout << "[AStarOpt]   VERIFY hasSegmentOverlap=" << stillOverlap << std::endl;
+                    
                     result[idA] = pairResult.layoutA;
                     result[idB] = pairResult.layoutB;
                     assignedLayouts[idA] = pairResult.layoutA;
                     assignedLayouts[idB] = pairResult.layoutB;
-                    // Mark both edges as resolved - don't re-evaluate them in subsequent passes
                     resolvedEdges.insert(idA);
                     resolvedEdges.insert(idB);
+                    std::cout << "[AStarOpt]   SUCCESS via resolveOverlappingPair" << std::endl;
+                } else {
+                    // Fallback: Use CooperativeRerouter when pair resolution fails
+                    std::cout << "[AStarOpt]   Trying CooperativeRerouter fallback..." << std::endl;
+                    CooperativeRerouter rerouter(pathFinder_, effectiveGridSize());
+                    
+                    // Build otherLayouts excluding both A and B
+                    std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
+                    for (const auto& [eid, layout] : assignedLayouts) {
+                        if (eid != idA && eid != idB) {
+                            otherLayouts[eid] = layout;
+                        }
+                    }
+                    // Add B to otherLayouts so A can route around it
+                    otherLayouts[idB] = itB->second;
+                    
+                    auto coopResult = rerouter.rerouteWithCooperation(
+                        idA, itA->second, otherLayouts, nodeLayouts);
+                    
+                    std::cout << "[AStarOpt]   CooperativeRerouter: success=" << coopResult.success 
+                              << " reason=" << coopResult.failureReason << std::endl;
+                    
+                    if (coopResult.success) {
+                        result[idA] = coopResult.layout;
+                        assignedLayouts[idA] = coopResult.layout;
+                        for (const auto& reroutedLayout : coopResult.reroutedEdges) {
+                            result[reroutedLayout.id] = reroutedLayout;
+                            assignedLayouts[reroutedLayout.id] = reroutedLayout;
+                        }
+                        resolvedEdges.insert(idA);
+                        resolvedEdges.insert(idB);
+                        std::cout << "[AStarOpt]   SUCCESS via CooperativeRerouter" << std::endl;
+                    } else {
+                        std::cout << "[AStarOpt]   FAILED - overlap remains!" << std::endl;
+                    }
                 }
             }
 
@@ -208,6 +268,11 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
             // Detect and resolve overlaps (not just for failed edges)
             auto overlappingPairs = detectOverlaps(result);
+            std::cout << "[AStarOpt] PHASE 2: detectOverlaps found " << overlappingPairs.size() 
+                      << " pairs (pass=" << pass << ", sequential=true)" << std::endl;
+            for (const auto& [a, b] : overlappingPairs) {
+                std::cout << "[AStarOpt]   Overlap: Edge " << a << " & Edge " << b << std::endl;
+            }
             if (!overlappingPairs.empty()) {
                 anyOverlapFound = true;
                 for (const auto& [idA, idB] : overlappingPairs) {
@@ -215,9 +280,14 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     auto itB = result.find(idB);
                     if (itA == result.end() || itB == result.end()) continue;
 
+                    std::cout << "[AStarOpt] PHASE 3: Resolving overlap Edge " << idA << " & " << idB 
+                              << " (sequential)" << std::endl;
+
                     EdgePairResult pairResult = resolveOverlappingPair(
                         idA, idB, itA->second, itB->second,
                         assignedLayouts, nodeLayouts, forbiddenZones);
+
+                    std::cout << "[AStarOpt]   resolveOverlappingPair: valid=" << pairResult.valid << std::endl;
 
                     if (pairResult.valid) {
                         result[idA] = pairResult.layoutA;
@@ -225,6 +295,37 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                         assignedLayouts[idA] = pairResult.layoutA;
                         assignedLayouts[idB] = pairResult.layoutB;
                         anyOverlapFound = true;
+                        std::cout << "[AStarOpt]   SUCCESS via resolveOverlappingPair" << std::endl;
+                    } else {
+                        std::cout << "[AStarOpt]   Trying CooperativeRerouter fallback..." << std::endl;
+                        CooperativeRerouter rerouter(pathFinder_, effectiveGridSize());
+                        
+                        std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
+                        for (const auto& [eid, layout] : assignedLayouts) {
+                            if (eid != idA && eid != idB) {
+                                otherLayouts[eid] = layout;
+                            }
+                        }
+                        otherLayouts[idB] = itB->second;
+                        
+                        auto coopResult = rerouter.rerouteWithCooperation(
+                            idA, itA->second, otherLayouts, nodeLayouts);
+                        
+                        std::cout << "[AStarOpt]   CooperativeRerouter: success=" << coopResult.success 
+                                  << " reason=" << coopResult.failureReason << std::endl;
+                        
+                        if (coopResult.success) {
+                            result[idA] = coopResult.layout;
+                            assignedLayouts[idA] = coopResult.layout;
+                            for (const auto& reroutedLayout : coopResult.reroutedEdges) {
+                                result[reroutedLayout.id] = reroutedLayout;
+                                assignedLayouts[reroutedLayout.id] = reroutedLayout;
+                            }
+                            anyOverlapFound = true;
+                            std::cout << "[AStarOpt]   SUCCESS via CooperativeRerouter" << std::endl;
+                        } else {
+                            std::cout << "[AStarOpt]   FAILED - overlap remains!" << std::endl;
+                        }
                     }
                 }
             }

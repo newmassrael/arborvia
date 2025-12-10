@@ -35,15 +35,20 @@ public:
     static void removeSpikesAndDuplicates(std::vector<Point>& points);
 
     /// Remove bend points that duplicate sourcePoint or targetPoint
-    /// Also removes consecutive duplicate bend points
+    /// Does NOT create new path segments - only removes duplicates
     /// @param layout Edge layout to clean (modified in place)
-    static void removeEndpointDuplicates(EdgeLayout& layout);
+    /// @return true if path is valid after cleanup, false if path needs regeneration
+    static bool removeEndpointDuplicates(EdgeLayout& layout);
 
     /// Move bend points that are inside node boundaries to be outside
     /// @param layout Edge layout to clean (modified in place)
     /// @param targetNode Target node layout (for boundary checking)
     /// @param margin Minimum distance to keep from node boundary
     static void moveBendsOutsideNode(EdgeLayout& layout, const NodeLayout& targetNode, float margin = DEFAULT_MARGIN);
+
+    /// Remove consecutive duplicate bend points
+    /// @param layout Edge layout to clean (modified in place)
+    static void removeConsecutiveDuplicates(EdgeLayout& layout);
 };
 
 }  // namespace arborvia
