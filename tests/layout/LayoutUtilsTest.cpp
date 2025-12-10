@@ -681,7 +681,7 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_UpdatesSnapIndex) {
     std::cout << "\nRequested new target position: (" << newPosition.x << "," << newPosition.y << ")" << std::endl;
 
     LayoutOptions options;
-    options.gridConfig.cellSize = 20.0f;
+    options.gridConfig.cellSize = 10.0f;  // Match initial layout gridSize for consistent A* pathfinding
     options.optimizationOptions.dragAlgorithm = DragAlgorithm::AStar;
     options.optimizationOptions.postDragAlgorithm = PostDragAlgorithm::AStar;
 
@@ -966,17 +966,17 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
     nodeA_layout.size = {100, 50};
     nodeLayouts[nodeA] = nodeA_layout;
 
-    // Node B at (0, 100)
+    // Node B at (0, 150) - positioned below A with gap
     NodeLayout nodeB_layout;
     nodeB_layout.id = nodeB;
-    nodeB_layout.position = {0, 100};
+    nodeB_layout.position = {0, 150};
     nodeB_layout.size = {100, 50};
     nodeLayouts[nodeB] = nodeB_layout;
 
-    // Node C at (50, 100)
+    // Node C at (150, 150) - positioned to the right of B (no overlap)
     NodeLayout nodeC_layout;
     nodeC_layout.id = nodeC;
-    nodeC_layout.position = {50, 100};
+    nodeC_layout.position = {150, 150};
     nodeC_layout.size = {100, 50};
     nodeLayouts[nodeC] = nodeC_layout;
 
@@ -993,7 +993,7 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
     edge1.sourceSnapIndex = 2;  // x = 30
     edge1.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
         nodeA_layout, NodeEdge::Bottom, 2, gridSize);
-    edge1.targetPoint = {50, 100};  // top of B
+    edge1.targetPoint = {50, 150};  // top of B (updated y)
     edge1.targetSnapIndex = 4;
     edgeLayouts[edgeAB] = edge1;
 
@@ -1005,7 +1005,7 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
     edge2.sourceSnapIndex = 5;  // x = 60
     edge2.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
         nodeA_layout, NodeEdge::Bottom, 5, gridSize);
-    edge2.targetPoint = {100, 100};  // top of C
+    edge2.targetPoint = {200, 150};  // top of C (updated x and y)
     edge2.targetSnapIndex = 4;
     edgeLayouts[edgeAC] = edge2;
 
@@ -1310,12 +1310,14 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_ThreeEdgesSwapNoCollision) {
     nodeA_layout.size = {100, 50};
     nodeLayouts[nodeA] = nodeA_layout;
 
-    nodeLayouts[nodeB] = {nodeB, {0, 100}, {100, 50}};
-    nodeLayouts[nodeC] = {nodeC, {50, 100}, {100, 50}};
-    nodeLayouts[nodeD] = {nodeD, {100, 100}, {100, 50}};
+    // Position nodes below A with no overlap (horizontal spacing)
+    nodeLayouts[nodeB] = {nodeB, {0, 150}, {100, 50}};    // Below A, leftmost
+    nodeLayouts[nodeC] = {nodeC, {120, 150}, {100, 50}};  // Below A, middle (gap from B)
+    nodeLayouts[nodeD] = {nodeD, {240, 150}, {100, 50}};  // Below A, rightmost (gap from C)
 
     // Three edges on Bottom of A at snapIdx 2, 4, 6
-    auto makeEdge = [&](NodeId to, int snapIdx) {
+    // Each edge targets its respective node's top edge
+    auto makeEdge = [&](NodeId to, int snapIdx, float targetX, float targetY) {
         EdgeLayout e;
         e.from = nodeA;
         e.to = to;
@@ -1325,13 +1327,14 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_ThreeEdgesSwapNoCollision) {
         e.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
             nodeA_layout, NodeEdge::Bottom, snapIdx, gridSize);
         e.targetSnapIndex = 4;
-        e.targetPoint = {50, 100};
+        e.targetPoint = {targetX, targetY};
         return e;
     };
 
-    edgeLayouts[edgeAB] = makeEdge(nodeB, 2);  // x=30
-    edgeLayouts[edgeAC] = makeEdge(nodeC, 4);  // x=50
-    edgeLayouts[edgeAD] = makeEdge(nodeD, 6);  // x=70
+    // Updated target points to match new node positions
+    edgeLayouts[edgeAB] = makeEdge(nodeB, 2, 50, 150);    // x=30, target top of B
+    edgeLayouts[edgeAC] = makeEdge(nodeC, 4, 170, 150);   // x=50, target top of C
+    edgeLayouts[edgeAD] = makeEdge(nodeD, 6, 290, 150);   // x=70, target top of D
 
     std::cout << "\n========== THREE EDGES SWAP TEST ==========\n" << std::endl;
 
