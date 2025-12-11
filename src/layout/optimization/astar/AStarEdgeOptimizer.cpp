@@ -60,7 +60,7 @@ void AStarEdgeOptimizer::setGridSize(float gridSize) {
 }
 
 float AStarEdgeOptimizer::effectiveGridSize() const {
-    return gridSize_ > 0.0f ? gridSize_ : constants::PATHFINDING_GRID_SIZE;
+    return constants::effectiveGridSize(gridSize_);
 }
 
 std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(

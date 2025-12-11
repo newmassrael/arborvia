@@ -272,7 +272,7 @@ EdgeRouting::Result EdgeRouting::route(
         
         // Fix any -1 indices that weren't restored (NodeEdge changed during retry)
         // Group edges by (node, nodeEdge) to properly calculate snap indices
-        float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
+        float gridSizeToUse = constants::effectiveGridSize(options.gridConfig.cellSize);
         std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> connectionsByNodeEdge;
         for (auto& [edgeId, layout] : result.edgeLayouts) {
             connectionsByNodeEdge[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
@@ -293,7 +293,7 @@ EdgeRouting::Result EdgeRouting::route(
                 int existingIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
                 if (existingIndex < 0) {  // -1 means needs fixing
                     int candidateIndex = 0;
-                    Point snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, i, totalConnections, effectiveGridSize, &candidateIndex);
+                    Point snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, i, totalConnections, gridSizeToUse, &candidateIndex);
                     if (isSource) {
                         layout.sourceSnapIndex = candidateIndex;
                         layout.sourcePoint = snapPoint;

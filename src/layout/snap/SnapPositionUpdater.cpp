@@ -1,5 +1,6 @@
 #include "SnapPositionUpdater.h"
 #include "../sugiyama/routing/EdgeRoutingUtils.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "GridSnapCalculator.h"
 #include "SnapIndexManager.h"
 #include "../sugiyama/routing/SelfLoopRouter.h"
@@ -254,14 +255,14 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
     IEdgeOptimizer* edgeOptimizer) {
 
     SnapUpdateResult result;
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     // Phase 1: Collect affected connections
     auto affectedConnections = collectAffectedConnections(edgeLayouts, affectedEdges);
 
     // Phase 2: Calculate snap positions
     for (auto& [key, connections] : affectedConnections) {
-        calculateSnapPositionsForNodeEdge(key, connections, edgeLayouts, nodeLayouts, movedNodes, effectiveGridSize, result);
+        calculateSnapPositionsForNodeEdge(key, connections, edgeLayouts, nodeLayouts, movedNodes, gridSizeToUse, result);
     }
 
     // Phase 3: Merge affected and redistributed edges
@@ -324,7 +325,7 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
         if (it == edgeLayouts.end()) continue;
 
         // 1. A* pathfinding (movedNodes constraint enforced at source level)
-        recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges, &movedNodes);
+        recalcFunc_(it->second, nodeLayouts, gridSizeToUse, &otherEdges, &movedNodes);
 
         // 2. Diagonal detection and fix
         bool needsRetry = false;
@@ -345,7 +346,7 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
             bool srcMoved = movedNodes.empty() || movedNodes.count(it->second.from) > 0;
             bool tgtMoved = movedNodes.empty() || movedNodes.count(it->second.to) > 0;
             if (srcMoved || tgtMoved) {
-                detectFixFunc_(edgeId, edgeLayouts, nodeLayouts, movedNodes, effectiveGridSize, otherEdges);
+                detectFixFunc_(edgeId, edgeLayouts, nodeLayouts, movedNodes, gridSizeToUse, otherEdges);
             }
         }
 
@@ -364,10 +365,10 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
 
 
         // 4. Direction validation
-        bool directionWasFixed = validateFixFunc_(it->second, effectiveGridSize);
+        bool directionWasFixed = validateFixFunc_(it->second, gridSizeToUse);
         if (directionWasFixed) {
             // Recalculate with movedNodes constraint enforced at source level
-            recalcFunc_(it->second, nodeLayouts, effectiveGridSize, &otherEdges, &movedNodes);
+            recalcFunc_(it->second, nodeLayouts, gridSizeToUse, &otherEdges, &movedNodes);
         }
 
         // 5. Update other edges

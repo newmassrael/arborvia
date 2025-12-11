@@ -37,6 +37,8 @@ struct OptimizerConfig {
     /// Grid size in pixels for pathfinding
     /// Larger values = faster but less precise
     /// Typical range: 10-30 pixels
+    /// Note: 0.0f means use constants::PATHFINDING_GRID_SIZE (10.0f)
+    /// Presets use: aggressive=30, balanced=20, conservative=10
     float gridSize = 20.0f;
 
     /// Preserve existing source/target edge directions during optimization

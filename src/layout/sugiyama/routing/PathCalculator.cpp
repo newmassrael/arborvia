@@ -170,7 +170,7 @@ void PathCalculator::recalculateBendPoints(
     const std::unordered_map<EdgeId, EdgeLayout>* otherEdges,
     const std::unordered_set<NodeId>* movedNodes) {
 
-    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     auto srcNodeIt = nodeLayouts.find(layout.from);
     if (srcNodeIt == nodeLayouts.end()) {
@@ -180,7 +180,7 @@ void PathCalculator::recalculateBendPoints(
 
     // Handle self-loops specially
     if (layout.from == layout.to) {
-        handleSelfLoop(layout, srcNode, effectiveGridSize);
+        handleSelfLoop(layout, srcNode, gridSizeToUse);
         return;
     }
 
@@ -191,7 +191,7 @@ void PathCalculator::recalculateBendPoints(
     if (otherEdges) {
         mutableOtherEdges = *otherEdges;
     }
-    tryAStarPathfinding(layout, nodeLayouts, effectiveGridSize, mutableOtherEdges, movedNodes);
+    tryAStarPathfinding(layout, nodeLayouts, gridSizeToUse, mutableOtherEdges, movedNodes);
 }
 
 } // namespace arborvia

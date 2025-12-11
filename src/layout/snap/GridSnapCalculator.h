@@ -185,17 +185,7 @@ public:
         int count,
         std::vector<int>& outPositions);
 
-    /**
-     * @brief Get effective grid size for routing calculations.
-     *
-     * Returns the grid size to use for pathfinding and snap calculations.
-     * When user-specified gridSize is <= 0 (disabled), returns PATHFINDING_GRID_SIZE
-     * to ensure A* pathfinding uses a coarse enough grid for performance.
-     *
-     * @param gridSize User-specified grid size (may be <= 0 if disabled)
-     * @return Effective grid size to use (always > 0)
-     */
-    static float getEffectiveGridSize(float gridSize);
+    // NOTE: getEffectiveGridSize() moved to constants::effectiveGridSize() in GeometryUtils.h
 };
 
 }  // namespace arborvia

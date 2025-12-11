@@ -1,5 +1,6 @@
 #include "UnifiedRetryChain.h"
 #include "../pathfinding/ObstacleMap.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 
 #include <array>
@@ -32,7 +33,7 @@ void UnifiedRetryChain::setGridSize(float gridSize) {
 }
 
 float UnifiedRetryChain::effectiveGridSize() const {
-    return GridSnapCalculator::getEffectiveGridSize(gridSize_);
+    return constants::effectiveGridSize(gridSize_);
 }
 
 UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(

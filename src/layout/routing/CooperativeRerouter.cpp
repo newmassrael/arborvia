@@ -28,7 +28,7 @@ void CooperativeRerouter::setGridSize(float gridSize) {
 }
 
 float CooperativeRerouter::effectiveGridSize() const {
-    return gridSize_ > 0 ? gridSize_ : constants::PATHFINDING_GRID_SIZE;
+    return constants::effectiveGridSize(gridSize_);
 }
 
 // =============================================================================

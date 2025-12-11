@@ -250,9 +250,4 @@ void GridSnapCalculator::distributePositionsQuantized(
     }
 }
 
-float GridSnapCalculator::getEffectiveGridSize(float gridSize)
-{
-    return gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
-}
-
 }  // namespace arborvia

@@ -19,7 +19,7 @@ void SnapDistributor::distribute(
     float gridSize,
     bool sortSnapPoints) {
 
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     // Unified mode: all connections on same edge distributed together
     // Key: (nodeId, nodeEdge) -> list of (edgeId, isSource)
@@ -61,7 +61,7 @@ void SnapDistributor::distribute(
             // Calculate snap position and store the candidate index
             int candidateIndex = 0;
             Point snapPoint = GridSnapCalculator::calculateSnapPosition(
-                node, nodeEdge, i, connectionCount, effectiveGridSize, &candidateIndex);
+                node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
 
             if (isSource) {
                 layout.sourcePoint = snapPoint;
@@ -75,7 +75,7 @@ void SnapDistributor::distribute(
 
     // Recalculate bend points
     for (auto& [edgeId, layout] : result.edgeLayouts) {
-        recalcFunc_(layout, nodeLayouts, effectiveGridSize);
+        recalcFunc_(layout, nodeLayouts, gridSizeToUse);
 
         // Grid mode: bend points are already orthogonal from quantized routing.
         // Remove spikes/duplicates for path cleanup.
@@ -94,7 +94,7 @@ void SnapDistributor::distribute(
         }
 
         // Ensure first bend has proper clearance from source
-        ensureFirstBendClearance(layout, effectiveGridSize);
+        ensureFirstBendClearance(layout, gridSizeToUse);
 
         layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
     }

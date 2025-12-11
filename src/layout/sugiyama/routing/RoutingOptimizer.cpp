@@ -1,4 +1,5 @@
 #include "RoutingOptimizer.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "../../snap/GridSnapCalculator.h"
 #include "layout/optimization/OptimizerRegistry.h"
 #include "arborvia/layout/config/OptimizerConfig.h"
@@ -80,8 +81,8 @@ void RoutingOptimizer::optimize(
     }
 
     // Fix any -1 indices that weren't restored (NodeEdge changed during optimization)
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
-    fixInvalidSnapIndices(result, nodeLayouts, effectiveGridSize);
+    float gridSizeToUse = constants::effectiveGridSize(options.gridConfig.cellSize);
+    fixInvalidSnapIndices(result, nodeLayouts, gridSizeToUse);
 
     // Update label positions after optimization
     for (auto& [edgeId, layout] : result.edgeLayouts) {

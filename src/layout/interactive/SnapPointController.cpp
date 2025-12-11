@@ -1,5 +1,6 @@
 #include "arborvia/layout/interactive/SnapPointController.h"
 #include "arborvia/layout/config/LayoutResult.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 #include "../pathfinding/ObstacleMap.h"
 #include "../pathfinding/AStarPathFinder.h"
@@ -69,13 +70,13 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
 
     // Calculate all snap candidates for all 4 edges
     candidates_.clear();
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     for (NodeEdge nodeEdge : {NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right}) {
-        int candidateCount = GridSnapCalculator::getCandidateCount(node, nodeEdge, effectiveGridSize);
+        int candidateCount = GridSnapCalculator::getCandidateCount(node, nodeEdge, gridSizeToUse);
         for (int i = 0; i < candidateCount; ++i) {
             Point pos = GridSnapCalculator::getPositionFromCandidateIndex(
-                node, nodeEdge, i, effectiveGridSize);
+                node, nodeEdge, i, gridSizeToUse);
             candidates_.push_back({nodeEdge, i, pos, false});  // blocked=false initially
         }
     }
@@ -83,7 +84,7 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
     // Validate each candidate: check if A* can find a path from that position
     // Build obstacle map with nodes and other edge segments
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);
+    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
     obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Add other edges as obstacles
 
     // Get the other endpoint (target if dragging source, source if dragging target)
@@ -367,15 +368,15 @@ bool SnapPointController::calculatePreviewPath(
         return false;
     }
 
-    float effectiveGridSize = GridSnapCalculator::getEffectiveGridSize(gridSize);
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     // Build obstacle map
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 1);
+    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 1);
 
     // Convert to grid coordinates
-    GridPoint startGrid = GridPoint::fromPixel(layout.sourcePoint, effectiveGridSize);
-    GridPoint goalGrid = GridPoint::fromPixel(layout.targetPoint, effectiveGridSize);
+    GridPoint startGrid = GridPoint::fromPixel(layout.sourcePoint, gridSizeToUse);
+    GridPoint goalGrid = GridPoint::fromPixel(layout.targetPoint, gridSizeToUse);
 
     // Find path
     auto pathResult = pathFinder_->findPath(
@@ -390,13 +391,13 @@ bool SnapPointController::calculatePreviewPath(
     // Convert grid path to pixel bend points
     layout.bendPoints.clear();
     for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-        Point pixelPos = pathResult.path[i].toPixel(effectiveGridSize);
+        Point pixelPos = pathResult.path[i].toPixel(gridSizeToUse);
         layout.bendPoints.push_back(BendPoint{pixelPos});
     }
 
     // Update endpoints from path
-    layout.sourcePoint = pathResult.path.front().toPixel(effectiveGridSize);
-    layout.targetPoint = pathResult.path.back().toPixel(effectiveGridSize);
+    layout.sourcePoint = pathResult.path.front().toPixel(gridSizeToUse);
+    layout.targetPoint = pathResult.path.back().toPixel(gridSizeToUse);
 
     return true;
 }

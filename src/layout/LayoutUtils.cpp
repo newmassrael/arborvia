@@ -672,7 +672,7 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
 
     // Calculate grid-snapped position using GridSnapCalculator
     // This ensures corners are excluded and positions are grid-aligned
-    float gridSize = GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
+    float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
 
     // First get a rough position estimate, then convert to grid candidate index
     Point roughPosition = calculateSnapPointFromPosition(node, newEdge, newPosition_);
@@ -695,7 +695,7 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         // This ensures consistent gridSize with the original layout creation
         float validationGridSize = edge.usedGridSize > 0.0f 
             ? edge.usedGridSize 
-            : GridSnapCalculator::getEffectiveGridSize(options.gridConfig.cellSize);
+            : constants::effectiveGridSize(options.gridConfig.cellSize);
         
         // Build obstacle map
         ObstacleMap obstacles;

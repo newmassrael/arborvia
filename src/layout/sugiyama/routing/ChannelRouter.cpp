@@ -447,12 +447,12 @@ void ChannelRouter::calculateBendPoints(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize) {
 
-    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
     // Try A* pathfinding if pathfinder is available
     if (pathFinder_ && !nodeLayouts.empty()) {
         ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, effectiveGridSize, 0);
+        obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
 
         GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
         GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
@@ -510,7 +510,7 @@ void ChannelRouter::createBypassPath(
     const std::unordered_map<NodeId, NodeLayout>& allNodeLayouts,
     float gridSize) {
 
-    float margin = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+    float margin = constants::effectiveGridSize(gridSize);
 
     // Find leftmost and rightmost edges of all intermediate nodes
     float leftmostEdge = blockingNode.position.x;
@@ -576,7 +576,7 @@ void ChannelRouter::createBypassPath(
 }
 
 void ChannelRouter::ensureSourceClearance(EdgeLayout& layout, float gridSize) {
-    float minClearance = gridSize > 0.0f ? gridSize : constants::PATHFINDING_GRID_SIZE;
+    float minClearance = constants::effectiveGridSize(gridSize);
     if (!layout.bendPoints.empty()) {
         Point& firstBend = layout.bendPoints[0].position;
 
