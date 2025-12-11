@@ -224,21 +224,37 @@ PathResult AStarPathFinder::findPath(
 
             // Get cost for this cell including proximity penalty
             // For self-loop intermediate cells, don't exclude the node so penetration is detected
-            std::unordered_set<NodeId> excludeForProximity = isSelfLoopIntermediate 
-                ? std::unordered_set<NodeId>{} 
+            std::unordered_set<NodeId> excludeForProximity = isSelfLoopIntermediate
+                ? std::unordered_set<NodeId>{}
                 : std::unordered_set<NodeId>{sourceNode, targetNode};
             int cellCost = obstacles.getCostForDirectionWithExcludes(
                 neighborPos.x, neighborPos.y, moveDir, excludeForProximity);
 
-            // Check if blocked (considering per-cell exclusions for node blocking)
+            // ALWAYS check direction-aware blocking for edge segments
+            // Edge segments use isBlockedForDirection, not cost-based blocking
+            const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExclude;
+            bool directionBlocked = obstacles.isBlockedForDirection(
+                neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
+            if (directionBlocked) {
+#if EDGE_ROUTING_DEBUG
+                if (current.pos == start && current.lastDir == MoveDirection::None) {
+                    std::cout << "[A* DEBUG] FIRST MOVE BLOCKED by direction: from (" << start.x << "," << start.y
+                              << ") dir=" << static_cast<int>(moveDir)
+                              << " to (" << neighborPos.x << "," << neighborPos.y << ")" << std::endl;
+                }
+#endif
+                continue;
+            }
+
+            // Check if blocked by node (considering per-cell exclusions)
             if (cellCost >= IObstacleProvider::COST_BLOCKED) {
-                // For self-loop intermediate cells, use empty exclusion to block node interior
-                const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExclude;
-                bool blocked = obstacles.isBlockedForDirection(neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
-                if (blocked) {
+                // Node blocking was already checked via isBlockedForDirection above
+                // But we need to check if the node is excluded
+                bool nodeBlocked = obstacles.isBlocked(neighborPos.x, neighborPos.y, effectiveExclude);
+                if (nodeBlocked) {
 #if EDGE_ROUTING_DEBUG
                     if (current.pos == start && current.lastDir == MoveDirection::None) {
-                        std::cout << "[A* DEBUG] FIRST MOVE BLOCKED: from (" << start.x << "," << start.y
+                        std::cout << "[A* DEBUG] FIRST MOVE BLOCKED by node: from (" << start.x << "," << start.y
                                   << ") dir=" << static_cast<int>(moveDir)
                                   << " to (" << neighborPos.x << "," << neighborPos.y << ")" << std::endl;
                     }

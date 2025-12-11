@@ -189,11 +189,12 @@ bool UnifiedRetryChain::tryAStarPath(
     float gridSize = effectiveGridSize();
 
     // Build obstacle map
+    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
+    obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &otherEdges);
 
     // Add other edges as obstacles
-    std::cout << "[tryAStarPath] Edge " << layout.id << " adding " << otherEdges.size() 
+    std::cout << "[tryAStarPath] Edge " << layout.id << " adding " << otherEdges.size()
               << " other edges as obstacles" << std::endl;
     for (const auto& [eid, el] : otherEdges) {
         if (eid != layout.id) {

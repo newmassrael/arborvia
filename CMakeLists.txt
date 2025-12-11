@@ -71,6 +71,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/sugiyama/SnapPointOverlapTest.cpp
         tests/layout/sugiyama/GridSnapCalculatorTest.cpp
         tests/layout/routing/CooperativeRerouterTest.cpp
+        tests/layout/pathfinding/ObstacleMapTest.cpp
         tests/layout/manual/BendPointTest.cpp
         tests/layout/manual/OrthogonalDragTest.cpp
         tests/export/SvgExportTest.cpp

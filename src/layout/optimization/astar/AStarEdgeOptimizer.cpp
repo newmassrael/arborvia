@@ -326,9 +326,10 @@ AStarEdgeOptimizer::evaluateCombinations(
     results.reserve(16);
 
     // Build obstacle map once for all combinations (more efficient)
+    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
     float gridSize = effectiveGridSize();
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
+    obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
 
     // Add OTHER edge segments as obstacles so A* finds paths that avoid them
     obstacles.addEdgeSegments(assignedLayouts, baseLayout.id);
@@ -564,9 +565,10 @@ AStarEdgeOptimizer::evaluateCombinations(
     results.reserve(16);
 
     // Build obstacle map once for all combinations (more efficient)
+    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
     float gridSize = effectiveGridSize();
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
+    obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
 
     // Add OTHER edge segments as obstacles so A* finds paths that avoid them
     obstacles.addEdgeSegments(assignedLayouts, baseLayout.id);
@@ -1051,9 +1053,10 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         // This includes:
         // 1. Edges from edgeLayouts that are NOT in the 'edges' parameter (existing edges)
         // 2. Already-routed edges from current call (with updated paths)
+        // Include edge layouts in bounds calculation to prevent out-of-bounds segments
         ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, gridSize, 0);
-        
+        obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &edgeLayouts);
+
         // Add all edges from edgeLayouts as obstacles (excluding current edge)
         // This ensures we avoid overlapping with edges that are NOT being re-routed
         obstacles.addEdgeSegments(edgeLayouts, edgeId);
@@ -1522,8 +1525,9 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
         }
     }
 
+    // Include all edge layouts in bounds calculation to prevent out-of-bounds segments
     ObstacleMap baseObstacles;
-    baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0);
+    baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
     baseObstacles.addEdgeSegments(otherLayouts, INVALID_EDGE);
 
     // All 4 node edges

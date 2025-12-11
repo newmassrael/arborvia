@@ -13,8 +13,9 @@ namespace arborvia {
 void ObstacleMap::buildFromNodes(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize,
-    int margin) {
-    
+    int margin,
+    const std::unordered_map<EdgeId, EdgeLayout>* edgeLayouts) {
+
     if (nodeLayouts.empty() || gridSize <= 0) {
         grid_.clear();
         width_ = 0;
@@ -35,6 +36,19 @@ void ObstacleMap::buildFromNodes(
         minY = std::min(minY, node.position.y);
         maxX = std::max(maxX, node.position.x + node.size.width);
         maxY = std::max(maxY, node.position.y + node.size.height);
+    }
+
+    // Expand bounds to include edge segment extents if provided
+    // This ensures edge segments outside node bounds can be registered as obstacles
+    if (edgeLayouts) {
+        for (const auto& [edgeId, edge] : *edgeLayouts) {
+            edge.forEachSegment([&](const Point& p1, const Point& p2) {
+                minX = std::min({minX, p1.x, p2.x});
+                minY = std::min({minY, p1.y, p2.y});
+                maxX = std::max({maxX, p1.x, p2.x});
+                maxY = std::max({maxY, p1.y, p2.y});
+            });
+        }
     }
 
     // Convert to grid coordinates with padding for safe zones
@@ -226,7 +240,10 @@ void ObstacleMap::addEdgeSegments(
 
 #if EDGE_ROUTING_DEBUG
     std::cout << "[ObstacleMap] addEdgeSegments: excluding=" << excludeEdgeId 
-              << " total=" << edgeLayouts.size() << std::endl;
+              << " total=" << edgeLayouts.size() 
+              << " gridBounds: offset=(" << offsetX_ << "," << offsetY_ << ")"
+              << " size=(" << width_ << "x" << height_ << ")"
+              << " gridSize=" << gridSize_ << std::endl;
 #endif
 
     for (const auto& [edgeId, layout] : edgeLayouts) {
@@ -331,6 +348,12 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
     GridPoint g1 = pixelToGrid(p1);
     GridPoint g2 = pixelToGrid(p2);
 
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[MARK-SEG-INPUT] pixel (" << p1.x << "," << p1.y << ")->(" << p2.x << "," << p2.y << ")"
+              << " => grid (" << g1.x << "," << g1.y << ")->(" << g2.x << "," << g2.y << ")"
+              << " gridSize=" << gridSize_ << std::endl;
+#endif
+
     // Determine if horizontal or vertical
     if (g1.y == g2.y) {
         // Horizontal segment
@@ -343,12 +366,25 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
         int actualEndX = (skipEndCell && g2.x == endX) ? endX - 1 :
                          (skipStartCell && g1.x == endX) ? endX - 1 : endX;
         
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[MARK-SEG] HORIZONTAL y=" << g1.y << " x=[" << actualStartX << ".." << actualEndX << "]"
+                  << " (original x=[" << startX << ".." << endX << "]"
+                  << " skipStart=" << skipStartCell << " skipEnd=" << skipEndCell << ")" << std::endl;
+#endif
         for (int gx = actualStartX; gx <= actualEndX; ++gx) {
             int idx = toIndex(gx, g1.y);
             if (idx >= 0) {
                 grid_[idx].horizontalSegment = true;
                 edgeSegmentCells_[idx] = true;
+#if EDGE_ROUTING_DEBUG
+                std::cout << "[MARK-SEG]   cell(" << gx << "," << g1.y << ") -> horizontalSegment=true" << std::endl;
+#endif
             }
+#if EDGE_ROUTING_DEBUG
+            else {
+                std::cout << "[MARK-SEG]   cell(" << gx << "," << g1.y << ") OUT OF BOUNDS (skipped)" << std::endl;
+            }
+#endif
         }
     } else if (g1.x == g2.x) {
         // Vertical segment
@@ -361,12 +397,25 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
         int actualEndY = (skipEndCell && g2.y == endY) ? endY - 1 :
                          (skipStartCell && g1.y == endY) ? endY - 1 : endY;
         
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[MARK-SEG] VERTICAL x=" << g1.x << " y=[" << actualStartY << ".." << actualEndY << "]"
+                  << " (original y=[" << startY << ".." << endY << "]"
+                  << " skipStart=" << skipStartCell << " skipEnd=" << skipEndCell << ")" << std::endl;
+#endif
         for (int gy = actualStartY; gy <= actualEndY; ++gy) {
             int idx = toIndex(g1.x, gy);
             if (idx >= 0) {
                 grid_[idx].verticalSegment = true;
                 edgeSegmentCells_[idx] = true;
+#if EDGE_ROUTING_DEBUG
+                std::cout << "[MARK-SEG]   cell(" << g1.x << "," << gy << ") -> verticalSegment=true" << std::endl;
+#endif
             }
+#if EDGE_ROUTING_DEBUG
+            else {
+                std::cout << "[MARK-SEG]   cell(" << g1.x << "," << gy << ") OUT OF BOUNDS (skipped)" << std::endl;
+            }
+#endif
         }
     }
     // Diagonal segments are ignored for skip logic (shouldn't happen in orthogonal routing)
@@ -515,12 +564,9 @@ bool ObstacleMap::isBlockedForDirection(int gridX, int gridY,
         for (NodeId blockingNode : cell.blockingNodes) {
             if (exclude.find(blockingNode) == exclude.end()) {
 #if EDGE_ROUTING_DEBUG
-                static int debugCount = 0;
-                if (debugCount < 20) {
-                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
-                              << ") blocked by NODE " << blockingNode << std::endl;
-                    debugCount++;
-                }
+                std::cout << "[DIR-BLOCK] Cell (" << gridX << "," << gridY
+                          << ") BLOCKED by NODE " << blockingNode 
+                          << " dir=" << static_cast<int>(moveDir) << std::endl;
 #endif
                 return true;  // Found non-excluded blocking node
             }
@@ -533,31 +579,11 @@ bool ObstacleMap::isBlockedForDirection(int gridX, int gridY,
         case MoveDirection::Left:
         case MoveDirection::Right:
             // Horizontal movement blocked by horizontal segments
-#if EDGE_ROUTING_DEBUG
-            if (cell.horizontalSegment) {
-                static int hDebugCount = 0;
-                if (hDebugCount < 20) {
-                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
-                              << ") blocked by HORIZONTAL segment for dir=" << static_cast<int>(moveDir) << std::endl;
-                    hDebugCount++;
-                }
-            }
-#endif
             return cell.horizontalSegment;
 
         case MoveDirection::Up:
         case MoveDirection::Down:
             // Vertical movement blocked by vertical segments
-#if EDGE_ROUTING_DEBUG
-            if (cell.verticalSegment) {
-                static int vDebugCount = 0;
-                if (vDebugCount < 20) {
-                    std::cout << "[OBSTACLE] Cell (" << gridX << "," << gridY
-                              << ") blocked by VERTICAL segment for dir=" << static_cast<int>(moveDir) << std::endl;
-                    vDebugCount++;
-                }
-            }
-#endif
             return cell.verticalSegment;
 
         case MoveDirection::None:

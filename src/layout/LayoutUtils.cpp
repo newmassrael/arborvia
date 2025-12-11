@@ -693,13 +693,14 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     {
         // Single Source of Truth: use edge's stored gridSize if available
         // This ensures consistent gridSize with the original layout creation
-        float validationGridSize = edge.usedGridSize > 0.0f 
-            ? edge.usedGridSize 
+        float validationGridSize = edge.usedGridSize > 0.0f
+            ? edge.usedGridSize
             : constants::effectiveGridSize(options.gridConfig.cellSize);
-        
+
         // Build obstacle map
+        // Include edge layouts in bounds calculation to prevent out-of-bounds segments
         ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, validationGridSize, 0);
+        obstacles.buildFromNodes(nodeLayouts, validationGridSize, 0, &edgeLayouts);
         obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Other edges as obstacles
         
         // Get the other endpoint

@@ -83,8 +83,9 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
 
     // Validate each candidate: check if A* can find a path from that position
     // Build obstacle map with nodes and other edge segments
+    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
+    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0, &edgeLayouts);
     obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Add other edges as obstacles
 
     // Get the other endpoint (target if dragging source, source if dragging target)

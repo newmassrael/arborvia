@@ -77,8 +77,9 @@ bool PositionFinder::validateAllEdgePaths(
     tempNodeLayouts[nodeId] = tempLayout;
 
     // Build obstacle map with nodes
+    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(tempNodeLayouts, config_.gridSize, 0);
+    obstacles.buildFromNodes(tempNodeLayouts, config_.gridSize, 0, &edgeLayouts);
 
     // Collect edges connected to this node for validation
     std::vector<EdgeId> connectedEdges;
@@ -97,9 +98,10 @@ bool PositionFinder::validateAllEdgePaths(
         const EdgeLayout& edgeLayout = it->second;
         
         // Build obstacle map including other edges (but not the current edge being checked)
+        // Include edge layouts in bounds calculation to prevent out-of-bounds segments
         ObstacleMap edgeObstacles;
-        edgeObstacles.buildFromNodes(tempNodeLayouts, config_.gridSize, 0);
-        
+        edgeObstacles.buildFromNodes(tempNodeLayouts, config_.gridSize, 0, &edgeLayouts);
+
         // Add all edges as obstacles (addEdgeSegments will exclude the current edge)
         edgeObstacles.addEdgeSegments(edgeLayouts, edgeId);
 

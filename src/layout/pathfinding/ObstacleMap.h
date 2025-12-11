@@ -46,10 +46,14 @@ public:
     /// @param nodeLayouts All node layouts
     /// @param gridSize Grid cell size in pixels
     /// @param margin Additional margin around nodes (grid units)
+    /// @param edgeLayouts Optional edge layouts to include in bounds calculation
+    ///        When provided, grid bounds are expanded to include edge segment extents
+    ///        This prevents edge segments from being out-of-bounds and unregistered
     void buildFromNodes(
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize,
-        int margin = 1);
+        int margin = 1,
+        const std::unordered_map<EdgeId, EdgeLayout>* edgeLayouts = nullptr);
 
     /// Add edge segments as obstacles
     /// This prevents A* from routing through existing edge paths
