@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arborvia/layout/api/IDragConstraint.h"
+#include "arborvia/layout/config/LayoutOptions.h"
 
 #include <memory>
 #include <set>
@@ -134,8 +135,12 @@ public:
     /// Create a default constraint manager with standard constraints
     /// Includes: DirectionAwareMarginConstraint, EdgePathValidityConstraint
     /// @param minGridDistance Minimum distance between nodes in grid units (default 5.0)
+    /// @param options Layout options (used to determine which constraints to enable)
     /// @return Configured ConstraintManager
-    static ConstraintManager createDefault(float minGridDistance = 5.0f);
+    /// @note EdgePathValidityConstraint is skipped when DragAlgorithm::HideUntilDrop is used
+    ///       because UnifiedRetryChain will handle path finding after drop with full retry logic
+    static ConstraintManager createDefault(float minGridDistance = 5.0f,
+                                           const LayoutOptions& options = LayoutOptions{});
 
 private:
     /// Find and remove constraint from a specific tier vector

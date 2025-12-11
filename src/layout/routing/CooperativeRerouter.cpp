@@ -102,7 +102,11 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
             otherLayouts[blockingId] = newBlockingLayout;
             result.reroutedEdges.push_back(newBlockingLayout);
 
-            // Add A's new path to obstacle map (prevents other blocking edges from overlapping)
+            // Add A's new path to obstacle map with direction-aware blocking
+            // This ensures B cannot cross A's new path with parallel segments
+            obstacles.addSingleEdgeSegments(newBlockingLayout);
+            
+            // Also add cost overlay for secondary penalty
             std::vector<GridPoint> aPath;
             aPath.push_back(obstacles.pixelToGrid(newBlockingLayout.sourcePoint));
             for (const auto& bp : newBlockingLayout.bendPoints) {

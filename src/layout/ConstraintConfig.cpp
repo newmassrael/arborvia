@@ -69,10 +69,23 @@ namespace {
     static BuiltinInitializer s_builtinInit;
 }
 
-ConstraintConfig ConstraintConfig::createDefault() {
+ConstraintConfig ConstraintConfig::createDefault(const LayoutOptions* options) {
     ConstraintConfig config;
     config.addDirectionAwareMargin(constants::MIN_NODE_GRID_DISTANCE);
-    config.addEdgePathValidity(10.0f);
+
+    // EdgePathValidity: A* path validation during drag
+    // Skip when HideUntilDrop mode is used because:
+    // 1. This constraint uses simple A* without retry mechanisms
+    // 2. UnifiedRetryChain (used after drop) has 4-step retry logic that can find paths
+    //    even when simple A* fails (CooperativeRerouter, snap variations, NodeEdge switch)
+    // 3. The constraint would reject valid positions that UnifiedRetryChain could handle
+    bool skipEdgePathValidity = options &&
+        options->optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop;
+
+    if (!skipEdgePathValidity) {
+        config.addEdgePathValidity(10.0f);
+    }
+
     return config;
 }
 

@@ -2,6 +2,12 @@
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 
+#include <iostream>
+
+#ifndef EDGE_ROUTING_DEBUG
+#define EDGE_ROUTING_DEBUG 0
+#endif
+
 namespace arborvia {
 
 EdgePathValidityConstraint::EdgePathValidityConstraint(float gridSize)
@@ -118,10 +124,32 @@ ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx)
 
         if (!result.found || result.path.size() < 2) {
             invalidEdges.push_back(edgeId);
+#if EDGE_ROUTING_DEBUG
+            std::cout << "[EdgePathValidityConstraint] Edge " << edgeId << " INVALID:"
+                      << " src=(" << srcPoint.x << "," << srcPoint.y << ")"
+                      << " tgt=(" << tgtPoint.x << "," << tgtPoint.y << ")"
+                      << " startGrid=(" << startGrid.x << "," << startGrid.y << ")"
+                      << " goalGrid=(" << goalGrid.x << "," << goalGrid.y << ")"
+                      << " found=" << result.found
+                      << " pathSize=" << result.path.size()
+                      << std::endl;
+            // Check if start/goal are blocked
+            std::unordered_set<NodeId> excludes = {srcNodeId, tgtNodeId};
+            bool startBlocked = edgeObstacles.isBlocked(startGrid.x, startGrid.y, excludes);
+            bool goalBlocked = edgeObstacles.isBlocked(goalGrid.x, goalGrid.y, excludes);
+            std::cout << "[EdgePathValidityConstraint]   startBlocked=" << startBlocked
+                      << " goalBlocked=" << goalBlocked << std::endl;
+#endif
         }
     }
 
     if (!invalidEdges.empty()) {
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[EdgePathValidityConstraint] Node " << ctx.nodeId 
+                  << " at (" << ctx.newPosition.x << "," << ctx.newPosition.y << ")"
+                  << " REJECTED: " << invalidEdges.size() << " edge(s) have no valid path"
+                  << std::endl;
+#endif
         return ConstraintResult::failWithEdges(
             "No valid A* path for " + std::to_string(invalidEdges.size()) + " edge(s)",
             std::move(invalidEdges));

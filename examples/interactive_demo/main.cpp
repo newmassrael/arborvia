@@ -503,7 +503,7 @@ public:
             lastValidPosition_ = layout.position;
             isInvalidDragPosition_ = false;
             // Create constraint manager for drag validation
-            constraintManager_ = ConstraintFactory::create(ConstraintConfig::createDefault());
+            constraintManager_ = ConstraintFactory::create(ConstraintConfig::createDefault(&layoutOptions_));
             // Pre-calculate blocked regions for visualization
             ConstraintContext ctx{draggedNode_, layout.position, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
             blockedRegions_ = constraintManager_->getAllBlockedRegions(ctx);

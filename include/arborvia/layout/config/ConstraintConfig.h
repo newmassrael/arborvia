@@ -8,8 +8,9 @@
 
 namespace arborvia {
 
-// Forward declaration
+// Forward declarations
 class ConstraintManager;
+struct LayoutOptions;
 
 /// Configuration for a single constraint
 struct SingleConstraintConfig {
@@ -88,8 +89,10 @@ struct ConstraintConfig {
     std::vector<SingleConstraintConfig> constraints;
     
     /// Create default constraint configuration
-    /// Includes: DirectionAwareMargin, EdgePathValidity
-    static ConstraintConfig createDefault();
+    /// Includes: DirectionAwareMargin, EdgePathValidity (unless HideUntilDrop mode)
+    /// @param options Layout options to determine which constraints to enable (nullptr for default)
+    /// @note EdgePathValidity is skipped when DragAlgorithm::HideUntilDrop is used
+    static ConstraintConfig createDefault(const LayoutOptions* options = nullptr);
     
     /// Create empty configuration (no constraints)
     static ConstraintConfig createEmpty() { return {}; }

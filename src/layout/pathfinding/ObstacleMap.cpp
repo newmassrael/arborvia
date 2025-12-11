@@ -245,21 +245,68 @@ void ObstacleMap::addEdgeSegments(
             segments.emplace_back(p1, p2);
         });
 
-        // Skip first and last segments to prevent FIRST MOVE BLOCKED issues
-        // The source/target snap points may overlap with other edges' snap points
-        // SegmentOverlapPenalty will handle those cases
+        // Register ALL segments with direction-aware blocking, but skip endpoint cells
+        // to prevent FIRST MOVE BLOCKED issues at snap points
+        // - First segment: skip start cell (source snap point)
+        // - Last segment: skip end cell (target snap point)
+        // - Middle segments: full blocking
 #if EDGE_ROUTING_DEBUG
         std::cout << "[ObstacleMap] Edge " << edgeId << " has " << segments.size() << " segments:" << std::endl;
+#endif
         for (size_t i = 0; i < segments.size(); ++i) {
-            bool skipped = (i == 0 || i + 1 == segments.size());
+            bool skipStartCell = (i == 0);  // First segment: skip source point
+            bool skipEndCell = (i + 1 == segments.size());  // Last segment: skip target point
+            
+#if EDGE_ROUTING_DEBUG
+            std::string skipInfo = "";
+            if (skipStartCell) skipInfo += " (skip-start)";
+            if (skipEndCell) skipInfo += " (skip-end)";
             std::cout << "    seg[" << i << "] (" << segments[i].first.x << "," << segments[i].first.y 
                       << ")->(" << segments[i].second.x << "," << segments[i].second.y << ")"
-                      << (skipped ? " SKIPPED (first/last)" : " BLOCKED") << std::endl;
-        }
+                      << " BLOCKED" << skipInfo << std::endl;
 #endif
-        for (size_t i = 1; i + 1 < segments.size(); ++i) {
-            markSegmentBlocked(segments[i].first, segments[i].second, true);
+            markSegmentBlockedWithSkip(segments[i].first, segments[i].second, skipStartCell, skipEndCell);
         }
+    }
+}
+
+void ObstacleMap::addSingleEdgeSegments(const EdgeLayout& layout) {
+    // Initialize edge segment tracking if needed
+    if (edgeSegmentCells_.size() != grid_.size()) {
+        edgeSegmentCells_.resize(grid_.size(), false);
+    }
+
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] addSingleEdgeSegments: edge=" << layout.id << std::endl;
+#endif
+
+    // Build segments from edge layout
+    std::vector<std::pair<Point, Point>> segments;
+    layout.forEachSegment([&](const Point& p1, const Point& p2) {
+        segments.emplace_back(p1, p2);
+    });
+
+    // Register ALL segments with direction-aware blocking, but skip endpoint cells
+    // to prevent FIRST MOVE BLOCKED issues at snap points
+    // - First segment: skip start cell (source snap point)
+    // - Last segment: skip end cell (target snap point)
+    // - Middle segments: full blocking
+#if EDGE_ROUTING_DEBUG
+    std::cout << "[ObstacleMap] Edge " << layout.id << " has " << segments.size() << " segments:" << std::endl;
+#endif
+    for (size_t i = 0; i < segments.size(); ++i) {
+        bool skipStartCell = (i == 0);  // First segment: skip source point
+        bool skipEndCell = (i + 1 == segments.size());  // Last segment: skip target point
+        
+#if EDGE_ROUTING_DEBUG
+        std::string skipInfo = "";
+        if (skipStartCell) skipInfo += " (skip-start)";
+        if (skipEndCell) skipInfo += " (skip-end)";
+        std::cout << "    seg[" << i << "] (" << segments[i].first.x << "," << segments[i].first.y 
+                  << ")->(" << segments[i].second.x << "," << segments[i].second.y << ")"
+                  << " BLOCKED" << skipInfo << std::endl;
+#endif
+        markSegmentBlockedWithSkip(segments[i].first, segments[i].second, skipStartCell, skipEndCell);
     }
 }
 
@@ -277,6 +324,52 @@ void ObstacleMap::clearEdgeSegments() {
             edgeSegmentCells_[i] = false;
         }
     }
+}
+
+void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, bool skipStartCell, bool skipEndCell) {
+    // Convert to grid coordinates
+    GridPoint g1 = pixelToGrid(p1);
+    GridPoint g2 = pixelToGrid(p2);
+
+    // Determine if horizontal or vertical
+    if (g1.y == g2.y) {
+        // Horizontal segment
+        int startX = std::min(g1.x, g2.x);
+        int endX = std::max(g1.x, g2.x);
+        
+        // Adjust for skip flags (g1 is logical start, g2 is logical end)
+        int actualStartX = (skipStartCell && g1.x == startX) ? startX + 1 : 
+                           (skipEndCell && g2.x == startX) ? startX + 1 : startX;
+        int actualEndX = (skipEndCell && g2.x == endX) ? endX - 1 :
+                         (skipStartCell && g1.x == endX) ? endX - 1 : endX;
+        
+        for (int gx = actualStartX; gx <= actualEndX; ++gx) {
+            int idx = toIndex(gx, g1.y);
+            if (idx >= 0) {
+                grid_[idx].horizontalSegment = true;
+                edgeSegmentCells_[idx] = true;
+            }
+        }
+    } else if (g1.x == g2.x) {
+        // Vertical segment
+        int startY = std::min(g1.y, g2.y);
+        int endY = std::max(g1.y, g2.y);
+        
+        // Adjust for skip flags (g1 is logical start, g2 is logical end)
+        int actualStartY = (skipStartCell && g1.y == startY) ? startY + 1 :
+                           (skipEndCell && g2.y == startY) ? startY + 1 : startY;
+        int actualEndY = (skipEndCell && g2.y == endY) ? endY - 1 :
+                         (skipStartCell && g1.y == endY) ? endY - 1 : endY;
+        
+        for (int gy = actualStartY; gy <= actualEndY; ++gy) {
+            int idx = toIndex(g1.x, gy);
+            if (idx >= 0) {
+                grid_[idx].verticalSegment = true;
+                edgeSegmentCells_[idx] = true;
+            }
+        }
+    }
+    // Diagonal segments are ignored for skip logic (shouldn't happen in orthogonal routing)
 }
 
 void ObstacleMap::markSegmentBlocked(const Point& p1, const Point& p2, bool isEdgeSegment) {

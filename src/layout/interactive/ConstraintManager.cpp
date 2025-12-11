@@ -158,12 +158,21 @@ void ConstraintManager::clear() {
     expensiveConstraints_.clear();
 }
 
-ConstraintManager ConstraintManager::createDefault(float minGridDistance) {
+ConstraintManager ConstraintManager::createDefault(float minGridDistance, const LayoutOptions& options) {
     ConstraintManager manager;
     // Use DirectionAwareMarginConstraint for direction-aware margin calculation
     manager.addConstraint(std::make_unique<DirectionAwareMarginConstraint>(minGridDistance));
-    // Use EdgePathValidityConstraint for A* path validation
-    manager.addConstraint(std::make_unique<EdgePathValidityConstraint>(10.0f));
+
+    // EdgePathValidityConstraint: A* path validation during drag
+    // Skip when HideUntilDrop mode is used because:
+    // 1. This constraint uses simple A* without retry mechanisms
+    // 2. UnifiedRetryChain (used after drop) has 4-step retry logic that can find paths
+    //    even when simple A* fails (CooperativeRerouter, snap variations, NodeEdge switch)
+    // 3. The constraint would reject valid positions that UnifiedRetryChain could handle
+    if (options.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
+        manager.addConstraint(std::make_unique<EdgePathValidityConstraint>(10.0f));
+    }
+
     return manager;
 }
 

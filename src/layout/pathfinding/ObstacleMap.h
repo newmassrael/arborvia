@@ -59,6 +59,11 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         EdgeId excludeEdgeId = INVALID_EDGE);
 
+    /// Add a single edge's segments as obstacles with direction-aware blocking
+    /// Use this when you need to add an edge's segments after initial obstacle setup
+    /// @param layout The edge layout to add as obstacles
+    void addSingleEdgeSegments(const EdgeLayout& layout);
+
     /// Clear edge segment obstacles (keeps node obstacles)
     void clearEdgeSegments();
 
@@ -189,6 +194,14 @@ private:
 
     /// Mark a line segment on the grid as blocked
     void markSegmentBlocked(const Point& p1, const Point& p2, bool isEdgeSegment);
+    
+    /// Mark a line segment as blocked, with options to skip start/end cells
+    /// Used for edge segments to prevent FIRST MOVE BLOCKED at snap points
+    /// @param p1 Start point of segment
+    /// @param p2 End point of segment
+    /// @param skipStartCell If true, don't block the cell containing p1
+    /// @param skipEndCell If true, don't block the cell containing p2
+    void markSegmentBlockedWithSkip(const Point& p1, const Point& p2, bool skipStartCell, bool skipEndCell);
     
     /// Mark a line segment as blocked, skipping first and last cells
     /// This allows multiple edges to share entry/exit points near nodes
