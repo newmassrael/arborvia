@@ -6,7 +6,7 @@
 #include "layout/routing/EdgeNudger.h"
 #include <algorithm>
 #include <cmath>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -142,9 +142,8 @@ void DragOptimizationHandler::applyPostNudging(
 
 #if EDGE_ROUTING_DEBUG
     if (nudgeResult.totalOverlaps > 0) {
-        std::cout << "[EdgeNudger] Applied nudging to " << nudgeResult.totalOverlaps
-                  << " overlap groups, " << nudgeResult.nudgedSegments.size()
-                  << " segments adjusted" << std::endl;
+        LOG_DEBUG("[EdgeNudger] Applied nudging to {} overlap groups, {} segments adjusted",
+                  nudgeResult.totalOverlaps, nudgeResult.nudgedSegments.size());
     }
 #endif
 

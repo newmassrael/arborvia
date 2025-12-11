@@ -4,9 +4,9 @@
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 
+#include "arborvia/common/Logger.h"
 #include <array>
 #include <cmath>
-#include <iostream>
 
 namespace arborvia {
 
@@ -20,30 +20,29 @@ namespace {
     void logValidationFailure(EdgeId edgeId, const UnifiedRetryChain::PathValidationResult& validation) {
         if (validation.valid) return;
         
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " CONSTRAINT VIOLATIONS:" << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} CONSTRAINT VIOLATIONS:", edgeId);
         if (validation.hasOverlap) {
-            std::cout << "  - OVERLAP with edges:";
+            std::string overlapEdges;
             for (EdgeId eid : validation.overlappingEdges) {
-                std::cout << " " << eid;
+                overlapEdges += " " + std::to_string(eid);
             }
-            std::cout << std::endl;
+            LOG_DEBUG("  - OVERLAP with edges:{}", overlapEdges);
             // Log detailed overlap info
             for (const auto& detail : validation.overlapDetails) {
-                std::cout << "    Edge" << edgeId << "[" << detail.thisSegmentIndex << "] "
-                          << "(" << detail.thisSegStart.x << "," << detail.thisSegStart.y << ")->"
-                          << "(" << detail.thisSegEnd.x << "," << detail.thisSegEnd.y << ")"
-                          << " overlaps Edge" << detail.otherEdgeId << "[" << detail.otherSegmentIndex << "] "
-                          << "(" << detail.otherSegStart.x << "," << detail.otherSegStart.y << ")->"
-                          << "(" << detail.otherSegEnd.x << "," << detail.otherSegEnd.y << ")"
-                          << std::endl;
+                LOG_DEBUG("    Edge{}[{}] ({},{})->({},{}) overlaps Edge{}[{}] ({},{})->({},{})",
+                          edgeId, detail.thisSegmentIndex,
+                          detail.thisSegStart.x, detail.thisSegStart.y,
+                          detail.thisSegEnd.x, detail.thisSegEnd.y,
+                          detail.otherEdgeId, detail.otherSegmentIndex,
+                          detail.otherSegStart.x, detail.otherSegStart.y,
+                          detail.otherSegEnd.x, detail.otherSegEnd.y);
             }
         }
         if (validation.hasDiagonal) {
-            std::cout << "  - DIAGONAL segment (non-orthogonal)" << std::endl;
+            LOG_DEBUG("  - DIAGONAL segment (non-orthogonal)");
         }
         if (validation.hasNodePenetration) {
-            std::cout << "  - NODE PENETRATION" << std::endl;
+            LOG_DEBUG("  - NODE PENETRATION");
         }
     }
 }  // anonymous namespace
@@ -87,14 +86,10 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     RetryResult result;
     EdgeLayout workingLayout = layout;
 
-    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " starting calculatePath"
-              << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
-              << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
-              << " maxSnapRetries=" << config.maxSnapRetries
-              << " maxNodeEdgeCombinations=" << config.maxNodeEdgeCombinations
-              << " enableCooperativeReroute=" << config.enableCooperativeReroute
-              << std::endl;
+    LOG_DEBUG("[UnifiedRetryChain] Edge {} starting calculatePath src=({},{}) tgt=({},{}) maxSnapRetries={} maxNodeEdgeCombinations={} enableCooperativeReroute={}",
+              edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
+              layout.targetPoint.x, layout.targetPoint.y,
+              config.maxSnapRetries, config.maxNodeEdgeCombinations, config.enableCooperativeReroute);
 
     // Step 1: Basic A* attempt
     result.astarAttempts++;
@@ -102,15 +97,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
         result.success = true;
         result.layout = workingLayout;
         result.validation = validatePathResult(edgeId, workingLayout, otherEdges, nodeLayouts);
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 1 (basic A*)"
-                  << " validation=" << (result.validation.valid ? "PASS" : "FAIL")
-                  << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} SUCCESS at Step 1 (basic A*) validation={}",
+                  edgeId, result.validation.valid ? "PASS" : "FAIL");
         logValidationFailure(edgeId, result.validation);
         return result;
     }
-    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " Step 1 FAILED (basic A*)" << std::endl;
+    LOG_DEBUG("[UnifiedRetryChain] Edge {} Step 1 FAILED (basic A*)", edgeId);
 
     // Step 2: CooperativeRerouter (immediately after A* failure)
     if (config.enableCooperativeReroute) {
@@ -121,18 +113,14 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
             result.layout = coopResult.layout;
             result.reroutedEdges = std::move(coopResult.reroutedEdges);
             result.validation = validatePathResult(edgeId, coopResult.layout, otherEdges, nodeLayouts);
-            std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                      << " SUCCESS at Step 2 (CooperativeRerouter)"
-                      << " validation=" << (result.validation.valid ? "PASS" : "FAIL")
-                      << std::endl;
+            LOG_DEBUG("[UnifiedRetryChain] Edge {} SUCCESS at Step 2 (CooperativeRerouter) validation={}",
+                      edgeId, result.validation.valid ? "PASS" : "FAIL");
             logValidationFailure(edgeId, result.validation);
             return result;
         }
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " Step 2 FAILED (CooperativeRerouter)" << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} Step 2 FAILED (CooperativeRerouter)", edgeId);
     } else {
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " Step 2 SKIPPED (enableCooperativeReroute=false)" << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} Step 2 SKIPPED (enableCooperativeReroute=false)", edgeId);
     }
 
     // Step 3: Snap point variations + A* + rerouter
@@ -141,15 +129,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     result.cooperativeAttempts += snapResult.cooperativeAttempts;
     if (snapResult.success) {
         snapResult.validation = validatePathResult(edgeId, snapResult.layout, otherEdges, nodeLayouts);
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 3 (snap variations)"
-                  << " validation=" << (snapResult.validation.valid ? "PASS" : "FAIL")
-                  << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} SUCCESS at Step 3 (snap variations) validation={}",
+                  edgeId, snapResult.validation.valid ? "PASS" : "FAIL");
         logValidationFailure(edgeId, snapResult.validation);
         return snapResult;
     }
-    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " Step 3 FAILED (snap variations)" << std::endl;
+    LOG_DEBUG("[UnifiedRetryChain] Edge {} Step 3 FAILED (snap variations)", edgeId);
 
     // Step 4: NodeEdge switch with rerouter attempts
     auto edgeSwitchResult = tryNodeEdgeSwitch(edgeId, layout, otherEdges, nodeLayouts, config);
@@ -157,25 +142,21 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     result.cooperativeAttempts += edgeSwitchResult.cooperativeAttempts;
     if (edgeSwitchResult.success) {
         edgeSwitchResult.validation = validatePathResult(edgeId, edgeSwitchResult.layout, otherEdges, nodeLayouts);
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 4 (NodeEdge switch)"
-                  << " validation=" << (edgeSwitchResult.validation.valid ? "PASS" : "FAIL")
-                  << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} SUCCESS at Step 4 (NodeEdge switch) validation={}",
+                  edgeId, edgeSwitchResult.validation.valid ? "PASS" : "FAIL");
         logValidationFailure(edgeId, edgeSwitchResult.validation);
         return edgeSwitchResult;
     }
-    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " Step 4 FAILED (NodeEdge switch), maxNodeEdgeCombinations=" 
-              << config.maxNodeEdgeCombinations << std::endl;
+    LOG_DEBUG("[UnifiedRetryChain] Edge {} Step 4 FAILED (NodeEdge switch), maxNodeEdgeCombinations={}",
+              edgeId, config.maxNodeEdgeCombinations);
 
     // All steps failed - validate the original layout before returning
     result.failureReason = "All retry attempts exhausted";
     result.layout = layout;  // Return original layout
     result.validation = validatePathResult(edgeId, layout, otherEdges, nodeLayouts);
 
-    std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-              << " ALL STEPS FAILED! astarAttempts=" << result.astarAttempts
-              << " cooperativeAttempts=" << result.cooperativeAttempts << std::endl;
+    LOG_DEBUG("[UnifiedRetryChain] Edge {} ALL STEPS FAILED! astarAttempts={} cooperativeAttempts={}",
+              edgeId, result.astarAttempts, result.cooperativeAttempts);
     logValidationFailure(edgeId, result.validation);
 
     return result;
@@ -194,16 +175,18 @@ bool UnifiedRetryChain::tryAStarPath(
     obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &otherEdges);
 
     // Add other edges as obstacles
-    std::cout << "[tryAStarPath] Edge " << layout.id << " adding " << otherEdges.size()
-              << " other edges as obstacles" << std::endl;
+    LOG_DEBUG("[tryAStarPath] Edge {} adding {} other edges as obstacles", layout.id, otherEdges.size());
     for (const auto& [eid, el] : otherEdges) {
         if (eid != layout.id) {
-            std::cout << "  OtherEdge " << eid << " path: (" 
-                      << el.sourcePoint.x << "," << el.sourcePoint.y << ")";
+            std::string pathStr = "(" + std::to_string(static_cast<int>(el.sourcePoint.x)) + "," 
+                                + std::to_string(static_cast<int>(el.sourcePoint.y)) + ")";
             for (const auto& bp : el.bendPoints) {
-                std::cout << "->(" << bp.position.x << "," << bp.position.y << ")";
+                pathStr += "->(" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                         + std::to_string(static_cast<int>(bp.position.y)) + ")";
             }
-            std::cout << "->(" << el.targetPoint.x << "," << el.targetPoint.y << ")" << std::endl;
+            pathStr += "->(" + std::to_string(static_cast<int>(el.targetPoint.x)) + "," 
+                     + std::to_string(static_cast<int>(el.targetPoint.y)) + ")";
+            LOG_DEBUG("  OtherEdge {} path: {}", eid, pathStr);
         }
     }
     obstacles.addEdgeSegments(otherEdges, layout.id);
@@ -214,14 +197,11 @@ bool UnifiedRetryChain::tryAStarPath(
     bool startBlocked = obstacles.isBlocked(startGrid.x, startGrid.y);
     bool goalBlocked = obstacles.isBlocked(goalGrid.x, goalGrid.y);
     
-    std::cout << "[tryAStarPath] Edge " << layout.id
-              << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
-              << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
-              << " startGrid=(" << startGrid.x << "," << startGrid.y << ")"
-              << " goalGrid=(" << goalGrid.x << "," << goalGrid.y << ")"
-              << " gridSize=" << gridSize 
-              << " startBlocked=" << startBlocked
-              << " goalBlocked=" << goalBlocked << std::endl;
+    LOG_DEBUG("[tryAStarPath] Edge {} src=({},{}) tgt=({},{}) startGrid=({},{}) goalGrid=({},{}) gridSize={} startBlocked={} goalBlocked={}",
+              layout.id, layout.sourcePoint.x, layout.sourcePoint.y,
+              layout.targetPoint.x, layout.targetPoint.y,
+              startGrid.x, startGrid.y, goalGrid.x, goalGrid.y,
+              gridSize, startBlocked, goalBlocked);
 
     // Find path
     PathResult pathResult = pathFinder_->findPath(
@@ -230,19 +210,18 @@ bool UnifiedRetryChain::tryAStarPath(
         layout.sourceEdge, layout.targetEdge,
         {}, {});
 
-    std::cout << "[tryAStarPath] Edge " << layout.id
-              << " pathResult.found=" << pathResult.found
-              << " pathSize=" << pathResult.path.size() << std::endl;
+    LOG_DEBUG("[tryAStarPath] Edge {} pathResult.found={} pathSize={}",
+              layout.id, pathResult.found, pathResult.path.size());
 
     if (pathResult.found && pathResult.path.size() >= 2) {
         layout.bendPoints.clear();
         
         // Log full A* grid path
-        std::cout << "[tryAStarPath] Edge " << layout.id << " A* grid path:";
+        std::string gridPathStr;
         for (size_t i = 0; i < pathResult.path.size(); ++i) {
-            std::cout << " (" << pathResult.path[i].x << "," << pathResult.path[i].y << ")";
+            gridPathStr += " (" + std::to_string(pathResult.path[i].x) + "," + std::to_string(pathResult.path[i].y) + ")";
         }
-        std::cout << std::endl;
+        LOG_DEBUG("[tryAStarPath] Edge {} A* grid path:{}", layout.id, gridPathStr);
         
         // Convert grid path to pixel bend points
         for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
@@ -251,20 +230,21 @@ bool UnifiedRetryChain::tryAStarPath(
         }
         
         // Log generated bend points in pixel coordinates
-        std::cout << "[tryAStarPath] Edge " << layout.id << " generated path:";
-        std::cout << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")";
+        std::string pixelPathStr = "src=(" + std::to_string(static_cast<int>(layout.sourcePoint.x)) + "," 
+                                 + std::to_string(static_cast<int>(layout.sourcePoint.y)) + ")";
         for (const auto& bp : layout.bendPoints) {
-            std::cout << " -> (" << bp.position.x << "," << bp.position.y << ")";
+            pixelPathStr += " -> (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                          + std::to_string(static_cast<int>(bp.position.y)) + ")";
         }
-        std::cout << " -> tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")";
-        std::cout << std::endl;
+        pixelPathStr += " -> tgt=(" + std::to_string(static_cast<int>(layout.targetPoint.x)) + "," 
+                      + std::to_string(static_cast<int>(layout.targetPoint.y)) + ")";
+        LOG_DEBUG("[tryAStarPath] Edge {} generated path: {}", layout.id, pixelPathStr);
         
-        std::cout << "[tryAStarPath] Edge " << layout.id
-                  << " SUCCESS, bendPoints=" << layout.bendPoints.size() << std::endl;
+        LOG_DEBUG("[tryAStarPath] Edge {} SUCCESS, bendPoints={}", layout.id, layout.bendPoints.size());
         return true;
     }
 
-    std::cout << "[tryAStarPath] Edge " << layout.id << " FAILED" << std::endl;
+    LOG_DEBUG("[tryAStarPath] Edge {} FAILED", layout.id);
     return false;
 }
 
@@ -300,8 +280,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
     // If neither endpoint can be modified, skip this step
     if (!canModifySource && !canModifyTarget) {
 #ifdef EDGE_ROUTING_DEBUG
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " skipping snap variations (neither node moved)" << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} skipping snap variations (neither node moved)", edgeId);
 #endif
         result.failureReason = "Neither node moved, snap variations skipped";
         return result;
@@ -427,8 +406,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
     // If neither endpoint can be modified, skip this step
     if (!canModifySource && !canModifyTarget) {
 #ifdef EDGE_ROUTING_DEBUG
-        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " skipping NodeEdge switch (neither node moved)" << std::endl;
+        LOG_DEBUG("[UnifiedRetryChain] Edge {} skipping NodeEdge switch (neither node moved)", edgeId);
 #endif
         result.failureReason = "Neither node moved, NodeEdge switch skipped";
         return result;

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(arborvia VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -9,17 +9,42 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ARBORVIA_ENABLE_SVG_EXPORT "Enable SVG export module" ON)
 option(ARBORVIA_BUILD_TESTS "Build tests" ON)
 option(ARBORVIA_BUILD_EXAMPLES "Build examples" ON)
+option(ARBORVIA_USE_SPDLOG "Use spdlog for logging (otherwise use default backend)" ON)
 
 # Include module definitions
 include(cmake/ArborviaCore.cmake)
 include(cmake/ArborviaLayout.cmake)
 include(cmake/ArborviaExport.cmake)
+include(cmake/ArborviaCommon.cmake)
 
-# Build library with core and layout modules
+# Fetch spdlog if enabled
+if(ARBORVIA_USE_SPDLOG)
+    include(FetchContent)
+    FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.15.0
+        GIT_SHALLOW TRUE
+    )
+    set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(spdlog)
+endif()
+
+# Build library with core, layout, and common modules
 add_library(arborvia
     ${ARBORVIA_CORE_SOURCES}
     ${ARBORVIA_LAYOUT_SOURCES}
+    ${ARBORVIA_COMMON_SOURCES}
 )
+
+# Add backend sources based on spdlog option
+if(ARBORVIA_USE_SPDLOG)
+    target_sources(arborvia PRIVATE ${ARBORVIA_SPDLOG_BACKEND_SOURCES})
+    target_compile_definitions(arborvia PUBLIC ARBORVIA_USE_SPDLOG)
+    target_link_libraries(arborvia PUBLIC spdlog::spdlog)
+else()
+    target_sources(arborvia PRIVATE ${ARBORVIA_DEFAULT_BACKEND_SOURCES})
+endif()
 
 # Add export module if enabled
 if(ARBORVIA_ENABLE_SVG_EXPORT)

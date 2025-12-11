@@ -10,7 +10,7 @@
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 #include <cmath>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 #include <algorithm>
 #include <set>
 
@@ -164,9 +164,8 @@ void LayoutUtils::updateEdgePositions(
             if (nodeIt != nodeLayouts.end()) {
                 if (edgePassesThroughNode(edgeLayout, nodeIt->second)) {
                     edgesToRecalculate.push_back(edgeId);
-                    std::cout << "[LayoutUtils] Edge " << edgeId 
-                              << " passes through moved node " << movedNodeId 
-                              << " - will recalculate with A*" << std::endl;
+                    LOG_DEBUG("[LayoutUtils] Edge {} passes through moved node {} - will recalculate with A*",
+                              edgeId, movedNodeId);
                     break;  // No need to check other moved nodes
                 }
             }
@@ -177,8 +176,7 @@ void LayoutUtils::updateEdgePositions(
     // These edges are NOT connected to moved nodes, so don't apply endpoint constraints
     // (passing empty set allows free rerouting to find valid paths around moved nodes)
     if (!edgesToRecalculate.empty()) {
-        std::cout << "[LayoutUtils] Re-routing " << edgesToRecalculate.size()
-                  << " edges using A*" << std::endl;
+        LOG_DEBUG("[LayoutUtils] Re-routing {} edges using A*", edgesToRecalculate.size());
         std::unordered_set<NodeId> emptySet;  // No endpoint constraints for pass-through edges
         routing.updateEdgeRoutingWithOptimization(
             edgeLayouts, nodeLayouts, edgesToRecalculate, postDropOptions, emptySet);
@@ -763,13 +761,12 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     }
 
     // Update the moving edge's snap point
-    std::cout << "[moveSnapPoint] Edge " << edgeId 
-              << " BEFORE update: src=(" << edge.sourcePoint.x << "," << edge.sourcePoint.y << ")"
-              << " tgt=(" << edge.targetPoint.x << "," << edge.targetPoint.y << ")"
-              << " isSource=" << isSource << std::endl;
-    std::cout << "[moveSnapPoint] actualPosition=(" << result.actualPosition.x << "," << result.actualPosition.y << ")"
-              << " newEdge=" << static_cast<int>(newEdge)
-              << " newSnapIndex=" << newSnapIndex << std::endl;
+    LOG_DEBUG("[moveSnapPoint] Edge {} BEFORE update: src=({},{}) tgt=({},{}) isSource={}",
+              edgeId, edge.sourcePoint.x, edge.sourcePoint.y,
+              edge.targetPoint.x, edge.targetPoint.y, isSource);
+    LOG_DEBUG("[moveSnapPoint] actualPosition=({},{}) newEdge={} newSnapIndex={}",
+              result.actualPosition.x, result.actualPosition.y,
+              static_cast<int>(newEdge), newSnapIndex);
 
     if (isSource) {
         edge.sourcePoint = result.actualPosition;
@@ -781,9 +778,9 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         edge.targetSnapIndex = newSnapIndex;
     }
 
-    std::cout << "[moveSnapPoint] Edge " << edgeId 
-              << " AFTER update: src=(" << edge.sourcePoint.x << "," << edge.sourcePoint.y << ")"
-              << " tgt=(" << edge.targetPoint.x << "," << edge.targetPoint.y << ")" << std::endl;
+    LOG_DEBUG("[moveSnapPoint] Edge {} AFTER update: src=({},{}) tgt=({},{})",
+              edgeId, edge.sourcePoint.x, edge.sourcePoint.y,
+              edge.targetPoint.x, edge.targetPoint.y);
 
     // If swap partner found, move it to the original position
     if (swapEdgeId != INVALID_EDGE) {
@@ -813,14 +810,14 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     toReroute.insert(toReroute.end(),
         result.redistributedEdges.begin(), result.redistributedEdges.end());
 
-    std::cout << "[moveSnapPoint] BEFORE regenerateBendPointsOnly:" << std::endl;
+    LOG_DEBUG("[moveSnapPoint] BEFORE regenerateBendPointsOnly:");
     for (EdgeId eid : toReroute) {
         auto it = edgeLayouts.find(eid);
         if (it != edgeLayouts.end()) {
-            std::cout << "  Edge " << eid 
-                      << " src=(" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y << ")"
-                      << " tgt=(" << it->second.targetPoint.x << "," << it->second.targetPoint.y << ")"
-                      << " bends=" << it->second.bendPoints.size() << std::endl;
+            LOG_DEBUG("  Edge {} src=({},{}) tgt=({},{}) bends={}",
+                      eid, it->second.sourcePoint.x, it->second.sourcePoint.y,
+                      it->second.targetPoint.x, it->second.targetPoint.y,
+                      it->second.bendPoints.size());
         }
     }
 
@@ -833,18 +830,19 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         routing.regenerateBendPointsOnly(edgeLayouts, nodeLayouts, toReroute, options);
     }
 
-    std::cout << "[moveSnapPoint] AFTER regenerateBendPointsOnly:" << std::endl;
+    LOG_DEBUG("[moveSnapPoint] AFTER regenerateBendPointsOnly:");
     for (EdgeId eid : toReroute) {
         auto it = edgeLayouts.find(eid);
         if (it != edgeLayouts.end()) {
-            std::cout << "  Edge " << eid 
-                      << " src=(" << it->second.sourcePoint.x << "," << it->second.sourcePoint.y << ")"
-                      << " tgt=(" << it->second.targetPoint.x << "," << it->second.targetPoint.y << ")";
+            std::string bendStr;
             for (size_t i = 0; i < it->second.bendPoints.size(); ++i) {
-                std::cout << " bend[" << i << "]=(" << it->second.bendPoints[i].position.x 
-                          << "," << it->second.bendPoints[i].position.y << ")";
+                bendStr += " bend[" + std::to_string(i) + "]=(" 
+                         + std::to_string(static_cast<int>(it->second.bendPoints[i].position.x)) + ","
+                         + std::to_string(static_cast<int>(it->second.bendPoints[i].position.y)) + ")";
             }
-            std::cout << std::endl;
+            LOG_DEBUG("  Edge {} src=({},{}) tgt=({},{}){}",
+                      eid, it->second.sourcePoint.x, it->second.sourcePoint.y,
+                      it->second.targetPoint.x, it->second.targetPoint.y, bendStr);
         }
     }
 

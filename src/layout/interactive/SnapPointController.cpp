@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 namespace arborvia {
 
@@ -63,10 +63,8 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
     originalSnapIndex_ = isSource ? edge.sourceSnapIndex : edge.targetSnapIndex;
     originalLayout_ = edge;
 
-    std::cout << "[SnapPointController] startDrag: edge=" << edgeId 
-              << " isSource=" << isSource
-              << " originalPos=(" << originalPosition_.x << "," << originalPosition_.y << ")"
-              << std::endl;
+    LOG_DEBUG("[SnapPointController] startDrag: edge={} isSource={} originalPos=({},{})",
+              edgeId, isSource, originalPosition_.x, originalPosition_.y);
 
     // Calculate all snap candidates for all 4 edges
     candidates_.clear();
@@ -261,11 +259,10 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     // Update dragged edge
     EdgeLayout& draggedEdge = edgeIt->second;
     
-    std::cout << "[SnapPointController] completeDrag: edge=" << draggedEdgeId_
-              << " isSource=" << isDraggingSource_
-              << " BEFORE=(" << originalPosition_.x << "," << originalPosition_.y << ")"
-              << " AFTER=(" << targetPosition.x << "," << targetPosition.y << ")"
-              << std::endl;
+    LOG_DEBUG("[SnapPointController] completeDrag: edge={} isSource={} BEFORE=({},{}) AFTER=({},{})",
+              draggedEdgeId_, isDraggingSource_, 
+              originalPosition_.x, originalPosition_.y,
+              targetPosition.x, targetPosition.y);
     
     if (isDraggingSource_) {
         draggedEdge.sourcePoint = targetPosition;

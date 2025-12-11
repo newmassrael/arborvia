@@ -6,7 +6,7 @@
 #include "arborvia/layout/api/IEdgePenalty.h"
 
 #include <algorithm>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 // Debug flag for edge routing
 #ifndef EDGE_ROUTING_DEBUG
@@ -975,7 +975,7 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) {
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[regenerateBendPoints] Edge " << edgeId << " NOT FOUND in edgeLayouts!" << std::endl;
+            LOG_DEBUG("[regenerateBendPoints] Edge {} NOT FOUND in edgeLayouts!", edgeId);
 #endif
             continue;
         }
@@ -985,8 +985,8 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         // Handle self-loops: use collision-aware path generation
         if (layout.from == layout.to) {
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[regenerateBendPoints] Edge " << edgeId << " is SELF-LOOP (from=" << layout.from
-                      << ") - using createSelfLoopPath with collision avoidance" << std::endl;
+            LOG_DEBUG("[regenerateBendPoints] Edge {} is SELF-LOOP (from={}) - using createSelfLoopPath with collision avoidance",
+                      edgeId, layout.from);
 #endif
             auto nodeIt = nodeLayouts.find(layout.from);
             if (nodeIt == nodeLayouts.end()) continue;
@@ -994,21 +994,21 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
             layout.bendPoints = createSelfLoopPath(layout, nodeIt->second, nodeLayouts);
 
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[regenerateBendPoints] Edge " << edgeId << " SELF-LOOP bends=" << layout.bendPoints.size();
+            std::string bendsStr;
             for (const auto& bp : layout.bendPoints) {
-                std::cout << " (" << bp.position.x << "," << bp.position.y << ")";
+                bendsStr += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                          + std::to_string(static_cast<int>(bp.position.y)) + ")";
             }
-            std::cout << std::endl;
+            LOG_DEBUG("[regenerateBendPoints] Edge {} SELF-LOOP bends={}{}", edgeId, layout.bendPoints.size(), bendsStr);
 #endif
             continue;
         }
 
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[regenerateBendPoints] Edge " << edgeId
-                  << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")"
-                  << " tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")"
-                  << " srcEdge=" << static_cast<int>(layout.sourceEdge)
-                  << " tgtEdge=" << static_cast<int>(layout.targetEdge) << std::endl;
+        LOG_DEBUG("[regenerateBendPoints] Edge {} src=({},{}) tgt=({},{}) srcEdge={} tgtEdge={}",
+                  edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
+                  layout.targetPoint.x, layout.targetPoint.y,
+                  static_cast<int>(layout.sourceEdge), static_cast<int>(layout.targetEdge));
 #endif
 
         // Use current sourcePoint/targetPoint (already updated by redistribution)
@@ -1025,12 +1025,12 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         layout.bendPoints = std::move(newBends);
 
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[regenerateBendPoints] Edge " << edgeId
-                  << " after createPath: bends=" << layout.bendPoints.size();
+        std::string bendsStr2;
         for (const auto& bp : layout.bendPoints) {
-            std::cout << " (" << bp.position.x << "," << bp.position.y << ")";
+            bendsStr2 += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                       + std::to_string(static_cast<int>(bp.position.y)) + ")";
         }
-        std::cout << std::endl;
+        LOG_DEBUG("[regenerateBendPoints] Edge {} after createPath: bends={}{}", edgeId, layout.bendPoints.size(), bendsStr2);
 #endif
 
         // === Verify no node penetration ===
@@ -1044,9 +1044,8 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         pathPoints.push_back(layout.targetPoint);
 
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[regenerateBendPoints] Edge " << edgeId << " checking " 
-                  << (pathPoints.size() - 1) << " segments for collision against "
-                  << nodeLayouts.size() << " nodes" << std::endl;
+        LOG_DEBUG("[regenerateBendPoints] Edge {} checking {} segments for collision against {} nodes",
+                  edgeId, pathPoints.size() - 1, nodeLayouts.size());
 #endif
 
         for (size_t i = 0; i + 1 < pathPoints.size(); ++i) {
@@ -1055,15 +1054,17 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
                 nodeLayouts, layout.from, layout.to);
             if (!collisions.empty()) {
 #if EDGE_ROUTING_DEBUG
-                std::cout << "[regenerateBendPoints] Edge " << edgeId 
-                          << " seg " << i << " (" << pathPoints[i].x << "," << pathPoints[i].y
-                          << ")->(" << pathPoints[i+1].x << "," << pathPoints[i+1].y
-                          << ") COLLIDES with " << collisions.size() << " nodes:";
+                std::string nodeCollisionStr;
                 for (const auto& [nodeId, node] : collisions) {
-                    std::cout << " Node" << nodeId << "(" << node.position.x << "," << node.position.y
-                              << " " << node.size.width << "x" << node.size.height << ")";
+                    nodeCollisionStr += " Node" + std::to_string(nodeId) + "(" 
+                                      + std::to_string(static_cast<int>(node.position.x)) + "," 
+                                      + std::to_string(static_cast<int>(node.position.y)) + " " 
+                                      + std::to_string(static_cast<int>(node.size.width)) + "x" 
+                                      + std::to_string(static_cast<int>(node.size.height)) + ")";
                 }
-                std::cout << std::endl;
+                LOG_DEBUG("[regenerateBendPoints] Edge {} seg {} ({},{})->({},{}) COLLIDES with {} nodes:{}",
+                          edgeId, i, pathPoints[i].x, pathPoints[i].y, 
+                          pathPoints[i+1].x, pathPoints[i+1].y, collisions.size(), nodeCollisionStr);
 #endif
                 hasCollision = true;
                 break;
@@ -1073,8 +1074,7 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         // If collision still exists, try alternative mid-points with penalty scoring
         if (hasCollision) {
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[regenerateBendPoints] Edge " << edgeId
-                      << " COLLISION detected, trying alternative mid-points" << std::endl;
+            LOG_DEBUG("[regenerateBendPoints] Edge {} COLLISION detected, trying alternative mid-points", edgeId);
 #endif
             // Create edgeLayouts map for penalty scoring (empty for now - could be enhanced)
             std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
@@ -1111,8 +1111,7 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
             
             if (hasDiagonalFinal) {
 #if EDGE_ROUTING_DEBUG
-                std::cout << "[regenerateBendPoints] Edge " << edgeId
-                          << " DIAGONAL DETECTED in final validation! Forcing L-bend/Z-path." << std::endl;
+                LOG_DEBUG("[regenerateBendPoints] Edge {} DIAGONAL DETECTED in final validation! Forcing L-bend/Z-path.", edgeId);
 #endif
                 // Force regeneration with safe L-bend path
                 layout.bendPoints.clear();
@@ -1438,27 +1437,25 @@ std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
 
     if (bestNoCollision) {
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[tryAlternativeMidPoints] Found collision-free path with score " 
-                  << bestNoCollision->score << std::endl;
+        LOG_DEBUG("[tryAlternativeMidPoints] Found collision-free path with score {}", bestNoCollision->score);
 #endif
         return bestNoCollision->bends;
     }
 
 #if EDGE_ROUTING_DEBUG
-    std::cout << "[tryAlternativeMidPoints] src=(" << source.x << "," << source.y 
-              << ") srcNodeId=" << sourceNodeId
-              << " tgt=(" << target.x << "," << target.y << ") tgtNodeId=" << targetNodeId
-              << " blocking=" << blockingNodes.size() << " nodes";
+    std::string blockingStr;
     for (const auto& [nid, node] : blockingNodes) {
-        std::cout << " N" << nid << "(" << node.position.x << "," << node.position.y
-                  << " " << node.size.width << "x" << node.size.height << ")";
+        blockingStr += " N" + std::to_string(nid) + "(" 
+                     + std::to_string(static_cast<int>(node.position.x)) + "," 
+                     + std::to_string(static_cast<int>(node.position.y)) + " " 
+                     + std::to_string(static_cast<int>(node.size.width)) + "x" 
+                     + std::to_string(static_cast<int>(node.size.height)) + ")";
     }
-    std::cout << std::endl;
-    std::cout << "[tryAlternativeMidPoints] srcInside=(" << srcXInside << "," << srcYInside
-              << ") tgtInside=(" << tgtXInside << "," << tgtYInside << ")"
-              << " blockBounds X[" << minBlockX << "," << maxBlockX 
-              << "] Y[" << minBlockY << "," << maxBlockY << "]" << std::endl;
-    std::cout << "[tryAlternativeMidPoints] " << candidates.size() << " candidates, all collide" << std::endl;
+    LOG_DEBUG("[tryAlternativeMidPoints] src=({},{}) srcNodeId={} tgt=({},{}) tgtNodeId={} blocking={} nodes{}",
+              source.x, source.y, sourceNodeId, target.x, target.y, targetNodeId, blockingNodes.size(), blockingStr);
+    LOG_DEBUG("[tryAlternativeMidPoints] srcInside=({},{}) tgtInside=({},{}) blockBounds X[{},{}] Y[{},{}]",
+              srcXInside, srcYInside, tgtXInside, tgtYInside, minBlockX, maxBlockX, minBlockY, maxBlockY);
+    LOG_DEBUG("[tryAlternativeMidPoints] {} candidates, all collide", candidates.size());
 #endif
 
     // Fallback: return base path (best we can do)

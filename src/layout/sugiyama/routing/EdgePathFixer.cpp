@@ -3,7 +3,7 @@
 #include "../../routing/UnifiedRetryChain.h"
 #include "PathCleanup.h"
 #include <cmath>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -113,9 +113,8 @@ bool EdgePathFixer::detectAndFixDiagonals(
         }
 
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[EdgePathFixer] Edge " << edgeId << " fixed via UnifiedRetryChain"
-                  << " astarAttempts=" << result.astarAttempts
-                  << " cooperativeAttempts=" << result.cooperativeAttempts << std::endl;
+        LOG_DEBUG("[EdgePathFixer] Edge {} fixed via UnifiedRetryChain astarAttempts={} cooperativeAttempts={}",
+                  edgeId, result.astarAttempts, result.cooperativeAttempts);
 #endif
         return true;
     }
@@ -124,8 +123,7 @@ bool EdgePathFixer::detectAndFixDiagonals(
     layout = originalLayout;
 
 #if EDGE_ROUTING_DEBUG
-    std::cout << "[EdgePathFixer] Edge " << edgeId << " fix FAILED: "
-              << result.failureReason << std::endl;
+    LOG_DEBUG("[EdgePathFixer] Edge {} fix FAILED: {}", edgeId, result.failureReason);
 #endif
     return false;
 }

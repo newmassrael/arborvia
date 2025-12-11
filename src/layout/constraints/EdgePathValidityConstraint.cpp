@@ -2,7 +2,7 @@
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -127,30 +127,23 @@ ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx)
         if (!result.found || result.path.size() < 2) {
             invalidEdges.push_back(edgeId);
 #if EDGE_ROUTING_DEBUG
-            std::cout << "[EdgePathValidityConstraint] Edge " << edgeId << " INVALID:"
-                      << " src=(" << srcPoint.x << "," << srcPoint.y << ")"
-                      << " tgt=(" << tgtPoint.x << "," << tgtPoint.y << ")"
-                      << " startGrid=(" << startGrid.x << "," << startGrid.y << ")"
-                      << " goalGrid=(" << goalGrid.x << "," << goalGrid.y << ")"
-                      << " found=" << result.found
-                      << " pathSize=" << result.path.size()
-                      << std::endl;
+            LOG_DEBUG("[EdgePathValidityConstraint] Edge {} INVALID: src=({},{}) tgt=({},{}) startGrid=({},{}) goalGrid=({},{}) found={} pathSize={}",
+                      edgeId, srcPoint.x, srcPoint.y, tgtPoint.x, tgtPoint.y,
+                      startGrid.x, startGrid.y, goalGrid.x, goalGrid.y,
+                      result.found, result.path.size());
             // Check if start/goal are blocked
             std::unordered_set<NodeId> excludes = {srcNodeId, tgtNodeId};
             bool startBlocked = edgeObstacles.isBlocked(startGrid.x, startGrid.y, excludes);
             bool goalBlocked = edgeObstacles.isBlocked(goalGrid.x, goalGrid.y, excludes);
-            std::cout << "[EdgePathValidityConstraint]   startBlocked=" << startBlocked
-                      << " goalBlocked=" << goalBlocked << std::endl;
+            LOG_DEBUG("[EdgePathValidityConstraint]   startBlocked={} goalBlocked={}", startBlocked, goalBlocked);
 #endif
         }
     }
 
     if (!invalidEdges.empty()) {
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[EdgePathValidityConstraint] Node " << ctx.nodeId 
-                  << " at (" << ctx.newPosition.x << "," << ctx.newPosition.y << ")"
-                  << " REJECTED: " << invalidEdges.size() << " edge(s) have no valid path"
-                  << std::endl;
+        LOG_DEBUG("[EdgePathValidityConstraint] Node {} at ({},{}) REJECTED: {} edge(s) have no valid path",
+                  ctx.nodeId, ctx.newPosition.x, ctx.newPosition.y, invalidEdges.size());
 #endif
         return ConstraintResult::failWithEdges(
             "No valid A* path for " + std::to_string(invalidEdges.size()) + " edge(s)",

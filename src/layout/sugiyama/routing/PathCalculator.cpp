@@ -5,7 +5,7 @@
 #include "arborvia/layout/config/LayoutOptions.h"
 #include "arborvia/core/GeometryUtils.h"
 #include <cmath>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -110,10 +110,9 @@ void PathCalculator::handleSelfLoop(
     }
     
 #if EDGE_ROUTING_DEBUG
-    std::cout << "[PathCalculator] Edge " << layout.id << " SELF-LOOP: "
-              << "src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ") "
-              << "tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ") "
-              << "bends=" << layout.bendPoints.size() << std::endl;
+    LOG_DEBUG("[PathCalculator] Edge {} SELF-LOOP: src=({},{}) tgt=({},{}) bends={}",
+              layout.id, layout.sourcePoint.x, layout.sourcePoint.y,
+              layout.targetPoint.x, layout.targetPoint.y, layout.bendPoints.size());
 #endif
 }
 
@@ -145,10 +144,8 @@ bool PathCalculator::tryAStarPathfinding(
         }
 
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[PathCalculator] Edge " << layout.id << " SUCCESS via UnifiedRetryChain"
-                  << " astarAttempts=" << result.astarAttempts
-                  << " cooperativeAttempts=" << result.cooperativeAttempts
-                  << " bends=" << layout.bendPoints.size() << std::endl;
+        LOG_DEBUG("[PathCalculator] Edge {} SUCCESS via UnifiedRetryChain astarAttempts={} cooperativeAttempts={} bends={}",
+                  layout.id, result.astarAttempts, result.cooperativeAttempts, layout.bendPoints.size());
 #endif
         return true;
     }
@@ -157,8 +154,7 @@ bool PathCalculator::tryAStarPathfinding(
     layout.bendPoints.clear();
 
 #if EDGE_ROUTING_DEBUG
-    std::cout << "[PathCalculator] Edge " << layout.id << " ALL RETRIES FAILED! "
-              << "reason=" << result.failureReason << std::endl;
+    LOG_DEBUG("[PathCalculator] Edge {} ALL RETRIES FAILED! reason={}", layout.id, result.failureReason);
 #endif
     return false;
 }

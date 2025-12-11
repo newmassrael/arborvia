@@ -6,7 +6,7 @@
 
 #include <cmath>
 #include <algorithm>
-#include <iostream>
+#include "arborvia/common/Logger.h"
 
 #ifndef EDGE_ROUTING_DEBUG
 #define EDGE_ROUTING_DEBUG 0
@@ -105,8 +105,8 @@ int SegmentOverlapPenalty::calculatePenalty(
 
     if (PathIntersection::hasOverlapWithOthers(candidate, context.assignedLayouts, candidate.id)) {
 #if EDGE_ROUTING_DEBUG
-        std::cout << "[SegmentOverlapPenalty] Edge " << candidate.id
-                  << " OVERLAPS with others, returning " << defaultWeight() << std::endl;
+        LOG_DEBUG("[SegmentOverlapPenalty] Edge {} OVERLAPS with others, returning {}",
+                  candidate.id, defaultWeight());
 #endif
         return defaultWeight();
     }

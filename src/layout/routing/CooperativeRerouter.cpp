@@ -4,9 +4,7 @@
 #include "../sugiyama/routing/PathIntersection.h"
 #include "arborvia/core/GeometryUtils.h"
 
-#ifdef EDGE_ROUTING_DEBUG
-#include <iostream>
-#endif
+#include "arborvia/common/Logger.h"
 
 namespace arborvia {
 
@@ -68,8 +66,7 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
     }
 
 #ifdef EDGE_ROUTING_DEBUG
-    std::cout << "[CoopReroute] B's expected path: " << myExpectedPath.size() 
-              << " grid points" << std::endl;
+    LOG_DEBUG("[CoopReroute] B's expected path: {} grid points", myExpectedPath.size());
 #endif
 
     // Step 3: Reserve B's expected path in obstacle map
@@ -79,8 +76,7 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
     auto blockingEdges = findBlockingEdges(currentLayout, myExpectedPath, otherLayouts, obstacles);
 
 #ifdef EDGE_ROUTING_DEBUG
-    std::cout << "[CoopReroute] Found " << blockingEdges.size() 
-              << " blocking edges" << std::endl;
+    LOG_DEBUG("[CoopReroute] Found {} blocking edges", blockingEdges.size());
 #endif
 
     // Step 5: Reroute blocking edges (A) to avoid B's reserved area
@@ -117,15 +113,13 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
             obstacles.markEdgePath(blockingId, aPath);
 
 #ifdef EDGE_ROUTING_DEBUG
-            std::cout << "[CoopReroute] Edge " << blockingId 
-                      << " rerouted to avoid edge " << edgeId << std::endl;
+            LOG_DEBUG("[CoopReroute] Edge {} rerouted to avoid edge {}", blockingId, edgeId);
 #endif
         } else {
             // Track failed reroute
             result.failedReroutes.push_back(blockingId);
 #ifdef EDGE_ROUTING_DEBUG
-            std::cout << "[CoopReroute] Edge " << blockingId 
-                      << " could not find alternative route" << std::endl;
+            LOG_DEBUG("[CoopReroute] Edge {} could not find alternative route", blockingId);
 #endif
         }
     }
@@ -141,8 +135,7 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
         result.success = true;
         result.layout = bLayout;
 #ifdef EDGE_ROUTING_DEBUG
-        std::cout << "[CoopReroute] B's path calculated: " << bLayout.bendPoints.size() 
-                  << " bendPoints" << std::endl;
+        LOG_DEBUG("[CoopReroute] B's path calculated: {} bendPoints", bLayout.bendPoints.size());
 #endif
     } else {
         result.failureReason = "B failed to find path after rerouting blocking edges";
