@@ -1,5 +1,6 @@
 #include "layout/constraints/DirectionAwareMarginConstraint.h"
 #include "arborvia/core/GeometryUtils.h"
+#include "arborvia/common/Logger.h"
 
 #include <algorithm>
 
@@ -48,19 +49,50 @@ DirectionAwareMarginConstraint::DirectionAwareMarginConstraint(float baseGridDis
 ConstraintResult DirectionAwareMarginConstraint::check(const ConstraintContext& ctx) const {
     auto nodeIt = ctx.nodeLayouts.find(ctx.nodeId);
     if (nodeIt == ctx.nodeLayouts.end()) {
+        LOG_DEBUG("[DirectionAwareMargin::check] nodeId={} NOT FOUND in nodeLayouts", ctx.nodeId);
         return ConstraintResult::ok();
     }
 
     const auto& nodeSize = nodeIt->second.size;
     auto zones = getBlockedRegions(ctx);
 
+    LOG_DEBUG("[DirectionAwareMargin::check] nodeId={} pos=({},{}) size=({},{}) zones={}",
+              ctx.nodeId, ctx.newPosition.x, ctx.newPosition.y, nodeSize.width, nodeSize.height, zones.size());
+
     // Check if proposed position overlaps with any forbidden zone
-    for (const auto& zone : zones) {
-        bool overlapsX = ctx.newPosition.x < zone.x + zone.width &&
-                         ctx.newPosition.x + nodeSize.width > zone.x;
-        bool overlapsY = ctx.newPosition.y < zone.y + zone.height &&
-                         ctx.newPosition.y + nodeSize.height > zone.y;
+    for (size_t i = 0; i < zones.size(); ++i) {
+        const auto& zone = zones[i];
+
+        // Node ranges
+        float nodeMinX = ctx.newPosition.x;
+        float nodeMaxX = ctx.newPosition.x + nodeSize.width;
+        float nodeMinY = ctx.newPosition.y;
+        float nodeMaxY = ctx.newPosition.y + nodeSize.height;
+
+        // Zone ranges
+        float zoneMinX = zone.x;
+        float zoneMaxX = zone.x + zone.width;
+        float zoneMinY = zone.y;
+        float zoneMaxY = zone.y + zone.height;
+
+        bool overlapsX = nodeMinX < zoneMaxX && nodeMaxX > zoneMinX;
+        bool overlapsY = nodeMinY < zoneMaxY && nodeMaxY > zoneMinY;
+
+        LOG_DEBUG("[DirectionAwareMargin::check] zone[{}]: node=[{},{})x[{},{}) zone=[{},{})x[{},{}) overlapsX={} overlapsY={}",
+                  i, nodeMinX, nodeMaxX, nodeMinY, nodeMaxY,
+                  zoneMinX, zoneMaxX, zoneMinY, zoneMaxY,
+                  overlapsX, overlapsY);
+
+        // Detect boundary cases (node exactly at zone edge - uses strict inequality so no overlap detected)
+        bool atBoundaryX = (nodeMinX == zoneMaxX || nodeMaxX == zoneMinX);
+        bool atBoundaryY = (nodeMinY == zoneMaxY || nodeMaxY == zoneMinY);
+        if (atBoundaryX || atBoundaryY) {
+            LOG_DEBUG("[DirectionAwareMargin::check] BOUNDARY: zone[{}] node at exact boundary (atBoundaryX={} atBoundaryY={})",
+                      i, atBoundaryX, atBoundaryY);
+        }
+
         if (overlapsX && overlapsY) {
+            LOG_DEBUG("[DirectionAwareMargin::check] VIOLATION: node overlaps zone[{}]", i);
             return ConstraintResult::fail("Too close to another node");
         }
     }
@@ -71,10 +103,18 @@ ConstraintResult DirectionAwareMarginConstraint::check(const ConstraintContext& 
 std::vector<Rect> DirectionAwareMarginConstraint::getBlockedRegions(const ConstraintContext& ctx) const {
     std::vector<Rect> zones;
 
+    LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] nodeId={} nodeLayouts.size={} edgeLayouts.size={}",
+              ctx.nodeId, ctx.nodeLayouts.size(), ctx.edgeLayouts.size());
+
     auto nodeIt = ctx.nodeLayouts.find(ctx.nodeId);
     if (nodeIt == ctx.nodeLayouts.end()) {
+        LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] nodeId={} NOT FOUND in nodeLayouts!", ctx.nodeId);
         return zones;
     }
+
+    LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] draggedNode id={} pos=({},{}) size=({},{})",
+              ctx.nodeId, nodeIt->second.position.x, nodeIt->second.position.y,
+              nodeIt->second.size.width, nodeIt->second.size.height);
 
     auto draggedCounts = countEdgesPerDirection(ctx.nodeId, ctx.edgeLayouts);
 
@@ -82,14 +122,22 @@ std::vector<Rect> DirectionAwareMarginConstraint::getBlockedRegions(const Constr
     const float baseMargin = baseGridDistance_ * ctx.gridSize;
     const int threshold = static_cast<int>(baseGridDistance_) - 1;
 
+    LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] baseGridDistance_={} gridSize={} baseMargin={} threshold={}",
+              baseGridDistance_, ctx.gridSize, baseMargin, threshold);
+
     auto calcMargin = [baseMargin, threshold, &ctx](int snapPoints) {
         return baseMargin + std::max(0, snapPoints - threshold) * ctx.gridSize;
     };
 
     for (const auto& [otherId, otherNode] : ctx.nodeLayouts) {
         if (otherId == ctx.nodeId) {
+            LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] SKIPPING self nodeId={}", otherId);
             continue;
         }
+
+        LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] otherNode id={} pos=({},{}) size=({},{})",
+                  otherId, otherNode.position.x, otherNode.position.y,
+                  otherNode.size.width, otherNode.size.height);
 
         auto otherCounts = countEdgesPerDirection(otherId, ctx.edgeLayouts);
 
@@ -105,9 +153,14 @@ std::vector<Rect> DirectionAwareMarginConstraint::getBlockedRegions(const Constr
             otherNode.size.height + marginTop + marginBottom
         };
 
+        LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] zone for node {} = ({},{},{},{}) margins=({},{},{},{})",
+                  otherId, zone.x, zone.y, zone.width, zone.height,
+                  marginLeft, marginTop, marginRight, marginBottom);
+
         zones.push_back(zone);
     }
 
+    LOG_DEBUG("[DirectionAwareMargin::getBlockedRegions] total zones={}", zones.size());
     return zones;
 }
 

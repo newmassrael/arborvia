@@ -1,4 +1,5 @@
 #include "arborvia/layout/constraints/PositionFinder.h"
+#include "arborvia/common/Logger.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 
@@ -137,6 +138,7 @@ bool PositionFinder::validateAllEdgePaths(
         GridPoint goalGrid = edgeObstacles.pixelToGrid(tgtPoint);
 
         // Try A* pathfinding with edge obstacles
+        LOG_DEBUG("[CALLER:PositionFinder.cpp] A* findPath called");
         auto result = pathFinder.findPath(
             startGrid, goalGrid, edgeObstacles,
             srcNodeId, tgtNodeId,

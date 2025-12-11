@@ -296,6 +296,7 @@ EdgeLayout CooperativeRerouter::calculatePath(
     GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
     GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
 
+    LOG_DEBUG("[CALLER:CooperativeRerouter.cpp] A* findPath called");
     PathResult pathResult = pathFinder_->findPath(
         startGrid, goalGrid, obstacles,
         layout.from, layout.to,

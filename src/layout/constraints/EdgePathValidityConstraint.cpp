@@ -118,6 +118,7 @@ ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx)
         GridPoint goalGrid = edgeObstacles.pixelToGrid(tgtPoint);
 
         // Try A* pathfinding with edge obstacles
+        LOG_DEBUG("[CALLER:EdgePathValidityConstraint.cpp] A* findPath called");
         auto result = pathFinder.findPath(
             startGrid, goalGrid, edgeObstacles,
             srcNodeId, tgtNodeId,

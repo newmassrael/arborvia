@@ -104,6 +104,7 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
         GridPoint pathStart = isSource ? startGrid : goalGrid;
         GridPoint pathGoal = isSource ? goalGrid : startGrid;
 
+        LOG_DEBUG("[CALLER:SnapPointController.cpp:evaluateCandidate] A* findPath called");
         auto pathResult = pathFinder_->findPath(
             pathStart, pathGoal, obstacles,
             srcNode, tgtNode,
@@ -377,6 +378,7 @@ bool SnapPointController::calculatePreviewPath(
     GridPoint goalGrid = GridPoint::fromPixel(layout.targetPoint, gridSizeToUse);
 
     // Find path
+    LOG_DEBUG("[CALLER:SnapPointController.cpp:findPathForEdge] A* findPath called");
     auto pathResult = pathFinder_->findPath(
         startGrid, goalGrid, obstacles,
         layout.from, layout.to,

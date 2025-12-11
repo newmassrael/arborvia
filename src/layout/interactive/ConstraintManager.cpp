@@ -2,6 +2,7 @@
 #include "layout/constraints/DirectionAwareMarginConstraint.h"
 #include "layout/constraints/EdgePathValidityConstraint.h"
 #include "sugiyama/routing/PathIntersection.h"
+#include "arborvia/common/Logger.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,12 +96,19 @@ DragValidationResult ConstraintManager::validate(const ConstraintContext& ctx) c
     // Check constraints in tier order: Fast -> Medium -> Expensive
     // Stop on first failure for efficiency
 
-    auto checkTier = [&ctx](const std::vector<std::unique_ptr<IDragConstraint>>& tier)
+    LOG_DEBUG("[ConstraintManager::validate] nodeId={} pos=({},{}) fastConstraints={} mediumConstraints={} expensiveConstraints={}",
+              ctx.nodeId, ctx.newPosition.x, ctx.newPosition.y,
+              fastConstraints_.size(), mediumConstraints_.size(), expensiveConstraints_.size());
+
+    auto checkTier = [&ctx](const std::vector<std::unique_ptr<IDragConstraint>>& tier, const char* tierName)
         -> std::optional<DragValidationResult> {
         for (const auto& constraint : tier) {
             if (!constraint) continue;
 
+            LOG_DEBUG("[ConstraintManager::validate] Checking {} constraint: {}", tierName, constraint->name());
             auto result = constraint->check(ctx);
+            LOG_DEBUG("[ConstraintManager::validate] {} constraint {} result: satisfied={} reason={}",
+                      tierName, constraint->name(), result.satisfied, result.reason);
             if (!result.satisfied) {
                 return DragValidationResult{
                     false,
@@ -114,17 +122,17 @@ DragValidationResult ConstraintManager::validate(const ConstraintContext& ctx) c
     };
 
     // Check fast constraints first
-    if (auto result = checkTier(fastConstraints_)) {
+    if (auto result = checkTier(fastConstraints_, "Fast")) {
         return *result;
     }
 
     // Check medium constraints
-    if (auto result = checkTier(mediumConstraints_)) {
+    if (auto result = checkTier(mediumConstraints_, "Medium")) {
         return *result;
     }
 
     // Check expensive constraints last
-    if (auto result = checkTier(expensiveConstraints_)) {
+    if (auto result = checkTier(expensiveConstraints_, "Expensive")) {
         return *result;
     }
 
@@ -164,12 +172,8 @@ ConstraintManager ConstraintManager::createDefault(float minGridDistance, const 
     manager.addConstraint(std::make_unique<DirectionAwareMarginConstraint>(minGridDistance));
 
     // EdgePathValidityConstraint: A* path validation during drag
-    // Skip when HideUntilDrop mode is used because:
-    // 1. This constraint uses simple A* without retry mechanisms
-    // 2. UnifiedRetryChain (used after drop) has 4-step retry logic that can find paths
-    //    even when simple A* fails (CooperativeRerouter, snap variations, NodeEdge switch)
-    // 3. The constraint would reject valid positions that UnifiedRetryChain could handle
-    if (options.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
+    // Use DragAlgorithmTraits (Single Source of Truth) to determine if validation is needed
+    if (DragAlgorithmTraits::requiresPathValidationDuringDrag(options.optimizationOptions.dragAlgorithm)) {
         manager.addConstraint(std::make_unique<EdgePathValidityConstraint>(10.0f));
     }
 

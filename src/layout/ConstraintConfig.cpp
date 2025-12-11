@@ -1,4 +1,5 @@
 #include "arborvia/layout/config/ConstraintConfig.h"
+#include "arborvia/common/Logger.h"
 #include "layout/interactive/ConstraintManager.h"
 #include "layout/constraints/DirectionAwareMarginConstraint.h"
 #include "layout/constraints/NoOverlapConstraint.h"
@@ -74,16 +75,32 @@ ConstraintConfig ConstraintConfig::createDefault(const LayoutOptions* options) {
     config.addDirectionAwareMargin(constants::MIN_NODE_GRID_DISTANCE);
 
     // EdgePathValidity: A* path validation during drag
-    // Skip when HideUntilDrop mode is used because:
-    // 1. This constraint uses simple A* without retry mechanisms
-    // 2. UnifiedRetryChain (used after drop) has 4-step retry logic that can find paths
-    //    even when simple A* fails (CooperativeRerouter, snap variations, NodeEdge switch)
-    // 3. The constraint would reject valid positions that UnifiedRetryChain could handle
-    bool skipEdgePathValidity = options &&
-        options->optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop;
+    // Use DragAlgorithmTraits (Single Source of Truth) to determine if validation is needed
+    bool needsPathValidation = options &&
+        DragAlgorithmTraits::requiresPathValidationDuringDrag(options->optimizationOptions.dragAlgorithm);
 
-    if (!skipEdgePathValidity) {
+    const char* algoName = "Unknown";
+    if (options) {
+        switch (options->optimizationOptions.dragAlgorithm) {
+            case DragAlgorithm::None: algoName = "None"; break;
+            case DragAlgorithm::Geometric: algoName = "Geometric"; break;
+            case DragAlgorithm::AStar: algoName = "AStar"; break;
+            case DragAlgorithm::HideUntilDrop: algoName = "HideUntilDrop"; break;
+        }
+    }
+    LOG_DEBUG("[ConstraintConfig::createDefault] options={} dragAlgorithm={}({}) needsPathValidation={}",
+              options ? "provided" : "null",
+              options ? static_cast<int>(options->optimizationOptions.dragAlgorithm) : -1,
+              algoName,
+              needsPathValidation);
+    LOG_DEBUG("[ConstraintConfig::createDefault] NOTE: EdgePathValidity only added for AStar mode. "
+              "In Geometric/HideUntilDrop mode, edge constraints (penetration, overlap) are NOT validated during drag.");
+
+    if (needsPathValidation) {
+        LOG_DEBUG("[ConstraintConfig::createDefault] ADDING EdgePathValidityConstraint (A* validation)");
         config.addEdgePathValidity(10.0f);
+    } else {
+        LOG_DEBUG("[ConstraintConfig::createDefault] SKIPPING EdgePathValidityConstraint");
     }
 
     return config;
@@ -109,21 +126,27 @@ const SingleConstraintConfig* ConstraintConfig::get(const std::string& type) con
 }
 
 std::unique_ptr<ConstraintManager> ConstraintFactory::create(const ConstraintConfig& config) {
+    LOG_DEBUG("[ConstraintFactory::create] Creating manager from config with {} constraints", config.constraints.size());
     auto manager = std::make_unique<ConstraintManager>();
-    
+
     for (const auto& constraintConfig : config.constraints) {
+        LOG_DEBUG("[ConstraintFactory::create] Processing constraint: type={} enabled={}", constraintConfig.type, constraintConfig.enabled);
         if (!constraintConfig.enabled) continue;
-        
+
         auto& registry = getRegistry();
         auto it = registry.find(constraintConfig.type);
         if (it != registry.end()) {
             auto constraint = it->second(constraintConfig);
             if (constraint) {
+                LOG_DEBUG("[ConstraintFactory::create] Created constraint: {} tier={}", constraint->name(), static_cast<int>(constraint->tier()));
                 manager->addConstraint(std::move(constraint));
             }
+        } else {
+            LOG_DEBUG("[ConstraintFactory::create] Constraint type not found in registry: {}", constraintConfig.type);
         }
     }
-    
+
+    LOG_DEBUG("[ConstraintFactory::create] Manager created with {} total constraints", manager->constraintCount());
     return manager;
 }
 

@@ -136,13 +136,19 @@ void LayoutUtils::updateEdgePositions(
     EdgeRouting routing;
     
     // updateEdgePositions is called after drop, not during drag
-    // Use postDragAlgorithm (AStar) instead of dragAlgorithm (which may be HideUntilDrop)
+    // Use postDragAlgorithm instead of dragAlgorithm (which may be HideUntilDrop)
     LayoutOptions postDropOptions = options;
-    if (options.optimizationOptions.postDragAlgorithm == PostDragAlgorithm::AStar) {
-        postDropOptions.optimizationOptions.dragAlgorithm = DragAlgorithm::AStar;
-    } else {
-        // Fallback to Geometric if no post-drag algorithm configured
-        postDropOptions.optimizationOptions.dragAlgorithm = DragAlgorithm::Geometric;
+    switch (options.optimizationOptions.postDragAlgorithm) {
+        case PostDragAlgorithm::AStar:
+            postDropOptions.optimizationOptions.dragAlgorithm = DragAlgorithm::AStar;
+            break;
+        case PostDragAlgorithm::Geometric:
+            postDropOptions.optimizationOptions.dragAlgorithm = DragAlgorithm::Geometric;
+            break;
+        case PostDragAlgorithm::None:
+            // Keep existing dragAlgorithm or fallback to Geometric
+            postDropOptions.optimizationOptions.dragAlgorithm = DragAlgorithm::Geometric;
+            break;
     }
     
     // First pass: update directly affected edges (connected to moved nodes)
@@ -719,6 +725,7 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         GridPoint pathGoal = isSource ? goalGrid : startGrid;
         
         // Try A* pathfinding
+        LOG_DEBUG("[CALLER:LayoutUtils.cpp] A* findPath called");
         AStarPathFinder pathFinder;
         auto pathResult = pathFinder.findPath(
             pathStart, pathGoal, obstacles,

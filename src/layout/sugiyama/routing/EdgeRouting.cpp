@@ -224,6 +224,13 @@ EdgeRouting::Result EdgeRouting::route(
                 fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
                 break;
             }
+            case PostDragAlgorithm::Geometric: {
+                OptimizerConfig config = OptimizerConfig::aggressive();
+                config.gridSize = gridSize;
+                config.penaltySystem = EdgePenaltySystem::createDefault();
+                fallbackOptimizer = OptimizerRegistry::instance().create("Geometric", config);
+                break;
+            }
             case PostDragAlgorithm::None:
                 break;
         }
@@ -481,6 +488,13 @@ void EdgeRouting::regenerateBendPointsOnly(
                 config.pathFinder = pathFinder_;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
+                break;
+            }
+            case PostDragAlgorithm::Geometric: {
+                OptimizerConfig config = OptimizerConfig::aggressive();
+                config.gridSize = gridSize;
+                config.penaltySystem = EdgePenaltySystem::createDefault();
+                fallbackOptimizer = OptimizerRegistry::instance().create("Geometric", config);
                 break;
             }
             case PostDragAlgorithm::None:

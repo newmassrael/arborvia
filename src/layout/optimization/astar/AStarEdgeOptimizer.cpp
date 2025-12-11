@@ -828,6 +828,7 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     }
 
     // Use provided pathfinder (thread-safe)
+    LOG_DEBUG("[CALLER:AStarEdgeOptimizer.cpp] A* findPath called");
     PathResult pathResult = pathFinder.findPath(
         startGrid, goalGrid, obstacles,
         base.from, base.to,

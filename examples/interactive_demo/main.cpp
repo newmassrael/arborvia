@@ -4,6 +4,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <arborvia/arborvia.h>
+#include <arborvia/common/Logger.h>
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
 #include <arborvia/layout/api/LayoutController.h>
 #include <arborvia/layout/config/ConstraintConfig.h>
@@ -503,7 +504,15 @@ public:
             lastValidPosition_ = layout.position;
             isInvalidDragPosition_ = false;
             // Create constraint manager for drag validation
-            constraintManager_ = ConstraintFactory::create(ConstraintConfig::createDefault(&layoutOptions_));
+            LOG_DEBUG("[Demo::dragStart] Creating constraint manager with layoutOptions_.optimizationOptions.dragAlgorithm={}",
+                      static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm));
+            auto defaultConfig = ConstraintConfig::createDefault(&layoutOptions_);
+            LOG_DEBUG("[Demo::dragStart] ConstraintConfig has {} constraints", defaultConfig.constraints.size());
+            for (const auto& c : defaultConfig.constraints) {
+                LOG_DEBUG("[Demo::dragStart]   constraint: type={} enabled={}", c.type, c.enabled);
+            }
+            constraintManager_ = ConstraintFactory::create(defaultConfig);
+            LOG_DEBUG("[Demo::dragStart] ConstraintManager created with {} constraints", constraintManager_->constraintCount());
             // Pre-calculate blocked regions for visualization
             ConstraintContext ctx{draggedNode_, layout.position, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
             blockedRegions_ = constraintManager_->getAllBlockedRegions(ctx);
@@ -681,8 +690,25 @@ public:
 
             // Full validation using ConstraintManager
             Point proposedPosition = {newX, newY};
+            LOG_DEBUG("[Demo::drag] graphMouse=({},{}) dragOffset=({},{}) newX={} newY={} proposedPosition=({},{})",
+                      graphMouse.x, graphMouse.y, dragOffset_.x, dragOffset_.y, newX, newY, proposedPosition.x, proposedPosition.y);
+
+            // Debug: Log current state of nodeLayouts
+            LOG_DEBUG("[Demo::drag] nodeLayouts state before constraint check:");
+            for (const auto& [nid, nl] : nodeLayouts_) {
+                LOG_DEBUG("[Demo::drag]   node {} pos=({},{}) size=({},{})",
+                          nid, nl.position.x, nl.position.y, nl.size.width, nl.size.height);
+            }
+            LOG_DEBUG("[Demo::drag] draggedNode_={} constraintManager_={} gridSize_={}",
+                      draggedNode_, constraintManager_ ? "valid" : "null", gridSize_);
+
             ConstraintContext ctx{draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
+            LOG_DEBUG("[Demo::drag] ConstraintContext created: nodeId={} newPosition=({},{}) nodeLayouts.size={} edgeLayouts.size={}",
+                      ctx.nodeId, ctx.newPosition.x, ctx.newPosition.y, ctx.nodeLayouts.size(), ctx.edgeLayouts.size());
+
             auto validation = constraintManager_->validate(ctx);
+            LOG_DEBUG("[Demo::drag] validation result: valid={} failedConstraint={} reason={}",
+                      validation.valid, validation.failedConstraint, validation.reason);
 
             // Always update position during drag (visual feedback)
             layout.position.x = newX;
@@ -722,15 +748,21 @@ public:
     }
 
     void rerouteAffectedEdges() {
-        // Re-route ALL edges with A* after drop
-        // This ensures all transitions are recalculated
+        // Re-route ALL edges after position change
+        // Algorithm used depends on layoutOptions_.optimizationOptions.postDragAlgorithm
         std::vector<EdgeId> allEdges;
         allEdges.reserve(edgeLayouts_.size());
         for (const auto& [edgeId, layout] : edgeLayouts_) {
             allEdges.push_back(edgeId);
         }
-        std::cout << "[rerouteAffectedEdges] Processing ALL " << allEdges.size() 
-                  << " edges with A* (draggedNode=" << draggedNode_ << ")" << std::endl;
+        const char* algoName = "Unknown";
+        switch (layoutOptions_.optimizationOptions.postDragAlgorithm) {
+            case PostDragAlgorithm::None: algoName = "None"; break;
+            case PostDragAlgorithm::AStar: algoName = "AStar"; break;
+            case PostDragAlgorithm::Geometric: algoName = "Geometric"; break;
+        }
+        std::cout << "[rerouteAffectedEdges] Processing " << allEdges.size()
+                  << " edges with " << algoName << " (draggedNode=" << draggedNode_ << ")" << std::endl;
         std::unordered_set<NodeId> movedNodes = {draggedNode_};
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, allEdges,

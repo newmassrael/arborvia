@@ -98,6 +98,10 @@ PathResult AStarPathFinder::findPath(
     const bool isSelfLoop = (sourceNode == targetNode);
     static const std::unordered_set<NodeId> emptyExcludeSet{};
 
+    // Log caller stack trace for debugging
+    LOG_DEBUG("[A* findPath] CALLER TRACE - start=({},{}) goal=({},{}) srcNode={} tgtNode={}",
+              start.x, start.y, goal.x, goal.y, sourceNode, targetNode);
+              
     // Check if start cell is accessible (blocked only by excluded nodes is OK)
     bool startBlockedWithExcludes = obstacles.isBlocked(start.x, start.y, startExcludes);
     LOG_DEBUG("[A* findPath] start=({},{}) goal=({},{}) sourceNode={} targetNode={} startBlockedWithExcludes={}",

@@ -125,11 +125,32 @@ enum class DragAlgorithm {
     HideUntilDrop   ///< Hide edges during drag, calculate with A* on drop
 };
 
+/// Traits for DragAlgorithm - Single Source of Truth for algorithm characteristics
+/// Add new algorithm behaviors here when extending DragAlgorithm enum
+namespace DragAlgorithmTraits {
+    /// Returns true if the algorithm requires A* path validation during drag
+    /// Only AStar mode validates paths during drag; others skip for performance
+    inline bool requiresPathValidationDuringDrag(DragAlgorithm algo) {
+        return algo == DragAlgorithm::AStar;
+    }
+
+    /// Returns true if edges should be hidden during drag
+    inline bool hidesEdgesDuringDrag(DragAlgorithm algo) {
+        return algo == DragAlgorithm::HideUntilDrop;
+    }
+
+    /// Returns true if the algorithm recalculates paths during drag
+    inline bool recalculatesPathsDuringDrag(DragAlgorithm algo) {
+        return algo == DragAlgorithm::Geometric || algo == DragAlgorithm::AStar;
+    }
+}
+
 /// Algorithm selection for post-drag optimization
 /// Applied after drag operation completes (typically with debounce)
 enum class PostDragAlgorithm {
-    None,   ///< No post-drag optimization
-    AStar   ///< A* pathfinding for optimal obstacle-avoiding paths
+    None,       ///< No post-drag optimization
+    AStar,      ///< A* pathfinding for optimal obstacle-avoiding paths
+    Geometric   ///< Fast geometric path prediction (greedy algorithm)
 };
 
 /// Options for edge routing optimization
@@ -138,11 +159,11 @@ enum class PostDragAlgorithm {
 /// - Optimization: Numeric scoring ("Which option is best?")
 struct OptimizationOptions {
     /// Algorithm to use during drag operations (real-time feedback)
-    /// Geometric is fast but produces approximate paths
+    /// HideUntilDrop hides edges during drag for best UX, calculates on drop
     DragAlgorithm dragAlgorithm = DragAlgorithm::HideUntilDrop;
 
     /// Algorithm to use after drag completes (final optimization)
-    /// AStar produces optimal paths but is slower
+    /// AStar produces optimal obstacle-avoiding paths
     PostDragAlgorithm postDragAlgorithm = PostDragAlgorithm::AStar;
 
     /// Enable snap point sorting by other node position

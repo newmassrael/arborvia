@@ -1,5 +1,6 @@
 #include "ChannelRouter.h"
 #include "SelfLoopRouter.h"
+#include "arborvia/common/Logger.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "EdgeValidator.h"
 #include "arborvia/layout/api/IPathFinder.h"
@@ -457,6 +458,7 @@ void ChannelRouter::calculateBendPoints(
         GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
         GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
 
+        LOG_DEBUG("[CALLER:ChannelRouter.cpp] A* findPath called");
         PathResult pathResult = pathFinder_->findPath(
             startGrid, goalGrid, obstacles,
             layout.from, layout.to,

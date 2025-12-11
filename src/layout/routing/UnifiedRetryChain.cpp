@@ -204,6 +204,7 @@ bool UnifiedRetryChain::tryAStarPath(
               gridSize, startBlocked, goalBlocked);
 
     // Find path
+    LOG_DEBUG("[CALLER:UnifiedRetryChain.cpp] A* findPath called");
     PathResult pathResult = pathFinder_->findPath(
         startGrid, goalGrid, obstacles,
         layout.from, layout.to,
