@@ -1,5 +1,6 @@
 #include "UnifiedRetryChain.h"
 #include "../pathfinding/ObstacleMap.h"
+#include "../sugiyama/routing/PathIntersection.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 
@@ -14,6 +15,37 @@ namespace {
     static constexpr std::array<float, 9> SNAP_RATIOS = {
         0.2f, 0.4f, 0.5f, 0.6f, 0.8f, 0.1f, 0.9f, 0.3f, 0.7f
     };
+
+    /// Log constraint violation details
+    void logValidationFailure(EdgeId edgeId, const UnifiedRetryChain::PathValidationResult& validation) {
+        if (validation.valid) return;
+        
+        std::cout << "[UnifiedRetryChain] Edge " << edgeId 
+                  << " CONSTRAINT VIOLATIONS:" << std::endl;
+        if (validation.hasOverlap) {
+            std::cout << "  - OVERLAP with edges:";
+            for (EdgeId eid : validation.overlappingEdges) {
+                std::cout << " " << eid;
+            }
+            std::cout << std::endl;
+            // Log detailed overlap info
+            for (const auto& detail : validation.overlapDetails) {
+                std::cout << "    Edge" << edgeId << "[" << detail.thisSegmentIndex << "] "
+                          << "(" << detail.thisSegStart.x << "," << detail.thisSegStart.y << ")->"
+                          << "(" << detail.thisSegEnd.x << "," << detail.thisSegEnd.y << ")"
+                          << " overlaps Edge" << detail.otherEdgeId << "[" << detail.otherSegmentIndex << "] "
+                          << "(" << detail.otherSegStart.x << "," << detail.otherSegStart.y << ")->"
+                          << "(" << detail.otherSegEnd.x << "," << detail.otherSegEnd.y << ")"
+                          << std::endl;
+            }
+        }
+        if (validation.hasDiagonal) {
+            std::cout << "  - DIAGONAL segment (non-orthogonal)" << std::endl;
+        }
+        if (validation.hasNodePenetration) {
+            std::cout << "  - NODE PENETRATION" << std::endl;
+        }
+    }
 }  // anonymous namespace
 
 UnifiedRetryChain::UnifiedRetryChain(
@@ -69,8 +101,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     if (tryAStarPath(workingLayout, nodeLayouts, otherEdges)) {
         result.success = true;
         result.layout = workingLayout;
+        result.validation = validatePathResult(edgeId, workingLayout, otherEdges, nodeLayouts);
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 1 (basic A*)" << std::endl;
+                  << " SUCCESS at Step 1 (basic A*)"
+                  << " validation=" << (result.validation.valid ? "PASS" : "FAIL")
+                  << std::endl;
+        logValidationFailure(edgeId, result.validation);
         return result;
     }
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
@@ -84,8 +120,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
             result.success = true;
             result.layout = coopResult.layout;
             result.reroutedEdges = std::move(coopResult.reroutedEdges);
+            result.validation = validatePathResult(edgeId, coopResult.layout, otherEdges, nodeLayouts);
             std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                      << " SUCCESS at Step 2 (CooperativeRerouter)" << std::endl;
+                      << " SUCCESS at Step 2 (CooperativeRerouter)"
+                      << " validation=" << (result.validation.valid ? "PASS" : "FAIL")
+                      << std::endl;
+            logValidationFailure(edgeId, result.validation);
             return result;
         }
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
@@ -100,8 +140,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     result.astarAttempts += snapResult.astarAttempts;
     result.cooperativeAttempts += snapResult.cooperativeAttempts;
     if (snapResult.success) {
+        snapResult.validation = validatePathResult(edgeId, snapResult.layout, otherEdges, nodeLayouts);
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 3 (snap variations)" << std::endl;
+                  << " SUCCESS at Step 3 (snap variations)"
+                  << " validation=" << (snapResult.validation.valid ? "PASS" : "FAIL")
+                  << std::endl;
+        logValidationFailure(edgeId, snapResult.validation);
         return snapResult;
     }
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
@@ -112,21 +156,27 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::calculatePath(
     result.astarAttempts += edgeSwitchResult.astarAttempts;
     result.cooperativeAttempts += edgeSwitchResult.cooperativeAttempts;
     if (edgeSwitchResult.success) {
+        edgeSwitchResult.validation = validatePathResult(edgeId, edgeSwitchResult.layout, otherEdges, nodeLayouts);
         std::cout << "[UnifiedRetryChain] Edge " << edgeId 
-                  << " SUCCESS at Step 4 (NodeEdge switch)" << std::endl;
+                  << " SUCCESS at Step 4 (NodeEdge switch)"
+                  << " validation=" << (edgeSwitchResult.validation.valid ? "PASS" : "FAIL")
+                  << std::endl;
+        logValidationFailure(edgeId, edgeSwitchResult.validation);
         return edgeSwitchResult;
     }
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
               << " Step 4 FAILED (NodeEdge switch), maxNodeEdgeCombinations=" 
               << config.maxNodeEdgeCombinations << std::endl;
 
-    // All steps failed
+    // All steps failed - validate the original layout before returning
     result.failureReason = "All retry attempts exhausted";
     result.layout = layout;  // Return original layout
+    result.validation = validatePathResult(edgeId, layout, otherEdges, nodeLayouts);
 
     std::cout << "[UnifiedRetryChain] Edge " << edgeId 
               << " ALL STEPS FAILED! astarAttempts=" << result.astarAttempts
               << " cooperativeAttempts=" << result.cooperativeAttempts << std::endl;
+    logValidationFailure(edgeId, result.validation);
 
     return result;
 }
@@ -147,9 +197,12 @@ bool UnifiedRetryChain::tryAStarPath(
               << " other edges as obstacles" << std::endl;
     for (const auto& [eid, el] : otherEdges) {
         if (eid != layout.id) {
-            std::cout << "  OtherEdge " << eid << " bends=" << el.bendPoints.size()
-                      << " src=(" << el.sourcePoint.x << "," << el.sourcePoint.y << ")"
-                      << " tgt=(" << el.targetPoint.x << "," << el.targetPoint.y << ")" << std::endl;
+            std::cout << "  OtherEdge " << eid << " path: (" 
+                      << el.sourcePoint.x << "," << el.sourcePoint.y << ")";
+            for (const auto& bp : el.bendPoints) {
+                std::cout << "->(" << bp.position.x << "," << bp.position.y << ")";
+            }
+            std::cout << "->(" << el.targetPoint.x << "," << el.targetPoint.y << ")" << std::endl;
         }
     }
     obstacles.addEdgeSegments(otherEdges, layout.id);
@@ -182,10 +235,29 @@ bool UnifiedRetryChain::tryAStarPath(
 
     if (pathResult.found && pathResult.path.size() >= 2) {
         layout.bendPoints.clear();
+        
+        // Log full A* grid path
+        std::cout << "[tryAStarPath] Edge " << layout.id << " A* grid path:";
+        for (size_t i = 0; i < pathResult.path.size(); ++i) {
+            std::cout << " (" << pathResult.path[i].x << "," << pathResult.path[i].y << ")";
+        }
+        std::cout << std::endl;
+        
+        // Convert grid path to pixel bend points
         for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
             Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
             layout.bendPoints.push_back({pixelPoint});
         }
+        
+        // Log generated bend points in pixel coordinates
+        std::cout << "[tryAStarPath] Edge " << layout.id << " generated path:";
+        std::cout << " src=(" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")";
+        for (const auto& bp : layout.bendPoints) {
+            std::cout << " -> (" << bp.position.x << "," << bp.position.y << ")";
+        }
+        std::cout << " -> tgt=(" << layout.targetPoint.x << "," << layout.targetPoint.y << ")";
+        std::cout << std::endl;
+        
         std::cout << "[tryAStarPath] Edge " << layout.id
                   << " SUCCESS, bendPoints=" << layout.bendPoints.size() << std::endl;
         return true;
@@ -497,6 +569,99 @@ Point UnifiedRetryChain::calculateSnapPointForRatio(
     }
 
     return position;
+}
+
+UnifiedRetryChain::PathValidationResult UnifiedRetryChain::validatePathResult(
+    EdgeId edgeId,
+    const EdgeLayout& layout,
+    const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const {
+
+    PathValidationResult result;
+
+    // Build full path: source -> bends -> target
+    std::vector<Point> fullPath;
+    fullPath.push_back(layout.sourcePoint);
+    for (const auto& bp : layout.bendPoints) {
+        fullPath.push_back(bp.position);
+    }
+    fullPath.push_back(layout.targetPoint);
+
+    // Check 1: Segment overlaps with other edges (with detailed info)
+    for (const auto& [otherId, otherLayout] : otherEdges) {
+        if (otherId == edgeId) continue;
+        
+        // Build other edge's full path
+        std::vector<Point> otherPath;
+        otherPath.push_back(otherLayout.sourcePoint);
+        for (const auto& bp : otherLayout.bendPoints) {
+            otherPath.push_back(bp.position);
+        }
+        otherPath.push_back(otherLayout.targetPoint);
+        
+        // Check each segment pair for overlap
+        bool foundOverlap = false;
+        for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
+            for (size_t j = 0; j + 1 < otherPath.size(); ++j) {
+                if (PathIntersection::segmentsOverlap(
+                        fullPath[i], fullPath[i + 1],
+                        otherPath[j], otherPath[j + 1])) {
+                    if (!foundOverlap) {
+                        result.hasOverlap = true;
+                        result.overlappingEdges.push_back(otherId);
+                        foundOverlap = true;
+                    }
+                    // Add detail
+                    OverlapDetail detail;
+                    detail.otherEdgeId = otherId;
+                    detail.thisSegmentIndex = static_cast<int>(i);
+                    detail.otherSegmentIndex = static_cast<int>(j);
+                    detail.thisSegStart = fullPath[i];
+                    detail.thisSegEnd = fullPath[i + 1];
+                    detail.otherSegStart = otherPath[j];
+                    detail.otherSegEnd = otherPath[j + 1];
+                    result.overlapDetails.push_back(detail);
+                }
+            }
+        }
+    }
+
+    // Check 2: Diagonal segments (non-orthogonal paths)
+    auto checkDiagonal = [](const Point& p1, const Point& p2) -> bool {
+        constexpr float EPSILON = 1.0f;
+        float dx = std::abs(p1.x - p2.x);
+        float dy = std::abs(p1.y - p2.y);
+        // Diagonal if neither horizontal (dy < EPSILON) nor vertical (dx < EPSILON)
+        return dx > EPSILON && dy > EPSILON;
+    };
+
+    for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
+        if (checkDiagonal(fullPath[i], fullPath[i + 1])) {
+            result.hasDiagonal = true;
+            break;
+        }
+    }
+
+    // Check 3: Node penetration (segment crosses through a node)
+    for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
+        // Skip source and target nodes
+        if (nodeId == layout.from || nodeId == layout.to) continue;
+
+        for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
+            if (geometry::segmentIntersectsAABB(
+                fullPath[i], fullPath[i + 1],
+                nodeLayout.position, nodeLayout.size)) {
+                result.hasNodePenetration = true;
+                break;
+            }
+        }
+        if (result.hasNodePenetration) break;
+    }
+
+    // Set overall valid flag
+    result.valid = !result.hasOverlap && !result.hasDiagonal && !result.hasNodePenetration;
+
+    return result;
 }
 
 }  // namespace arborvia

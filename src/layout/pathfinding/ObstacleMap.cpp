@@ -248,6 +248,15 @@ void ObstacleMap::addEdgeSegments(
         // Skip first and last segments to prevent FIRST MOVE BLOCKED issues
         // The source/target snap points may overlap with other edges' snap points
         // SegmentOverlapPenalty will handle those cases
+#if EDGE_ROUTING_DEBUG
+        std::cout << "[ObstacleMap] Edge " << edgeId << " has " << segments.size() << " segments:" << std::endl;
+        for (size_t i = 0; i < segments.size(); ++i) {
+            bool skipped = (i == 0 || i + 1 == segments.size());
+            std::cout << "    seg[" << i << "] (" << segments[i].first.x << "," << segments[i].first.y 
+                      << ")->(" << segments[i].second.x << "," << segments[i].second.y << ")"
+                      << (skipped ? " SKIPPED (first/last)" : " BLOCKED") << std::endl;
+        }
+#endif
         for (size_t i = 1; i + 1 < segments.size(); ++i) {
             markSegmentBlocked(segments[i].first, segments[i].second, true);
         }

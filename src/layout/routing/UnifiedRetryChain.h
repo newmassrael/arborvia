@@ -40,6 +40,25 @@ public:
         const std::unordered_set<NodeId>* movedNodes = nullptr;
     };
 
+    /// Detailed overlap information for logging
+    struct OverlapDetail {
+        EdgeId otherEdgeId;                            ///< ID of the other edge
+        int thisSegmentIndex;                          ///< Index of overlapping segment in this edge
+        int otherSegmentIndex;                         ///< Index of overlapping segment in other edge
+        Point thisSegStart, thisSegEnd;                ///< This edge's segment coordinates
+        Point otherSegStart, otherSegEnd;              ///< Other edge's segment coordinates
+    };
+
+    /// Result of post-pathfinding constraint validation
+    struct PathValidationResult {
+        bool valid = true;                             ///< Whether path meets all constraints
+        bool hasOverlap = false;                       ///< Path overlaps with other edges
+        bool hasDiagonal = false;                      ///< Path contains diagonal (non-orthogonal) segments
+        bool hasNodePenetration = false;               ///< Path penetrates a node
+        std::vector<EdgeId> overlappingEdges;          ///< IDs of edges this path overlaps with
+        std::vector<OverlapDetail> overlapDetails;     ///< Detailed overlap information
+    };
+
     /// Result of retry chain execution
     struct RetryResult {
         bool success = false;                          ///< Whether path was found
@@ -48,6 +67,7 @@ public:
         int astarAttempts = 0;                         ///< Number of A* attempts made
         int cooperativeAttempts = 0;                   ///< Number of CooperativeRerouter attempts
         std::string failureReason;                     ///< Reason for failure (if any)
+        PathValidationResult validation;               ///< Post-pathfinding constraint validation result
     };
 
     /// Constructor
@@ -136,6 +156,19 @@ private:
 
     /// Get effective grid size (handles <= 0 case)
     float effectiveGridSize() const;
+
+    /// Validate path result against constraints
+    /// Checks for overlaps, diagonal segments, and node penetration
+    /// @param edgeId ID of the edge being validated
+    /// @param layout Edge layout to validate
+    /// @param otherEdges Other edges to check against
+    /// @param nodeLayouts Node positions for penetration check
+    /// @return Validation result with details of any violations
+    PathValidationResult validatePathResult(
+        EdgeId edgeId,
+        const EdgeLayout& layout,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
 };
 
 }  // namespace arborvia
