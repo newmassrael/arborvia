@@ -34,23 +34,23 @@ struct ConstraintPlacementResult {
 };
 
 /// Configuration for constraint solving
-struct ConstraintSolverConfig {
+struct PositionFinderConfig {
     float gridSize = 10.0f;         ///< Grid size for A* pathfinding
     float maxSearchDistance = 200.0f; ///< Max distance to search for valid position
     float searchStepSize = 10.0f;   ///< Step size for position search
     int maxIterations = 1000;       ///< Max iterations for position search
 };
 
-/// Solves layout constraints by finding valid node positions
+/// Finds valid node positions that satisfy layout constraints
 /// Ensures all edges have valid A* paths after node placement
 ///
 /// NOTE: Global state validation has been moved to ConstraintManager::validateFinalState().
 /// This class now focuses ONLY on position-finding operations.
-class ConstraintSolver {
+class PositionFinder {
 public:
-    using Config = ConstraintSolverConfig;
+    using Config = PositionFinderConfig;
 
-    explicit ConstraintSolver(const Config& config = Config{});
+    explicit PositionFinder(const Config& config = Config{});
 
     /// Place a node at a position that satisfies all constraints
     /// If the desired position violates constraints, finds nearest valid position

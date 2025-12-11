@@ -1,4 +1,4 @@
-#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/layout/constraints/PositionFinder.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 
@@ -9,10 +9,10 @@
 
 namespace arborvia {
 
-ConstraintSolver::ConstraintSolver(const Config& config)
+PositionFinder::PositionFinder(const Config& config)
     : config_(config) {}
 
-ConstraintPlacementResult ConstraintSolver::placeNode(
+ConstraintPlacementResult PositionFinder::placeNode(
     NodeId nodeId,
     Point desiredPosition,
     Size nodeSize,
@@ -60,7 +60,7 @@ ConstraintPlacementResult ConstraintSolver::placeNode(
         "Position adjusted by " + std::to_string(static_cast<int>(distance)) + " pixels to satisfy constraints");
 }
 
-bool ConstraintSolver::validateAllEdgePaths(
+bool PositionFinder::validateAllEdgePaths(
     NodeId nodeId,
     Point nodePosition,
     Size nodeSize,
@@ -149,7 +149,7 @@ bool ConstraintSolver::validateAllEdgePaths(
     return true;  // All edges have valid paths
 }
 
-bool ConstraintSolver::checkNoOverlap(
+bool PositionFinder::checkNoOverlap(
     NodeId nodeId,
     Point position,
     Size size,
@@ -178,7 +178,7 @@ bool ConstraintSolver::checkNoOverlap(
     return true;
 }
 
-std::optional<Point> ConstraintSolver::findNearestValidPosition(
+std::optional<Point> PositionFinder::findNearestValidPosition(
     NodeId nodeId,
     Point center,
     Size nodeSize,
@@ -251,7 +251,7 @@ std::optional<Point> ConstraintSolver::findNearestValidPosition(
 }
 
 // Helper function to calculate snap point position on a node edge
-Point ConstraintSolver::calculateSnapPointOnEdge(
+Point PositionFinder::calculateSnapPointOnEdge(
     const NodeLayout& node,
     NodeEdge edge,
     int snapIndex) const {

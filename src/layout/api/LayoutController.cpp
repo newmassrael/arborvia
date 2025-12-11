@@ -1,6 +1,6 @@
 #include "arborvia/layout/api/LayoutController.h"
 #include "arborvia/layout/util/LayoutUtils.h"
-#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/layout/constraints/PositionFinder.h"
 #include "layout/interactive/ConstraintManager.h"
 #include "sugiyama/routing/EdgeRouting.h"
 
@@ -25,8 +25,8 @@ LayoutController::LayoutController(const Graph& graph, const LayoutOptions& opti
     auto config = ConstraintConfig::createDefault();
     constraintManager_ = ConstraintFactory::create(config);
     
-    constraintSolver_ = std::make_unique<ConstraintSolver>(
-        ConstraintSolverConfig{gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
+    positionFinder_ = std::make_unique<PositionFinder>(
+        PositionFinderConfig{gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
 }
 
 LayoutController::~LayoutController() = default;

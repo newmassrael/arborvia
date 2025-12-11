@@ -17,7 +17,7 @@ namespace arborvia {
 // Forward declarations
 class IEdgeOptimizer;
 class ConstraintManager;
-class ConstraintSolver;
+class PositionFinder;
 struct FinalStateValidationResult;
 
 /// Result of a node move operation
@@ -170,7 +170,7 @@ private:
     LayoutOptions options_;
 
     std::unique_ptr<ConstraintManager> constraintManager_;
-    std::unique_ptr<ConstraintSolver> constraintSolver_;
+    std::unique_ptr<PositionFinder> positionFinder_;
 
     // Internal helpers
     void updateEdgeRouting(const std::vector<EdgeId>& affectedEdges,

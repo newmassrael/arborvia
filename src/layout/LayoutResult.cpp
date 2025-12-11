@@ -1,6 +1,6 @@
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/util/LayoutSerializer.h"
-#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/layout/constraints/PositionFinder.h"
 #include "arborvia/core/Graph.h"
 
 #include <algorithm>
@@ -258,9 +258,9 @@ ConstraintPlacementResult LayoutResult::placeNodeWithConstraints(
     const Graph& graph,
     float gridSize) {
     
-    ConstraintSolver solver({gridSize, 200.0f, gridSize, 1000});
+    PositionFinder finder({gridSize, 200.0f, gridSize, 1000});
     
-    return solver.placeNode(
+    return finder.placeNode(
         layout.id,
         layout.position,
         layout.size,

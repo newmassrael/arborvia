@@ -60,7 +60,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/constraints/NoOverlapConstraint.cpp
     src/layout/constraints/EdgePathValidityConstraint.cpp
     src/layout/constraints/BoundaryConstraint.cpp
-    src/layout/constraints/ConstraintSolver.cpp
+    src/layout/constraints/PositionFinder.cpp
 
     # API (centralized controllers)
     src/layout/api/LayoutController.cpp
@@ -100,7 +100,7 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/config/MoveDirection.h
 
     # Public API - Constraints
-    include/arborvia/layout/constraints/ConstraintSolver.h
+    include/arborvia/layout/constraints/PositionFinder.h
 
     # Public API - Interactive
     include/arborvia/layout/interactive/ManualLayoutManager.h

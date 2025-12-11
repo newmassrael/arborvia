@@ -1,7 +1,7 @@
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/core/Graph.h"
-#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/layout/constraints/PositionFinder.h"
 #include "layout/interactive/ConstraintManager.h"
 #include "arborvia/layout/config/ConstraintConfig.h"
 #include "arborvia/layout/interactive/PathRoutingCoordinator.h"
@@ -19,7 +19,7 @@ namespace arborvia {
 namespace {
     constexpr float EPSILON_LEN2 = 0.0001f;  // Minimum squared length for valid segment
     
-    // ConstraintSolver configuration constants
+    // PositionFinder configuration constants
     constexpr float CONSTRAINT_SEARCH_RADIUS = 400.0f;  // Max distance to search for valid position
     constexpr int CONSTRAINT_MAX_ITERATIONS = 2000;     // Max BFS iterations
     constexpr float NODE_AREA_MARGIN = 5.0f;            // Margin for indirect edge detection
@@ -308,8 +308,8 @@ bool LayoutUtils::updateEdgePositionsWithConstraints(
             return true;
         }
         
-        // Step 3: Use ConstraintSolver to find valid positions for moved nodes
-        ConstraintSolver solver({gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
+        // Step 3: Use PositionFinder to find valid positions for moved nodes
+        PositionFinder finder({gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
         
         bool anyAdjusted = false;
         for (NodeId nodeId : movedNodes) {
@@ -317,7 +317,7 @@ bool LayoutUtils::updateEdgePositionsWithConstraints(
             if (nodeIt == nodeLayouts.end()) continue;
             
             // Try to find a valid position for this node
-            auto result = solver.placeNode(
+            auto result = finder.placeNode(
                 nodeId,
                 nodeIt->second.position,
                 nodeIt->second.size,
