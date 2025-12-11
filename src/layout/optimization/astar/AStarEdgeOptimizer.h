@@ -2,7 +2,7 @@
 
 #include "arborvia/layout/api/IEdgeOptimizer.h"
 #include "arborvia/layout/api/IPathFinder.h"
-#include "../../interactive/ValidRegionCalculator.h"
+#include "arborvia/layout/config/LayoutTypes.h"
 #include "../../sugiyama/routing/EdgeRoutingUtils.h"
 
 #include <atomic>

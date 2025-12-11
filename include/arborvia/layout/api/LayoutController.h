@@ -4,7 +4,7 @@
 #include "arborvia/core/Graph.h"
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/config/LayoutOptions.h"
-#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "arborvia/layout/config/ConstraintConfig.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -16,6 +16,9 @@ namespace arborvia {
 
 // Forward declarations
 class IEdgeOptimizer;
+class ConstraintManager;
+class ConstraintSolver;
+struct FinalStateValidationResult;
 
 /// Result of a node move operation
 struct NodeMoveResult {
@@ -109,21 +112,15 @@ public:
     /// Move a node to a new position with full constraint validation
     ///
     /// This method:
-    /// 1. Validates node doesn't overlap with others
-    /// 2. Validates all connected edges can have valid A* paths
-    /// 3. Updates edge routing
-    /// 4. Validates no diagonal segments
-    /// 5. Validates no edge overlaps
-    /// 6. Rolls back everything if any constraint fails
+    /// 1. Validates against all registered constraints (via ConstraintManager)
+    /// 2. Updates edge routing
+    /// 3. Validates final state
+    /// 4. Rolls back everything if any constraint fails
     ///
     /// @param nodeId Node to move
     /// @param newPosition Desired position
     /// @return Result with success status, actual position, and affected edges
     NodeMoveResult moveNode(NodeId nodeId, Point newPosition);
-
-    /// Move a node with pre-calculated forbidden zones (performance optimization)
-    NodeMoveResult moveNode(NodeId nodeId, Point newPosition,
-                           const std::vector<ForbiddenZone>& preCalculatedZones);
 
     /// Re-route specific edges
     /// @param edges Edges to re-route
@@ -159,7 +156,7 @@ public:
     // =========================================================================
 
     /// Validate current state against all constraints
-    ConstraintValidationResult validateAll() const;
+    FinalStateValidationResult validateAll() const;
 
     /// Check if a position would be valid for a node
     bool canMoveNodeTo(NodeId nodeId, Point position) const;
@@ -172,6 +169,7 @@ private:
     const Graph& graph_;
     LayoutOptions options_;
 
+    std::unique_ptr<ConstraintManager> constraintManager_;
     std::unique_ptr<ConstraintSolver> constraintSolver_;
 
     // Internal helpers

@@ -2,8 +2,7 @@
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/core/Graph.h"
 #include "arborvia/layout/constraints/ConstraintSolver.h"
-#include "interactive/ConstraintManager.h"
-#include "interactive/ValidRegionCalculator.h"
+#include "layout/interactive/ConstraintManager.h"
 #include "arborvia/layout/config/ConstraintConfig.h"
 #include "arborvia/layout/interactive/PathRoutingCoordinator.h"
 #include "sugiyama/routing/EdgeRouting.h"
@@ -494,18 +493,9 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     float gridSize) {
 
-    // Use ValidRegionCalculator as single source of truth
-    auto nodeIt = nodeLayouts.find(nodeId);
-    if (nodeIt == nodeLayouts.end()) {
-        return DragValidation{true, {}};  // Node not found, allow
-    }
-
-    auto zones = ValidRegionCalculator::calculate(nodeId, nodeLayouts, edgeLayouts, gridSize);
-    bool valid = ValidRegionCalculator::isValid(newPosition, nodeIt->second.size, zones);
-
-    DragValidation result;
-    result.valid = valid;
-    return result;
+    // Use ConstraintManager with default constraints
+    auto manager = ConstraintFactory::create(ConstraintConfig::createDefault());
+    return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, *manager, gridSize);
 }
 
 LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
@@ -516,7 +506,7 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     const ConstraintManager& constraintManager,
     float gridSize) {
 
-    ConstraintContext ctx{nodeId, newPosition, nodeLayouts, edgeLayouts, gridSize};
+    ConstraintContext ctx{nodeId, newPosition, nodeLayouts, edgeLayouts, nullptr, gridSize};
     auto validationResult = constraintManager.validate(ctx);
 
     // Convert DragValidationResult to DragValidation for API compatibility
@@ -543,20 +533,7 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     return canMoveNodeTo(nodeId, newPosition, nodeLayouts, edgeLayouts, *manager, gridSize);
 }
 
-LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
-    NodeId nodeId,
-    Point newPosition,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& zones) {
 
-    auto nodeIt = nodeLayouts.find(nodeId);
-    if (nodeIt == nodeLayouts.end()) {
-        return DragValidation{true, {}};
-    }
-
-    bool valid = ValidRegionCalculator::isValid(newPosition, nodeIt->second.size, zones);
-    return DragValidation{valid, {}};
-}
 
 bool LayoutUtils::canMoveNodeToFast(
     NodeId nodeId,

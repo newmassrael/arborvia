@@ -1,10 +1,43 @@
 #include "layout/interactive/ConstraintManager.h"
-#include "layout/constraints/MinDistanceConstraint.h"
+#include "layout/constraints/DirectionAwareMarginConstraint.h"
+#include "layout/constraints/EdgePathValidityConstraint.h"
+#include "sugiyama/routing/PathIntersection.h"
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
+#include <sstream>
 
 namespace arborvia {
+
+// ============================================================================
+// FinalStateValidationResult
+// ============================================================================
+
+std::string FinalStateValidationResult::summary() const {
+    if (satisfied) return "All constraints satisfied";
+    
+    std::ostringstream ss;
+    ss << "Violations found: ";
+    std::vector<std::string> issues;
+    
+    if (!overlappingNodes.empty()) {
+        issues.push_back(std::to_string(overlappingNodes.size()) + " overlapping nodes");
+    }
+    if (!diagonalEdges.empty()) {
+        issues.push_back(std::to_string(diagonalEdges.size()) + " diagonal edges");
+    }
+    if (!overlappingEdgePairs.empty()) {
+        issues.push_back(std::to_string(overlappingEdgePairs.size()) + " overlapping edge pairs");
+    }
+    
+    for (size_t i = 0; i < issues.size(); ++i) {
+        if (i > 0) ss << ", ";
+        ss << issues[i];
+    }
+    
+    return ss.str();
+}
 
 void ConstraintManager::addConstraint(std::unique_ptr<IDragConstraint> constraint) {
     if (!constraint) return;
@@ -127,10 +160,98 @@ void ConstraintManager::clear() {
 
 ConstraintManager ConstraintManager::createDefault(float minGridDistance) {
     ConstraintManager manager;
-    // MinDistanceConstraint now delegates to ValidRegionCalculator internally
-    // which provides direction-aware margin calculation
-    manager.addConstraint(std::make_unique<MinDistanceConstraint>(minGridDistance));
+    // Use DirectionAwareMarginConstraint for direction-aware margin calculation
+    manager.addConstraint(std::make_unique<DirectionAwareMarginConstraint>(minGridDistance));
+    // Use EdgePathValidityConstraint for A* path validation
+    manager.addConstraint(std::make_unique<EdgePathValidityConstraint>(10.0f));
     return manager;
+}
+
+// ============================================================================
+// Final State Validation (Post-Routing)
+// ============================================================================
+
+FinalStateValidationResult ConstraintManager::validateFinalState(
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+    
+    FinalStateValidationResult result;
+    
+    // 1. Check node overlaps
+    result.overlappingNodes = findOverlappingNodes(nodeLayouts);
+    
+    // 2. Check diagonal edges
+    result.diagonalEdges = findDiagonalEdges(edgeLayouts);
+    
+    // 3. Check edge overlaps (uses PathIntersection)
+    result.overlappingEdgePairs = findOverlappingEdgePairs(edgeLayouts);
+    
+    // 4. Determine overall status
+    result.satisfied = result.overlappingNodes.empty() &&
+                       result.diagonalEdges.empty() &&
+                       result.overlappingEdgePairs.empty();
+    
+    return result;
+}
+
+std::vector<NodeId> ConstraintManager::findOverlappingNodes(
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const {
+    
+    std::set<NodeId> overlapping;
+    
+    // Convert to vector for indexed access
+    std::vector<std::pair<NodeId, const NodeLayout*>> nodes;
+    nodes.reserve(nodeLayouts.size());
+    for (const auto& [id, layout] : nodeLayouts) {
+        nodes.emplace_back(id, &layout);
+    }
+    
+    // Check all pairs
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            const auto& a = *nodes[i].second;
+            const auto& b = *nodes[j].second;
+            
+            // AABB intersection check
+            if (a.position.x < b.position.x + b.size.width &&
+                a.position.x + a.size.width > b.position.x &&
+                a.position.y < b.position.y + b.size.height &&
+                a.position.y + a.size.height > b.position.y) {
+                overlapping.insert(nodes[i].first);
+                overlapping.insert(nodes[j].first);
+            }
+        }
+    }
+    
+    return std::vector<NodeId>(overlapping.begin(), overlapping.end());
+}
+
+std::vector<EdgeId> ConstraintManager::findDiagonalEdges(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+    
+    std::vector<EdgeId> diagonals;
+    
+    for (const auto& [edgeId, edge] : edgeLayouts) {
+        auto points = edge.allPoints();
+        if (points.size() < 2) continue;
+        
+        for (size_t i = 0; i + 1 < points.size(); ++i) {
+            float dx = std::abs(points[i + 1].x - points[i].x);
+            float dy = std::abs(points[i + 1].y - points[i].y);
+            if (dx > 1.0f && dy > 1.0f) {
+                diagonals.push_back(edgeId);
+                break;  // Only count each edge once
+            }
+        }
+    }
+    
+    return diagonals;
+}
+
+std::vector<std::pair<EdgeId, EdgeId>> ConstraintManager::findOverlappingEdgePairs(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+    // Delegate to PathIntersection (Single Source of Truth)
+    return PathIntersection::findAllOverlappingPairs(edgeLayouts);
 }
 
 }  // namespace arborvia

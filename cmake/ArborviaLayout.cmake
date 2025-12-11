@@ -8,6 +8,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/LayoutUtils.cpp
     src/layout/LayoutSerializer.cpp
     src/layout/ConstraintConfig.cpp
+    src/layout/EdgePenaltyConfig.cpp
 
     # Sugiyama algorithm phases
     src/layout/sugiyama/phases/CycleRemoval.cpp
@@ -52,11 +53,13 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/interactive/PathRoutingCoordinator.cpp
     src/layout/interactive/SnapPointController.cpp
     src/layout/interactive/ConstraintManager.cpp
-    src/layout/interactive/ValidRegionCalculator.cpp
     src/layout/interactive/DragOptimizationHandler.cpp
 
     # Constraints
-    src/layout/constraints/MinDistanceConstraint.cpp
+    src/layout/constraints/DirectionAwareMarginConstraint.cpp
+    src/layout/constraints/NoOverlapConstraint.cpp
+    src/layout/constraints/EdgePathValidityConstraint.cpp
+    src/layout/constraints/BoundaryConstraint.cpp
     src/layout/constraints/ConstraintSolver.cpp
 
     # API (centralized controllers)

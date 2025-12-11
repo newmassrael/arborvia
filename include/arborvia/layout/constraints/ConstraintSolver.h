@@ -11,22 +11,6 @@
 
 namespace arborvia {
 
-/// Result of full constraint validation
-struct ConstraintValidationResult {
-    bool satisfied = true;
-    std::vector<NodeId> overlappingNodes;           ///< Nodes that overlap
-    std::vector<EdgeId> invalidPathEdges;           ///< Edges without valid A* path
-    std::vector<EdgeId> diagonalEdges;              ///< Edges with diagonal segments
-    std::vector<std::pair<EdgeId, EdgeId>> overlappingEdgePairs; ///< Edge pairs that overlap
-    
-    bool hasNodeOverlap() const { return !overlappingNodes.empty(); }
-    bool hasInvalidPaths() const { return !invalidPathEdges.empty(); }
-    bool hasDiagonals() const { return !diagonalEdges.empty(); }
-    bool hasEdgeOverlap() const { return !overlappingEdgePairs.empty(); }
-    
-    std::string summary() const;
-};
-
 /// Result of constraint-satisfying node placement
 struct ConstraintPlacementResult {
     bool success = false;               ///< True if placement succeeded
@@ -49,8 +33,6 @@ struct ConstraintPlacementResult {
     }
 };
 
-/// Solves layout constraints by finding valid node positions
-/// Ensures all edges have valid A* paths after node placement
 /// Configuration for constraint solving
 struct ConstraintSolverConfig {
     float gridSize = 10.0f;         ///< Grid size for A* pathfinding
@@ -59,6 +41,11 @@ struct ConstraintSolverConfig {
     int maxIterations = 1000;       ///< Max iterations for position search
 };
 
+/// Solves layout constraints by finding valid node positions
+/// Ensures all edges have valid A* paths after node placement
+///
+/// NOTE: Global state validation has been moved to ConstraintManager::validateFinalState().
+/// This class now focuses ONLY on position-finding operations.
 class ConstraintSolver {
 public:
     using Config = ConstraintSolverConfig;
@@ -111,39 +98,6 @@ public:
         Size size,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float margin = 0.0f) const;
-
-    // =========================================================================
-    // Unified Constraint Validation (Single Entry Point)
-    // =========================================================================
-
-    /// Validate all constraints on the current layout state
-    /// This is the SINGLE entry point for all constraint checking
-    /// @param nodeLayouts All node layouts
-    /// @param edgeLayouts All edge layouts
-    /// @param graph Graph for connectivity
-    /// @return Detailed validation result
-    ConstraintValidationResult validateAll(
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const Graph& graph) const;
-
-    /// Check for edge overlap (segment overlap between edge pairs)
-    /// @param edgeLayouts All edge layouts
-    /// @return Vector of overlapping edge pairs
-    std::vector<std::pair<EdgeId, EdgeId>> findOverlappingEdgePairs(
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
-
-    /// Check for diagonal segments in edges
-    /// @param edgeLayouts All edge layouts
-    /// @return Vector of edge IDs with diagonal segments
-    std::vector<EdgeId> findDiagonalEdges(
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
-
-    /// Check for node overlaps
-    /// @param nodeLayouts All node layouts
-    /// @return Vector of overlapping node IDs
-    std::vector<NodeId> findOverlappingNodes(
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
 
 private:
     /// Find the nearest position that satisfies all constraints

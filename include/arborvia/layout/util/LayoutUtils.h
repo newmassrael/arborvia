@@ -273,13 +273,6 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const ConstraintConfig& config,
         float gridSize = 20.0f);
-
-    /// Check if a node can be moved using pre-calculated zones (internal)
-    static DragValidation canMoveNodeTo(
-        NodeId nodeId,
-        Point newPosition,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& preCalculatedZones);
 };
 
 }  // namespace arborvia

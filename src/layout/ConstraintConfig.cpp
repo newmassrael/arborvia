@@ -1,6 +1,9 @@
 #include "arborvia/layout/config/ConstraintConfig.h"
 #include "layout/interactive/ConstraintManager.h"
-#include "layout/constraints/MinDistanceConstraint.h"
+#include "layout/constraints/DirectionAwareMarginConstraint.h"
+#include "layout/constraints/NoOverlapConstraint.h"
+#include "layout/constraints/EdgePathValidityConstraint.h"
+#include "layout/constraints/BoundaryConstraint.h"
 #include "arborvia/core/GeometryUtils.h"
 
 #include <nlohmann/json.hpp>
@@ -21,11 +24,43 @@ namespace {
     // Initialize built-in types
     struct BuiltinInitializer {
         BuiltinInitializer() {
-            // MinDistance constraint (delegates to ValidRegionCalculator internally)
-            ConstraintFactory::registerType("MinDistance",
+            // DirectionAwareMargin: considers edge connections for margin calculation
+            ConstraintFactory::registerType("DirectionAwareMargin",
                 [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
-                    float distance = config.minGridDistance.value_or(constants::MIN_NODE_GRID_DISTANCE);
-                    return std::make_unique<MinDistanceConstraint>(distance);
+                    float distance = config.gridDistance.value_or(constants::MIN_NODE_GRID_DISTANCE);
+                    return std::make_unique<DirectionAwareMarginConstraint>(distance);
+                });
+            
+            // NoOverlap: simple AABB collision check
+            ConstraintFactory::registerType("NoOverlap",
+                [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
+                    float margin = config.margin.value_or(0.0f);
+                    return std::make_unique<NoOverlapConstraint>(margin);
+                });
+            
+            // EdgePathValidity: A* pathfinding validation
+            ConstraintFactory::registerType("EdgePathValidity",
+                [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
+                    float gridSize = config.gridSize.value_or(10.0f);
+                    return std::make_unique<EdgePathValidityConstraint>(gridSize);
+                });
+            
+            // Boundary: ensures nodes stay within bounds (Medium tier)
+            ConstraintFactory::registerType("Boundary",
+                [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
+                    float margin = config.margin.value_or(50.0f);
+                    return std::make_unique<BoundaryConstraint>(margin);
+                });
+            
+            // BoundaryExplicit: explicit bounds version
+            ConstraintFactory::registerType("BoundaryExplicit",
+                [](const SingleConstraintConfig& config) -> std::unique_ptr<IDragConstraint> {
+                    float minX = config.minX.value_or(0.0f);
+                    float minY = config.minY.value_or(0.0f);
+                    float maxX = config.maxX.value_or(1000.0f);
+                    float maxY = config.maxY.value_or(1000.0f);
+                    float margin = config.margin.value_or(0.0f);
+                    return std::make_unique<BoundaryConstraint>(minX, minY, maxX, maxY, margin);
                 });
         }
     };
@@ -36,9 +71,8 @@ namespace {
 
 ConstraintConfig ConstraintConfig::createDefault() {
     ConstraintConfig config;
-    // MinDistanceConstraint delegates to ValidRegionCalculator internally
-    // which provides direction-aware margin calculation
-    config.addMinDistance(constants::MIN_NODE_GRID_DISTANCE);
+    config.addDirectionAwareMargin(constants::MIN_NODE_GRID_DISTANCE);
+    config.addEdgePathValidity(10.0f);
     return config;
 }
 
@@ -108,8 +142,26 @@ std::string ConstraintConfigSerializer::toJson(const ConstraintConfig& config) {
         cj["enabled"] = constraint.enabled;
         
         // Type-specific parameters
-        if (constraint.minGridDistance.has_value()) {
-            cj["minGridDistance"] = constraint.minGridDistance.value();
+        if (constraint.gridDistance.has_value()) {
+            cj["gridDistance"] = constraint.gridDistance.value();
+        }
+        if (constraint.margin.has_value()) {
+            cj["margin"] = constraint.margin.value();
+        }
+        if (constraint.gridSize.has_value()) {
+            cj["gridSize"] = constraint.gridSize.value();
+        }
+        if (constraint.minX.has_value()) {
+            cj["minX"] = constraint.minX.value();
+        }
+        if (constraint.minY.has_value()) {
+            cj["minY"] = constraint.minY.value();
+        }
+        if (constraint.maxX.has_value()) {
+            cj["maxX"] = constraint.maxX.value();
+        }
+        if (constraint.maxY.has_value()) {
+            cj["maxY"] = constraint.maxY.value();
         }
         
         j["constraints"].push_back(cj);
@@ -137,8 +189,26 @@ ConstraintConfig ConstraintConfigSerializer::fromJson(const std::string& jsonStr
                 }
                 
                 // Type-specific parameters
-                if (cj.contains("minGridDistance") && cj["minGridDistance"].is_number()) {
-                    constraint.minGridDistance = cj["minGridDistance"].get<float>();
+                if (cj.contains("gridDistance") && cj["gridDistance"].is_number()) {
+                    constraint.gridDistance = cj["gridDistance"].get<float>();
+                }
+                if (cj.contains("margin") && cj["margin"].is_number()) {
+                    constraint.margin = cj["margin"].get<float>();
+                }
+                if (cj.contains("gridSize") && cj["gridSize"].is_number()) {
+                    constraint.gridSize = cj["gridSize"].get<float>();
+                }
+                if (cj.contains("minX") && cj["minX"].is_number()) {
+                    constraint.minX = cj["minX"].get<float>();
+                }
+                if (cj.contains("minY") && cj["minY"].is_number()) {
+                    constraint.minY = cj["minY"].get<float>();
+                }
+                if (cj.contains("maxX") && cj["maxX"].is_number()) {
+                    constraint.maxX = cj["maxX"].get<float>();
+                }
+                if (cj.contains("maxY") && cj["maxY"].is_number()) {
+                    constraint.maxY = cj["maxY"].get<float>();
                 }
                 
                 config.constraints.push_back(constraint);

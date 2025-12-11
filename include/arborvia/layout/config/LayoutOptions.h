@@ -251,7 +251,7 @@ struct LayoutOptions {
     LayoutOptions& setGridCellSize(float size) { gridConfig.cellSize = size; return *this; }
     LayoutOptions& setConstraintConfig(const ConstraintConfig& config) { constraintConfig = config; return *this; }
     LayoutOptions& setMinNodeDistance(float gridUnits) {
-        constraintConfig = ConstraintConfig::createEmpty().addMinDistance(gridUnits);
+        constraintConfig = ConstraintConfig::createEmpty().addDirectionAwareMargin(gridUnits);
         return *this;
     }
     /// @deprecated Use setDragAlgorithm() and setPostDragAlgorithm() instead

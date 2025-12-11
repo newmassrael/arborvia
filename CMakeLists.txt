@@ -75,7 +75,6 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/manual/OrthogonalDragTest.cpp
         tests/export/SvgExportTest.cpp
         tests/interactive/DragBehaviorTest.cpp
-        tests/layout/ValidRegionCalculatorTest.cpp
         tests/integration/DiagonalReproductionTest.cpp
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)

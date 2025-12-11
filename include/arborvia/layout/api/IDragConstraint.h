@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../core/Types.h"
+#include "../../core/Graph.h"
 #include "../config/LayoutResult.h"
 
 #include <memory>
@@ -16,6 +17,7 @@ struct ConstraintContext {
     Point newPosition;                                                  ///< Proposed new position
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts;          ///< Current node layouts
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts;          ///< Current edge layouts
+    const Graph* graph = nullptr;                                       ///< Graph for connectivity info (optional)
     float gridSize;                                                     ///< Grid size for calculations
 };
 

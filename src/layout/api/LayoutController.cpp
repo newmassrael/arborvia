@@ -1,7 +1,8 @@
 #include "arborvia/layout/api/LayoutController.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "arborvia/layout/constraints/ConstraintSolver.h"
+#include "layout/interactive/ConstraintManager.h"
 #include "sugiyama/routing/EdgeRouting.h"
-#include "interactive/ValidRegionCalculator.h"
 
 #include <algorithm>
 #include <set>
@@ -19,6 +20,11 @@ LayoutController::LayoutController(const Graph& graph, const LayoutOptions& opti
     , options_(options) {
 
     float gridSize = options_.gridConfig.cellSize > 0 ? options_.gridConfig.cellSize : DEFAULT_GRID_SIZE;
+    
+    // Initialize constraint manager with default constraints
+    auto config = ConstraintConfig::createDefault();
+    constraintManager_ = ConstraintFactory::create(config);
+    
     constraintSolver_ = std::make_unique<ConstraintSolver>(
         ConstraintSolverConfig{gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
 }
@@ -48,16 +54,6 @@ const EdgeLayout* LayoutController::getEdge(EdgeId id) const {
 }
 
 NodeMoveResult LayoutController::moveNode(NodeId nodeId, Point newPosition) {
-    auto zones = ValidRegionCalculator::calculate(
-        nodeId, nodeLayouts_, edgeLayouts_, options_.gridConfig.cellSize);
-    return moveNode(nodeId, newPosition, zones);
-}
-
-NodeMoveResult LayoutController::moveNode(
-    NodeId nodeId,
-    Point newPosition,
-    const std::vector<ForbiddenZone>& preCalculatedZones) {
-
     // Check if node exists
     auto nodeIt = nodeLayouts_.find(nodeId);
     if (nodeIt == nodeLayouts_.end()) {
@@ -68,31 +64,26 @@ NodeMoveResult LayoutController::moveNode(
     Point originalPosition = nodeIt->second.position;
     auto originalEdgeLayouts = edgeLayouts_;
 
-    // Step 1: Validate against forbidden zones
-    auto validation = LayoutUtils::canMoveNodeTo(nodeId, newPosition, nodeLayouts_, preCalculatedZones);
+    float gridSize = options_.gridConfig.cellSize > 0 ? options_.gridConfig.cellSize : DEFAULT_GRID_SIZE;
+
+    // Step 1: Validate against all constraints using ConstraintManager
+    ConstraintContext ctx{nodeId, newPosition, nodeLayouts_, edgeLayouts_, &graph_, gridSize};
+    auto validation = constraintManager_->validate(ctx);
+    
     if (!validation.valid) {
-        return NodeMoveResult::fail(newPosition, "Position blocked by forbidden zone");
+        return NodeMoveResult::fail(newPosition, 
+            validation.failedConstraint + ": " + validation.reason);
     }
 
-    // Step 2: Use ConstraintSolver to find valid position satisfying A* paths
-    auto placementResult = constraintSolver_->placeNode(
-        nodeId,
-        newPosition,
-        nodeIt->second.size,
-        nodeLayouts_,
-        edgeLayouts_,
-        graph_);
-
-    if (!placementResult.success) {
-        return NodeMoveResult::fail(newPosition, placementResult.reason);
-    }
+    // Step 2: Apply the position change
+    nodeIt->second.position = newPosition;
 
     // Step 3: Update edge routing
     auto affectedEdges = getExpandedAffectedEdges(nodeId);
     updateEdgeRouting(affectedEdges, {nodeId});
 
     // Step 4: Final validation - check ALL constraints
-    auto constraintResult = constraintSolver_->validateAll(nodeLayouts_, edgeLayouts_, graph_);
+    auto constraintResult = constraintManager_->validateFinalState(nodeLayouts_, edgeLayouts_);
 
     if (!constraintResult.satisfied) {
         // Rollback: restore original state
@@ -102,7 +93,7 @@ NodeMoveResult LayoutController::moveNode(
     }
 
     // Success
-    return NodeMoveResult::ok(placementResult.finalPosition, affectedEdges);
+    return NodeMoveResult::ok(newPosition, affectedEdges);
 }
 
 EdgeRouteResult LayoutController::rerouteEdges(const std::vector<EdgeId>& edges) {
@@ -119,10 +110,10 @@ EdgeRouteResult LayoutController::rerouteEdges(const std::vector<EdgeId>& edges)
         edgeLayouts_, nodeLayouts_, edges, options_, {});
 
     // Validate result
-    auto validation = constraintSolver_->validateAll(nodeLayouts_, edgeLayouts_, graph_);
+    auto validation = constraintManager_->validateFinalState(nodeLayouts_, edgeLayouts_);
 
     result.success = validation.satisfied;
-    result.failedEdges = validation.invalidPathEdges;
+    result.failedEdges = {};  // No longer tracked at this level (pre-routing validation handles this)
     result.remainingOverlaps = validation.overlappingEdgePairs;
 
     if (!result.success) {
@@ -148,43 +139,23 @@ LayoutController::DragPreview LayoutController::getDragPreview(
     DragPreview preview;
     preview.visualPosition = proposedPosition;
 
-    // Check forbidden zones
-    auto zones = ValidRegionCalculator::calculate(
-        nodeId, nodeLayouts_, edgeLayouts_, options_.gridConfig.cellSize);
-    auto validation = LayoutUtils::canMoveNodeTo(nodeId, proposedPosition, nodeLayouts_, zones);
-
-    if (!validation.valid) {
-        preview.isValid = false;
-        preview.reason = "Position blocked by forbidden zone";
-        return preview;
-    }
-
-    // Check if position would satisfy constraints (without modifying state)
-    // Create temporary copy for validation
-    auto tempNodeLayouts = nodeLayouts_;
-    auto nodeIt = tempNodeLayouts.find(nodeId);
-    if (nodeIt == tempNodeLayouts.end()) {
+    // Check if node exists
+    auto nodeIt = nodeLayouts_.find(nodeId);
+    if (nodeIt == nodeLayouts_.end()) {
         preview.isValid = false;
         preview.reason = "Node not found";
         return preview;
     }
 
-    // Check node overlap and A* paths
-    bool noOverlap = constraintSolver_->checkNoOverlap(
-        nodeId, proposedPosition, nodeIt->second.size, tempNodeLayouts);
+    float gridSize = options_.gridConfig.cellSize > 0 ? options_.gridConfig.cellSize : DEFAULT_GRID_SIZE;
 
-    if (!noOverlap) {
-        preview.isValid = false;
-        preview.reason = "Would overlap with another node";
-        return preview;
-    }
+    // Validate against all constraints using ConstraintManager
+    ConstraintContext ctx{nodeId, proposedPosition, nodeLayouts_, edgeLayouts_, &graph_, gridSize};
+    auto validation = constraintManager_->validate(ctx);
 
-    bool pathsValid = constraintSolver_->validateAllEdgePaths(
-        nodeId, proposedPosition, nodeIt->second.size, tempNodeLayouts, edgeLayouts_, graph_);
-
-    preview.isValid = pathsValid;
-    if (!pathsValid) {
-        preview.reason = "No valid edge paths at this position";
+    preview.isValid = validation.valid;
+    if (!validation.valid) {
+        preview.reason = validation.failedConstraint + ": " + validation.reason;
     }
 
     return preview;
@@ -194,14 +165,14 @@ NodeMoveResult LayoutController::completeDrag(NodeId nodeId, Point finalPosition
     return moveNode(nodeId, finalPosition);
 }
 
-ConstraintValidationResult LayoutController::validateAll() const {
-    return constraintSolver_->validateAll(nodeLayouts_, edgeLayouts_, graph_);
+FinalStateValidationResult LayoutController::validateAll() const {
+    return constraintManager_->validateFinalState(nodeLayouts_, edgeLayouts_);
 }
 
 bool LayoutController::canMoveNodeTo(NodeId nodeId, Point position) const {
-    auto zones = ValidRegionCalculator::calculate(
-        nodeId, nodeLayouts_, edgeLayouts_, options_.gridConfig.cellSize);
-    auto validation = LayoutUtils::canMoveNodeTo(nodeId, position, nodeLayouts_, zones);
+    float gridSize = options_.gridConfig.cellSize > 0 ? options_.gridConfig.cellSize : DEFAULT_GRID_SIZE;
+    ConstraintContext ctx{nodeId, position, nodeLayouts_, edgeLayouts_, &graph_, gridSize};
+    auto validation = constraintManager_->validate(ctx);
     return validation.valid;
 }
 

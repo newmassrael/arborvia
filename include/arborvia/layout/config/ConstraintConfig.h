@@ -13,20 +13,64 @@ class ConstraintManager;
 
 /// Configuration for a single constraint
 struct SingleConstraintConfig {
-    std::string type;                    ///< Constraint type name (e.g., "MinDistance", "EdgeValidity")
+    std::string type;                    ///< Constraint type name
     bool enabled = true;                 ///< Whether this constraint is active
     
     // Type-specific parameters
-    std::optional<float> minGridDistance;  ///< For MinDistance constraint
+    std::optional<float> gridDistance;   ///< For margin/distance constraints
+    std::optional<float> margin;         ///< For overlap constraints
+    std::optional<float> gridSize;       ///< For path-finding constraints
     
-    /// Create MinDistance constraint config
-    static SingleConstraintConfig minDistance(float gridUnits = 5.0f) {
+    /// Create DirectionAwareMargin constraint config
+    static SingleConstraintConfig directionAwareMargin(float gridUnits = 5.0f) {
         SingleConstraintConfig config;
-        config.type = "MinDistance";
-        config.minGridDistance = gridUnits;
+        config.type = "DirectionAwareMargin";
+        config.gridDistance = gridUnits;
         return config;
     }
     
+    /// Create NoOverlap constraint config
+    static SingleConstraintConfig noOverlap(float margin = 0.0f) {
+        SingleConstraintConfig config;
+        config.type = "NoOverlap";
+        config.margin = margin;
+        return config;
+    }
+    
+    /// Create EdgePathValidity constraint config
+    static SingleConstraintConfig edgePathValidity(float gridSize = 10.0f) {
+        SingleConstraintConfig config;
+        config.type = "EdgePathValidity";
+        config.gridSize = gridSize;
+        return config;
+    }
+    
+    /// Create Boundary constraint config (auto-detect mode)
+    static SingleConstraintConfig boundary(float margin = 50.0f) {
+        SingleConstraintConfig config;
+        config.type = "Boundary";
+        config.margin = margin;
+        return config;
+    }
+    
+    /// Create Boundary constraint config (explicit bounds)
+    static SingleConstraintConfig boundaryExplicit(float minX, float minY, float maxX, float maxY, float margin = 0.0f) {
+        SingleConstraintConfig config;
+        config.type = "BoundaryExplicit";
+        config.margin = margin;
+        // Store bounds in unused fields (or we could add more fields)
+        config.minX = minX;
+        config.minY = minY;
+        config.maxX = maxX;
+        config.maxY = maxY;
+        return config;
+    }
+    
+    // Additional fields for boundary constraints
+    std::optional<float> minX;
+    std::optional<float> minY;
+    std::optional<float> maxX;
+    std::optional<float> maxY;
 };
 
 /// Configuration for drag constraints
@@ -37,16 +81,14 @@ struct SingleConstraintConfig {
 ///
 /// Example usage:
 /// @code
-/// ConstraintConfig config;
-/// config.constraints.push_back(SingleConstraintConfig::minDistance(3.0f));
-///
+/// ConstraintConfig config = ConstraintConfig::createDefault();
 /// auto manager = ConstraintFactory::create(config);
 /// @endcode
 struct ConstraintConfig {
     std::vector<SingleConstraintConfig> constraints;
     
     /// Create default constraint configuration
-    /// Includes MinDistance which delegates to ValidRegionCalculator
+    /// Includes: DirectionAwareMargin, EdgePathValidity
     static ConstraintConfig createDefault();
     
     /// Create empty configuration (no constraints)
@@ -55,9 +97,33 @@ struct ConstraintConfig {
     /// Check if configuration has any constraints
     bool empty() const { return constraints.empty(); }
     
-    /// Builder: add MinDistance constraint
-    ConstraintConfig& addMinDistance(float gridUnits = 5.0f) {
-        constraints.push_back(SingleConstraintConfig::minDistance(gridUnits));
+    /// Builder: add DirectionAwareMargin constraint
+    ConstraintConfig& addDirectionAwareMargin(float gridUnits = 5.0f) {
+        constraints.push_back(SingleConstraintConfig::directionAwareMargin(gridUnits));
+        return *this;
+    }
+    
+    /// Builder: add NoOverlap constraint
+    ConstraintConfig& addNoOverlap(float margin = 0.0f) {
+        constraints.push_back(SingleConstraintConfig::noOverlap(margin));
+        return *this;
+    }
+    
+    /// Builder: add EdgePathValidity constraint
+    ConstraintConfig& addEdgePathValidity(float gridSize = 10.0f) {
+        constraints.push_back(SingleConstraintConfig::edgePathValidity(gridSize));
+        return *this;
+    }
+    
+    /// Builder: add Boundary constraint (auto-detect mode)
+    ConstraintConfig& addBoundary(float margin = 50.0f) {
+        constraints.push_back(SingleConstraintConfig::boundary(margin));
+        return *this;
+    }
+    
+    /// Builder: add Boundary constraint (explicit bounds)
+    ConstraintConfig& addBoundaryExplicit(float minX, float minY, float maxX, float maxY, float margin = 0.0f) {
+        constraints.push_back(SingleConstraintConfig::boundaryExplicit(minX, minY, maxX, maxY, margin));
         return *this;
     }
 

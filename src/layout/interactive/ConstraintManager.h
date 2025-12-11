@@ -3,10 +3,26 @@
 #include "arborvia/layout/api/IDragConstraint.h"
 
 #include <memory>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace arborvia {
+
+/// Result of final state validation (post-routing)
+struct FinalStateValidationResult {
+    bool satisfied = true;
+    std::vector<NodeId> overlappingNodes;           ///< Nodes that overlap
+    std::vector<EdgeId> diagonalEdges;              ///< Edges with diagonal segments
+    std::vector<std::pair<EdgeId, EdgeId>> overlappingEdgePairs; ///< Edge pairs that overlap
+    
+    bool hasNodeOverlap() const { return !overlappingNodes.empty(); }
+    bool hasDiagonals() const { return !diagonalEdges.empty(); }
+    bool hasEdgeOverlap() const { return !overlappingEdgePairs.empty(); }
+    
+    std::string summary() const;
+};
 
 /// Result of drag validation through ConstraintManager
 struct DragValidationResult {
@@ -27,9 +43,10 @@ struct DragValidationResult {
 /// Example usage:
 /// @code
 /// ConstraintManager manager;
-/// manager.addConstraint(std::make_unique<MinDistanceConstraint>(5.0f));
+/// manager.addConstraint(std::make_unique<DirectionAwareMarginConstraint>(5.0f));
+/// manager.addConstraint(std::make_unique<EdgePathValidityConstraint>(10.0f));
 ///
-/// ConstraintContext ctx{nodeId, newPos, nodeLayouts, edgeLayouts, gridSize};
+/// ConstraintContext ctx{nodeId, newPos, nodeLayouts, edgeLayouts, &graph, gridSize};
 /// auto result = manager.validate(ctx);
 /// if (!result.valid) {
 ///     std::cout << "Failed: " << result.failedConstraint << ": " << result.reason << "\n";
@@ -64,6 +81,10 @@ public:
     /// Get the number of registered constraints
     size_t constraintCount() const;
 
+    // =========================================================================
+    // Pre-Move Validation (Single Node)
+    // =========================================================================
+
     /// Validate a drag operation against all constraints
     /// Constraints are checked in tier order (Fast -> Medium -> Expensive)
     /// Validation stops on first failure for efficiency
@@ -76,11 +97,42 @@ public:
     /// @return Combined blocked regions from all constraints
     std::vector<Rect> getAllBlockedRegions(const ConstraintContext& ctx) const;
 
+    // =========================================================================
+    // Post-Routing Validation (Global State)
+    // =========================================================================
+
+    /// Validate the final layout state after routing
+    /// Checks: node overlaps, diagonal edges, edge overlaps
+    /// @param nodeLayouts All node layouts
+    /// @param edgeLayouts All edge layouts
+    /// @return FinalStateValidationResult with detailed issues
+    FinalStateValidationResult validateFinalState(
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+
+    /// Find nodes that overlap with each other
+    /// @param nodeLayouts All node layouts
+    /// @return Vector of overlapping node IDs
+    std::vector<NodeId> findOverlappingNodes(
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
+
+    /// Find edges with diagonal segments (non-orthogonal)
+    /// @param edgeLayouts All edge layouts
+    /// @return Vector of edge IDs with diagonal segments
+    std::vector<EdgeId> findDiagonalEdges(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+
+    /// Find pairs of edges that overlap
+    /// @param edgeLayouts All edge layouts
+    /// @return Vector of overlapping edge pairs
+    std::vector<std::pair<EdgeId, EdgeId>> findOverlappingEdgePairs(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+
     /// Clear all constraints
     void clear();
 
     /// Create a default constraint manager with standard constraints
-    /// Includes: MinDistanceConstraint (delegates to ValidRegionCalculator)
+    /// Includes: DirectionAwareMarginConstraint, EdgePathValidityConstraint
     /// @param minGridDistance Minimum distance between nodes in grid units (default 5.0)
     /// @return Configured ConstraintManager
     static ConstraintManager createDefault(float minGridDistance = 5.0f);

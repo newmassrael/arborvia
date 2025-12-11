@@ -73,7 +73,7 @@ namespace constants {
 constexpr float EPSILON = 1e-6f;
 
 /// Minimum distance between nodes in grid units
-/// Used by MinDistanceConstraint and ValidRegionCalculator
+/// Used by DirectionAwareMarginConstraint and other drag constraints
 constexpr float MIN_NODE_GRID_DISTANCE = 5.0f;
 
 /// Internal grid size for A* pathfinding algorithms
