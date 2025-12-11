@@ -108,6 +108,13 @@ private:
             return n;
         }
 
+        int sync() override {
+            if (original_) {
+                original_->pubsync();
+            }
+            return 0;
+        }
+
     private:
         std::ostringstream& buffer_;
         std::streambuf*& original_;
@@ -2045,25 +2052,70 @@ private:
             commandServer_.sendResponse(oss.str());
         }
         else if (cmd.name == "get_log") {
-            // Return captured logs (non-destructive read)
-            std::string logs = LogCapture::instance().get();
-            if (logs.empty()) {
+            // Return captured logs with optional filtering and pagination
+            // Usage: get_log [pattern] [tail_lines]
+            // Examples:
+            //   get_log                    - all logs (max 200 lines)
+            //   get_log SnapCalc           - lines containing "SnapCalc"
+            //   get_log SnapCalc 50        - last 50 lines containing "SnapCalc"
+            //   get_log * 100              - last 100 lines (all patterns)
+            
+            std::string pattern = "";
+            size_t tailLines = 200;  // Default max lines
+            
+            if (!cmd.args.empty()) {
+                pattern = cmd.args[0];
+                if (pattern == "*") pattern = "";  // Wildcard means no filter
+            }
+            if (cmd.args.size() >= 2) {
+                tailLines = static_cast<size_t>(std::stoi(cmd.args[1]));
+            }
+            
+            // Get logs from library API
+            auto loggerLogs = Logger::getCapturedLogs(pattern, tailLines);
+            
+            // Also get cout logs and filter
+            std::string coutLogs = LogCapture::instance().get();
+            std::vector<std::string> coutLines;
+            std::istringstream iss(coutLogs);
+            std::string line;
+            while (std::getline(iss, line)) {
+                if (pattern.empty() || line.find(pattern) != std::string::npos) {
+                    coutLines.push_back(line);
+                }
+            }
+            
+            // Combine and apply tail limit
+            std::vector<std::string> allLines;
+            allLines.insert(allLines.end(), loggerLogs.begin(), loggerLogs.end());
+            allLines.insert(allLines.end(), coutLines.begin(), coutLines.end());
+            
+            if (allLines.size() > tailLines) {
+                allLines.erase(allLines.begin(), allLines.begin() + (allLines.size() - tailLines));
+            }
+            
+            if (allLines.empty()) {
                 commandServer_.sendResponse("LOG_EMPTY");
             } else {
-                // Replace newlines with special marker for TCP transmission
-                std::string escaped;
-                for (char c : logs) {
-                    if (c == '\n') {
-                        escaped += "\\n";
-                    } else {
-                        escaped += c;
+                // Build response with line count info
+                std::ostringstream result;
+                result << "LOG [" << allLines.size() << " lines]\\n";
+                for (const auto& l : allLines) {
+                    for (char c : l) {
+                        if (c == '\n') {
+                            result << "\\n";
+                        } else {
+                            result << c;
+                        }
                     }
+                    result << "\\n";
                 }
-                commandServer_.sendResponse("LOG " + escaped);
+                commandServer_.sendResponse(result.str());
             }
         }
         else if (cmd.name == "clear_log") {
-            // Clear log buffer
+            // Clear both log buffers
+            Logger::clearCapturedLogs();
             LogCapture::instance().clear();
             commandServer_.sendResponse("OK cleared");
         }
@@ -2143,7 +2195,10 @@ private:
 };
 
 int main(int argc, char* argv[]) {
-    // Install log capture for TCP polling
+    // Enable log capture for TCP retrieval (library API)
+    Logger::enableCapture(true);
+    
+    // Install cout capture for non-Logger output (std::cout << ...)
     LogCapture::instance().install();
 
     // Parse command line arguments

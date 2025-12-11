@@ -61,9 +61,19 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
 
     /// Calculate edge center point for given node edge (grid-aligned using SnapPointCalculator)
+    /// @deprecated Use calculateSnapPositionWithContext for proper distribution
     Point calculateEdgeCenter(
         const NodeLayout& node,
         NodeEdge edge) const;
+
+    /// Calculate snap position considering existing connections on the same node edge
+    /// Uses GridSnapCalculator (SSOT) to distribute connections evenly
+    Point calculateSnapPositionWithContext(
+        const NodeLayout& node,
+        NodeEdge nodeEdge,
+        const EdgeLayout& currentEdge,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        bool isSource) const;
 
     /// Predict simple orthogonal path (L-shaped or straight)
     static std::vector<BendPoint> predictOrthogonalPath(

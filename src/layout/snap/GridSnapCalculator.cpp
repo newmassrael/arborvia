@@ -229,6 +229,66 @@ Point GridSnapCalculator::calculateSnapPosition(
     return getPositionFromCandidateIndex(node, edge, candidateIndex, gridSize);
 }
 
+Point GridSnapCalculator::calculatePositionInContext(
+    const std::vector<NodeLayout>& nodeLayouts,
+    const EdgeLayout& targetEdge,
+    const std::vector<EdgeLayout>& allEdgeLayouts,
+    bool isSource,
+    float gridSize,
+    int* outCandidateIndex)
+{
+    // Get the node and edge we're calculating for
+    NodeId nodeId = isSource ? targetEdge.from : targetEdge.to;
+    NodeEdge nodeEdge = isSource ? targetEdge.sourceEdge : targetEdge.targetEdge;
+    
+    // Find the node layout
+    const NodeLayout* nodeLayout = nullptr;
+    for (const auto& nl : nodeLayouts) {
+        if (nl.id == nodeId) {
+            nodeLayout = &nl;
+            break;
+        }
+    }
+    
+    if (!nodeLayout) {
+        // Node not found - fallback
+        if (outCandidateIndex) *outCandidateIndex = 0;
+        return isSource ? targetEdge.sourcePoint : targetEdge.targetPoint;
+    }
+    
+    // Count connections on this node edge and find this edge's index
+    int totalConnections = 0;
+    int connectionIndex = 0;
+    bool foundTargetEdge = false;
+    
+    for (const auto& el : allEdgeLayouts) {
+        // Check source side connections
+        if (el.from == nodeId && el.sourceEdge == nodeEdge) {
+            if (el.id == targetEdge.id && isSource) {
+                connectionIndex = totalConnections;
+                foundTargetEdge = true;
+            }
+            ++totalConnections;
+        }
+        // Check target side connections
+        if (el.to == nodeId && el.targetEdge == nodeEdge) {
+            if (el.id == targetEdge.id && !isSource) {
+                connectionIndex = totalConnections;
+                foundTargetEdge = true;
+            }
+            ++totalConnections;
+        }
+    }
+    
+    if (!foundTargetEdge || totalConnections == 0) {
+        // Edge not found or no connections - use single connection fallback
+        totalConnections = 1;
+        connectionIndex = 0;
+    }
+    
+    return calculateSnapPosition(*nodeLayout, nodeEdge, connectionIndex, totalConnections, gridSize, outCandidateIndex);
+}
+
 // =============================================================================
 // Utility Functions
 // =============================================================================

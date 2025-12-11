@@ -3,6 +3,7 @@
 #include "../../sugiyama/routing/EdgeValidator.h"
 #include "../../sugiyama/routing/SelfLoopRouter.h"
 #include "../../snap/SnapPointCalculator.h"
+#include "../../snap/GridSnapCalculator.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/api/IEdgePenalty.h"
 
@@ -219,6 +220,7 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
 
     // Calculate source/target points
     // Preserve existing position for fixed endpoints
+    // Use GridSnapCalculator (SSOT) for proper distribution based on existing connections
     Point sourcePoint, targetPoint;
     
     if (srcFixed && sourceEdge == base.sourceEdge) {
@@ -226,7 +228,9 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         sourcePoint = base.sourcePoint;
         candidate.sourceSnapIndex = base.sourceSnapIndex;
     } else {
-        sourcePoint = calculateEdgeCenter(srcIt->second, sourceEdge);
+        // Calculate position considering existing connections on this node edge
+        sourcePoint = calculateSnapPositionWithContext(
+            srcIt->second, sourceEdge, base, assignedLayouts, true /*isSource*/);
     }
     
     if (tgtFixed && targetEdge == base.targetEdge) {
@@ -234,7 +238,9 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         targetPoint = base.targetPoint;
         candidate.targetSnapIndex = base.targetSnapIndex;
     } else {
-        targetPoint = calculateEdgeCenter(tgtIt->second, targetEdge);
+        // Calculate position considering existing connections on this node edge
+        targetPoint = calculateSnapPositionWithContext(
+            tgtIt->second, targetEdge, base, assignedLayouts, false /*isSource*/);
     }
 
     // === Step 1: Create greedy orthogonal path with node avoidance ===
@@ -306,6 +312,38 @@ Point GeometricEdgeOptimizer::calculateEdgeCenter(
     // Use SnapPointCalculator for grid-aligned snap points (A* standard)
     float effectiveGridSize = constants::effectiveGridSize(gridSize_);
     return SnapPointCalculator::calculateFromRatio(node, edge, 0.5f, effectiveGridSize);
+}
+
+Point GeometricEdgeOptimizer::calculateSnapPositionWithContext(
+    const NodeLayout& node,
+    NodeEdge nodeEdge,
+    const EdgeLayout& currentEdge,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    bool isSource) const {
+    
+    float effectiveGridSize = constants::effectiveGridSize(gridSize_);
+    NodeId nodeId = isSource ? currentEdge.from : currentEdge.to;
+    
+    // Count existing connections on this node edge from already assigned layouts
+    int existingConnections = 0;
+    for (const auto& [edgeId, layout] : assignedLayouts) {
+        // Check source side connections
+        if (layout.from == nodeId && layout.sourceEdge == nodeEdge) {
+            ++existingConnections;
+        }
+        // Check target side connections
+        if (layout.to == nodeId && layout.targetEdge == nodeEdge) {
+            ++existingConnections;
+        }
+    }
+    
+    // The current edge is the next connection (connectionIndex = existingConnections)
+    // totalConnections = existingConnections + 1 (including current edge)
+    int connectionIndex = existingConnections;
+    int totalConnections = existingConnections + 1;
+    
+    return GridSnapCalculator::calculateSnapPosition(
+        node, nodeEdge, connectionIndex, totalConnections, effectiveGridSize);
 }
 
 std::vector<BendPoint> GeometricEdgeOptimizer::predictOrthogonalPath(

@@ -48,7 +48,7 @@ void DefaultBackend::log(LogLevel level, const std::string& message,
     std::lock_guard<std::mutex> lock(mutex_);
     std::cout << "[" << getTimestamp() << "] "
               << "[" << levelToColor(level) << levelToString(level) << Colors::RESET << "] "
-              << message << "\n";
+              << message << std::endl;
 }
 
 void DefaultBackend::setLevel(LogLevel level) {

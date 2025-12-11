@@ -164,6 +164,29 @@ public:
         float gridSize,
         int* outCandidateIndex = nullptr);
 
+    /**
+     * @brief Calculate snap point position by analyzing connection context.
+     *
+     * This convenience method automatically determines connectionIndex and totalConnections
+     * by analyzing all edge layouts. Useful when you have an edge layout but don't know
+     * its position among other connections on the same node edge.
+     *
+     * @param nodeLayouts All node layouts (to look up source/target nodes)
+     * @param targetEdge The edge layout to calculate snap position for
+     * @param allEdgeLayouts All edge layouts (to count connections on same node edge)
+     * @param isSource True to calculate source point, false for target point
+     * @param gridSize Grid cell size
+     * @param outCandidateIndex Optional output parameter to receive the selected candidate index
+     * @return Snap point position in pixel coordinates (grid-aligned)
+     */
+    static Point calculatePositionInContext(
+        const std::vector<NodeLayout>& nodeLayouts,
+        const EdgeLayout& targetEdge,
+        const std::vector<EdgeLayout>& allEdgeLayouts,
+        bool isSource,
+        float gridSize,
+        int* outCandidateIndex = nullptr);
+
     // =========================================================================
     // Utility Functions
     // =========================================================================

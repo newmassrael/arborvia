@@ -8,11 +8,17 @@
 
 #include <algorithm>
 #include <mutex>
+#include <sstream>
 
 namespace arborvia {
 
 std::unique_ptr<ILoggerBackend> Logger::backend_;
 static std::mutex backend_mutex;
+
+// Log capture state
+static bool capture_enabled_ = false;
+static std::vector<std::string> captured_logs_;
+static std::mutex capture_mutex_;
 
 void Logger::setBackend(std::unique_ptr<ILoggerBackend> backend) {
     std::lock_guard<std::mutex> lock(backend_mutex);
@@ -51,30 +57,35 @@ void Logger::trace(const std::string& message, const std::source_location& loc) 
     ensureBackend();
     std::string enhanced = extractFunctionName(loc) + "() - " + message;
     backend_->log(LogLevel::Trace, enhanced, loc);
+    captureLog("[trace] " + enhanced);
 }
 
 void Logger::debug(const std::string& message, const std::source_location& loc) {
     ensureBackend();
     std::string enhanced = extractFunctionName(loc) + "() - " + message;
     backend_->log(LogLevel::Debug, enhanced, loc);
+    captureLog("[debug] " + enhanced);
 }
 
 void Logger::info(const std::string& message, const std::source_location& loc) {
     ensureBackend();
     std::string enhanced = extractFunctionName(loc) + "() - " + message;
     backend_->log(LogLevel::Info, enhanced, loc);
+    captureLog("[info] " + enhanced);
 }
 
 void Logger::warn(const std::string& message, const std::source_location& loc) {
     ensureBackend();
     std::string enhanced = extractFunctionName(loc) + "() - " + message;
     backend_->log(LogLevel::Warn, enhanced, loc);
+    captureLog("[warn] " + enhanced);
 }
 
 void Logger::error(const std::string& message, const std::source_location& loc) {
     ensureBackend();
     std::string enhanced = extractFunctionName(loc) + "() - " + message;
     backend_->log(LogLevel::Error, enhanced, loc);
+    captureLog("[error] " + enhanced);
 }
 
 void Logger::flush() {
@@ -85,6 +96,50 @@ void Logger::flush() {
 void Logger::ensureBackend() {
     if (!backend_) {
         initialize();
+    }
+}
+
+// ===== Log Capture Implementation =====
+
+void Logger::enableCapture(bool enable) {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    capture_enabled_ = enable;
+}
+
+bool Logger::isCaptureEnabled() {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    return capture_enabled_;
+}
+
+std::vector<std::string> Logger::getCapturedLogs(const std::string& pattern, size_t maxLines) {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    
+    std::vector<std::string> result;
+    
+    // Filter by pattern
+    for (const auto& line : captured_logs_) {
+        if (pattern.empty() || line.find(pattern) != std::string::npos) {
+            result.push_back(line);
+        }
+    }
+    
+    // Apply maxLines limit (return last N lines)
+    if (maxLines > 0 && result.size() > maxLines) {
+        result.erase(result.begin(), result.begin() + (result.size() - maxLines));
+    }
+    
+    return result;
+}
+
+void Logger::clearCapturedLogs() {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    captured_logs_.clear();
+}
+
+void Logger::captureLog(const std::string& message) {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    if (capture_enabled_) {
+        captured_logs_.push_back(message);
     }
 }
 

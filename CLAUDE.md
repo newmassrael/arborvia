@@ -25,7 +25,7 @@ Demo listens on TCP port 9999 (configurable with `--port=XXXX` or `-p XXXX`).
 | `get_state_full` | Get state with routing status | `get_state_full` |
 | `get_layout` | Get full layout as JSON | `get_layout` |
 | `check_penetration` | Check if edges penetrate nodes | `check_penetration` |
-| `get_log` | Get captured debug log (non-destructive) | `get_log` |
+| `get_log [pattern] [lines]` | Get captured logs with filtering | `get_log SnapCalc 50` |
 | `clear_log` | Clear log buffer | `clear_log` |
 | `wait_idle [timeout_ms]` | Wait for optimization to complete | `wait_idle 10000` |
 | `astar_viz [edgeId]` | Enable A* debug visualization | `astar_viz 0` |
@@ -85,25 +85,52 @@ Example output:
 [PERF] optimizer->optimize(): 85 ms (8 edges)
 ```
 
-### Handling Large Logs
+### Log Capture API
+
+The library provides `Logger::enableCapture()` for programmatic log retrieval:
+
+```cpp
+// Enable capture at startup
+Logger::enableCapture(true);
+
+// Retrieve logs with optional filtering
+auto logs = Logger::getCapturedLogs("SnapCalc", 100);  // Last 100 lines containing "SnapCalc"
+auto allLogs = Logger::getCapturedLogs();              // All captured logs
+
+// Clear captured logs
+Logger::clearCapturedLogs();
+```
+
+### get_log Command Usage
 
 ```bash
+# Get last 200 lines (default)
+echo "get_log" | nc -q 1 localhost 9999
+
 # Filter by pattern
-echo "get_log" | nc -q 1 localhost 9999 | grep -E "(DIAGONAL|RETRY|FAILED)"
+echo "get_log SnapCalc" | nc -q 1 localhost 9999
 
-# Filter by specific Edge
-echo "get_log" | nc -q 1 localhost 9999 | grep "Edge 0"
+# Filter and limit lines
+echo "get_log SnapCalc 50" | nc -q 1 localhost 9999
 
+# All patterns, last 100 lines
+echo "get_log * 100" | nc -q 1 localhost 9999
+
+# Filter by Edge
+echo "get_log Edge 30" | nc -q 1 localhost 9999
+```
+
+### Post-Processing Logs
+
+```bash
 # Save to file for analysis
 echo "get_log" | nc -q 1 localhost 9999 > /tmp/log.txt
-grep "DIAGONAL" /tmp/log.txt
+
+# Convert escaped newlines
+cat /tmp/log.txt | sed 's/\\n/\n/g' | grep "PERF"
 
 # Count pattern occurrences
-echo "get_log" | nc -q 1 localhost 9999 | grep -c "DIAGONAL"
-
-# Log is non-destructive, can be retrieved multiple times
-echo "get_log" | nc -q 1 localhost 9999 | grep "PERF"
-echo "get_log" | nc -q 1 localhost 9999 | grep "evalCombo"
+echo "get_log DIAGONAL" | nc -q 1 localhost 9999 | sed 's/\\n/\n/g' | wc -l
 ```
 
 ### Key Log Patterns
