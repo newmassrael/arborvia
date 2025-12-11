@@ -1,6 +1,7 @@
 #include "arborvia/layout/interactive/ManualLayoutManager.h"
 #include "arborvia/layout/util/LayoutSerializer.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "snap/SnapPointCalculator.h"
 #include <fstream>
 #include <sstream>
 #include <cmath>
@@ -77,10 +78,10 @@ bool ManualLayoutManager::hasEdgeRouting(EdgeId id) const {
     return manualState_.hasEdgeRouting(id);
 }
 
-// Bend point management
-void ManualLayoutManager::addBendPoint(EdgeId edgeId, size_t index, const Point& position) {
+// Bend point management (GridPoint API - ensures grid alignment)
+void ManualLayoutManager::addBendPoint(EdgeId edgeId, size_t index, const GridPoint& gridPosition, float gridSize) {
     auto& config = manualState_.edgeRoutings[edgeId];
-    BendPoint bp{position, false};
+    BendPoint bp{gridPosition.toPixel(gridSize), false};
     if (index >= config.manualBendPoints.size()) {
         config.manualBendPoints.push_back(bp);
     } else {
@@ -88,9 +89,9 @@ void ManualLayoutManager::addBendPoint(EdgeId edgeId, size_t index, const Point&
     }
 }
 
-void ManualLayoutManager::appendBendPoint(EdgeId edgeId, const Point& position) {
+void ManualLayoutManager::appendBendPoint(EdgeId edgeId, const GridPoint& gridPosition, float gridSize) {
     auto& config = manualState_.edgeRoutings[edgeId];
-    config.manualBendPoints.push_back({position, false});
+    config.manualBendPoints.push_back({gridPosition.toPixel(gridSize), false});
 }
 
 void ManualLayoutManager::removeBendPoint(EdgeId edgeId, size_t index) {
@@ -102,11 +103,11 @@ void ManualLayoutManager::removeBendPoint(EdgeId edgeId, size_t index) {
     }
 }
 
-void ManualLayoutManager::moveBendPoint(EdgeId edgeId, size_t index, const Point& position) {
+void ManualLayoutManager::moveBendPoint(EdgeId edgeId, size_t index, const GridPoint& gridPosition, float gridSize) {
     auto it = manualState_.edgeRoutings.find(edgeId);
     if (it != manualState_.edgeRoutings.end() &&
         index < it->second.manualBendPoints.size()) {
-        it->second.manualBendPoints[index].position = position;
+        it->second.manualBendPoints[index].position = gridPosition.toPixel(gridSize);
     }
 }
 
@@ -132,8 +133,13 @@ void ManualLayoutManager::clearBendPoints(EdgeId edgeId) {
     }
 }
 
-void ManualLayoutManager::setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points) {
-    manualState_.edgeRoutings[edgeId].manualBendPoints = points;
+void ManualLayoutManager::setBendPoints(EdgeId edgeId, const std::vector<GridPoint>& gridPositions, float gridSize) {
+    auto& bendPoints = manualState_.edgeRoutings[edgeId].manualBendPoints;
+    bendPoints.clear();
+    bendPoints.reserve(gridPositions.size());
+    for (const auto& gp : gridPositions) {
+        bendPoints.push_back({gp.toPixel(gridSize), false});
+    }
 }
 
 void ManualLayoutManager::clearAllEdgeRoutings() {
@@ -166,9 +172,9 @@ void ManualLayoutManager::syncSnapConfigsFromEdgeLayouts(
     }
 }
 
-void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]] const Graph& graph) const {
+void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]] const Graph& graph, float gridSize) const {
     applyManualNodePositions(result);
-    applyManualEdgeRoutings(result);
+    applyManualEdgeRoutings(result, gridSize);
 }
 
 void ManualLayoutManager::applyManualNodePositions(LayoutResult& result) const {
@@ -180,7 +186,7 @@ void ManualLayoutManager::applyManualNodePositions(LayoutResult& result) const {
     }
 }
 
-void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result) const {
+void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result, float gridSize) const {
     for (const auto& [edgeId, routing] : manualState_.edgeRoutings) {
         EdgeLayout* layout = result.getEdgeLayout(edgeId);
         if (!layout) continue;
@@ -196,11 +202,11 @@ void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result) const {
         int sourceSnapCount = fromConfig.getCount(routing.sourceEdge);
         int targetSnapCount = toConfig.getCount(routing.targetEdge);
 
-        // Calculate snap points
-        layout->sourcePoint = LayoutUtils::calculateSnapPoint(
-            *fromNode, routing.sourceEdge, routing.sourceSnapIndex, sourceSnapCount);
-        layout->targetPoint = LayoutUtils::calculateSnapPoint(
-            *toNode, routing.targetEdge, routing.targetSnapIndex, targetSnapCount);
+        // Calculate grid-aligned snap points (A* standard)
+        layout->sourcePoint = SnapPointCalculator::calculateFromIndex(
+            *fromNode, routing.sourceEdge, routing.sourceSnapIndex, sourceSnapCount, gridSize);
+        layout->targetPoint = SnapPointCalculator::calculateFromIndex(
+            *toNode, routing.targetEdge, routing.targetSnapIndex, targetSnapCount, gridSize);
 
         // Store routing info in edge layout
         layout->sourceEdge = routing.sourceEdge;

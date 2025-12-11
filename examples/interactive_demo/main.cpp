@@ -483,9 +483,11 @@ public:
             auto bpResult = OrthogonalRouter::calculateBendPointPair(
                 edgeLayout, existingBps, clickPos, bendPointPreview_.insertIndex);
 
-            // Insert both points
-            manualManager_->addBendPoint(edgeId, bpResult.insertIndex, bpResult.first);
-            manualManager_->addBendPoint(edgeId, bpResult.insertIndex + 1, bpResult.second);
+            // Insert both points (convert Point to GridPoint)
+            manualManager_->addBendPoint(edgeId, bpResult.insertIndex, 
+                GridPoint::fromPixel(bpResult.first, gridSize_), gridSize_);
+            manualManager_->addBendPoint(edgeId, bpResult.insertIndex + 1, 
+                GridPoint::fromPixel(bpResult.second, gridSize_), gridSize_);
 
             selectedBendPoint_.edgeId = edgeId;
             selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
@@ -658,11 +660,13 @@ public:
                 auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(
                     prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
 
-                // Apply the calculated positions
+                // Apply the calculated positions (convert Point to GridPoint)
                 if (dragResult.nextAdjusted) {
-                    manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), dragResult.adjustedNextPos);
+                    manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), 
+                        GridPoint::fromPixel(dragResult.adjustedNextPos, gridSize_), gridSize_);
                 }
-                manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx), dragResult.newCurrentPos);
+                manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx), 
+                    GridPoint::fromPixel(dragResult.newCurrentPos, gridSize_), gridSize_);
 
                 // Update edge layout immediately for visual feedback
                 auto it = edgeLayouts_.find(edgeId);

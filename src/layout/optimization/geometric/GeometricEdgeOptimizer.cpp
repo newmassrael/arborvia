@@ -2,6 +2,7 @@
 #include "../../sugiyama/routing/EdgeRoutingUtils.h"
 #include "../../sugiyama/routing/EdgeValidator.h"
 #include "../../sugiyama/routing/SelfLoopRouter.h"
+#include "../../snap/SnapPointCalculator.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/api/IEdgePenalty.h"
 
@@ -301,8 +302,10 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
 
 Point GeometricEdgeOptimizer::calculateEdgeCenter(
     const NodeLayout& node,
-    NodeEdge edge) {
-    return EdgeRoutingUtils::calculateEdgeCenter(node, edge);
+    NodeEdge edge) const {
+    // Use SnapPointCalculator for grid-aligned snap points (A* standard)
+    float effectiveGridSize = constants::effectiveGridSize(gridSize_);
+    return SnapPointCalculator::calculateFromRatio(node, edge, 0.5f, effectiveGridSize);
 }
 
 std::vector<BendPoint> GeometricEdgeOptimizer::predictOrthogonalPath(

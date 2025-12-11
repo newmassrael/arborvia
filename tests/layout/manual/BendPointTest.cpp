@@ -18,6 +18,8 @@ protected:
         e3_ = graph_.addEdge(n2_, n3_, "edge3");
     }
 
+    static constexpr float gridSize_ = 20.0f;
+
     Graph graph_;
     NodeId n1_, n2_, n3_;
     EdgeId e1_, e2_, e3_;
@@ -28,25 +30,25 @@ protected:
 TEST_F(BendPointTest, Append_AddsToBendPoints) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
-    manager.appendBendPoint(e1_, {150.0f, 250.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // 100, 200
+    manager.appendBendPoint(e1_, GridPoint{8, 12}, gridSize_);  // 160, 240
 
     EXPECT_TRUE(manager.hasManualBendPoints(e1_));
     const auto& bps = manager.getBendPoints(e1_);
     ASSERT_EQ(bps.size(), 2u);
     EXPECT_FLOAT_EQ(bps[0].position.x, 100.0f);
     EXPECT_FLOAT_EQ(bps[0].position.y, 200.0f);
-    EXPECT_FLOAT_EQ(bps[1].position.x, 150.0f);
-    EXPECT_FLOAT_EQ(bps[1].position.y, 250.0f);
+    EXPECT_FLOAT_EQ(bps[1].position.x, 160.0f);
+    EXPECT_FLOAT_EQ(bps[1].position.y, 240.0f);
 }
 
 TEST_F(BendPointTest, InsertAtIndex_InsertsCorrectly) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
-    manager.appendBendPoint(e1_, {300.0f, 400.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);   // 100, 200
+    manager.appendBendPoint(e1_, GridPoint{15, 20}, gridSize_);  // 300, 400
     // Insert in the middle
-    manager.addBendPoint(e1_, 1, {200.0f, 300.0f});
+    manager.addBendPoint(e1_, 1, GridPoint{10, 15}, gridSize_);  // 200, 300
 
     const auto& bps = manager.getBendPoints(e1_);
     ASSERT_EQ(bps.size(), 3u);
@@ -58,9 +60,9 @@ TEST_F(BendPointTest, InsertAtIndex_InsertsCorrectly) {
 TEST_F(BendPointTest, Remove_RemovesFromVector) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
-    manager.appendBendPoint(e1_, {150.0f, 250.0f});
-    manager.appendBendPoint(e1_, {200.0f, 300.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);   // 100, 200
+    manager.appendBendPoint(e1_, GridPoint{8, 12}, gridSize_);   // 160, 240
+    manager.appendBendPoint(e1_, GridPoint{10, 15}, gridSize_);  // 200, 300
 
     manager.removeBendPoint(e1_, 1);  // remove middle
 
@@ -73,19 +75,19 @@ TEST_F(BendPointTest, Remove_RemovesFromVector) {
 TEST_F(BendPointTest, Move_UpdatesPosition) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
-    manager.moveBendPoint(e1_, 0, {150.0f, 250.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // 100, 200
+    manager.moveBendPoint(e1_, 0, GridPoint{8, 12}, gridSize_); // 160, 240
 
     const auto& bps = manager.getBendPoints(e1_);
     ASSERT_EQ(bps.size(), 1u);
-    EXPECT_FLOAT_EQ(bps[0].position.x, 150.0f);
-    EXPECT_FLOAT_EQ(bps[0].position.y, 250.0f);
+    EXPECT_FLOAT_EQ(bps[0].position.x, 160.0f);
+    EXPECT_FLOAT_EQ(bps[0].position.y, 240.0f);
 }
 
 TEST_F(BendPointTest, Clear_RevertsToAutoRouting) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // 100, 200
     EXPECT_TRUE(manager.hasManualBendPoints(e1_));
 
     manager.clearBendPoints(e1_);
@@ -97,19 +99,19 @@ TEST_F(BendPointTest, Clear_RevertsToAutoRouting) {
 TEST_F(BendPointTest, SetBatch_ReplacesAll) {
     ManualLayoutManager manager;
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // 100, 200
 
-    std::vector<BendPoint> newBps = {
-        {{50.0f, 100.0f}, false},
-        {{75.0f, 150.0f}, true},
-        {{100.0f, 200.0f}, false}
+    std::vector<GridPoint> newGridPts = {
+        GridPoint{3, 5},   // 60, 100
+        GridPoint{4, 8},   // 80, 160
+        GridPoint{5, 10}   // 100, 200
     };
-    manager.setBendPoints(e1_, newBps);
+    manager.setBendPoints(e1_, newGridPts, gridSize_);
 
     const auto& bps = manager.getBendPoints(e1_);
     ASSERT_EQ(bps.size(), 3u);
-    EXPECT_FLOAT_EQ(bps[0].position.x, 50.0f);
-    EXPECT_TRUE(bps[1].isControlPoint);
+    EXPECT_FLOAT_EQ(bps[0].position.x, 60.0f);
+    EXPECT_FLOAT_EQ(bps[1].position.x, 80.0f);
     EXPECT_FLOAT_EQ(bps[2].position.x, 100.0f);
 }
 
@@ -121,9 +123,9 @@ TEST_F(BendPointTest, ApplyToLayout_UsesManualPoints) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Add manual bend points
-    manager.appendBendPoint(e1_, {100.0f, 150.0f});
-    manager.appendBendPoint(e1_, {150.0f, 200.0f});
+    // Add manual bend points (grid-aligned)
+    manager.appendBendPoint(e1_, GridPoint{5, 8}, gridSize_);   // 100, 160
+    manager.appendBendPoint(e1_, GridPoint{8, 10}, gridSize_);  // 160, 200
 
     // Set node positions
     manager.setNodePosition(n1_, {0.0f, 0.0f});
@@ -132,15 +134,15 @@ TEST_F(BendPointTest, ApplyToLayout_UsesManualPoints) {
     // Create a layout result and apply manual state
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     // Verify manual bend points were used
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
     ASSERT_EQ(edgeLayout->bendPoints.size(), 2u);
     EXPECT_FLOAT_EQ(edgeLayout->bendPoints[0].position.x, 100.0f);
-    EXPECT_FLOAT_EQ(edgeLayout->bendPoints[0].position.y, 150.0f);
-    EXPECT_FLOAT_EQ(edgeLayout->bendPoints[1].position.x, 150.0f);
+    EXPECT_FLOAT_EQ(edgeLayout->bendPoints[0].position.y, 160.0f);
+    EXPECT_FLOAT_EQ(edgeLayout->bendPoints[1].position.x, 160.0f);
     EXPECT_FLOAT_EQ(edgeLayout->bendPoints[1].position.y, 200.0f);
 }
 
@@ -150,8 +152,8 @@ TEST_F(BendPointTest, JsonRoundTrip_PreservesBendPoints) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Left);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Right);
 
-    manager.appendBendPoint(e1_, {100.0f, 200.0f});
-    manager.appendBendPoint(e1_, {150.0f, 250.0f});
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // 100, 200
+    manager.appendBendPoint(e1_, GridPoint{8, 12}, gridSize_);  // 160, 240
 
     std::string json = manager.toJson();
 
@@ -163,8 +165,8 @@ TEST_F(BendPointTest, JsonRoundTrip_PreservesBendPoints) {
     ASSERT_EQ(bps.size(), 2u);
     EXPECT_FLOAT_EQ(bps[0].position.x, 100.0f);
     EXPECT_FLOAT_EQ(bps[0].position.y, 200.0f);
-    EXPECT_FLOAT_EQ(bps[1].position.x, 150.0f);
-    EXPECT_FLOAT_EQ(bps[1].position.y, 250.0f);
+    EXPECT_FLOAT_EQ(bps[1].position.x, 160.0f);
+    EXPECT_FLOAT_EQ(bps[1].position.y, 240.0f);
 }
 
 TEST_F(BendPointTest, NoManual_UsesAutoRouting) {
@@ -181,7 +183,7 @@ TEST_F(BendPointTest, NoManual_UsesAutoRouting) {
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, 20.0f);
 
     // With no manual bend points, auto routing should create bend points
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
@@ -230,29 +232,27 @@ std::vector<Point> buildPath(const EdgeLayout& layout) {
 TEST_F(BendPointTest, Orthogonal_TwoPointsMaintainRightAngles) {
     ManualLayoutManager manager;
 
-
-    // Set node positions with diagonal relationship
+    // Set node positions (grid-aligned: multiples of 20)
+    // n1 at (0, 0) with size 100x50 → bottom edge at y=50 → grid y=3 (60)
+    // n2 at (200, 160) with size 100x50 → top edge at y=160 → grid y=8 (160)
     manager.setNodePosition(n1_, {0.0f, 0.0f});
-    manager.setNodePosition(n2_, {200.0f, 150.0f});
+    manager.setNodePosition(n2_, {200.0f, 160.0f});
 
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Add two orthogonal bend points (simulating what the UI does)
-    // For horizontal-first approach: go right then down
-    Point source = {50.0f, 50.0f};  // bottom center of n1
-    Point target = {250.0f, 150.0f}; // top center of n2
+    // Source will be at approximately (60, 60) after grid quantization
+    // Target will be at approximately (260, 160) after grid quantization
+    // Create L-shaped path with grid-aligned bend points:
+    // bp1: same y as source (grid y=3 → 60), x somewhere in between
+    // bp2: same y as target (grid y=8 → 160), same x as bp1
 
-    // Create L-shaped path: horizontal then vertical
-    Point bp1 = {150.0f, source.y};  // go horizontal
-    Point bp2 = {150.0f, target.y};  // go vertical
-
-    manager.appendBendPoint(e1_, bp1);
-    manager.appendBendPoint(e1_, bp2);
+    manager.appendBendPoint(e1_, GridPoint{8, 3}, gridSize_);  // (160, 60) - horizontal from source
+    manager.appendBendPoint(e1_, GridPoint{8, 8}, gridSize_);  // (160, 160) - vertical to target
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -270,33 +270,25 @@ TEST_F(BendPointTest, Orthogonal_TwoPointsMaintainRightAngles) {
 TEST_F(BendPointTest, Orthogonal_SourceToTargetDirect) {
     ManualLayoutManager manager;
 
-
-    // Set node positions: n1 at origin, n2 diagonal
+    // Set node positions (grid-aligned)
+    // n1 at (0, 0) with size 100x50 → bottom at y=50 → grid y=3 (60)
+    // n2 at (200, 200) with size 100x50 → top at y=200 → grid y=10 (200)
     manager.setNodePosition(n1_, {0.0f, 0.0f});
     manager.setNodePosition(n2_, {200.0f, 200.0f});
 
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // For a diagonal source-target relationship,
-    // adding orthogonal bends should create right angles
-    // Simulating first bend point insertion at click position (100, 100)
+    // Source at grid y=3 (60), target at grid y=10 (200)
+    // bp1: (100, 60) = GridPoint{5, 3} - horizontal from source
+    // bp2: (100, 200) = GridPoint{5, 10} - vertical to target's y level
 
-    // Expected orthogonal step:
-    // source.y = 50 (bottom of node at y=0, height=50)
-    // target.y = 200 (top of node at y=200)
-    // bp1 = (100, 50) - horizontal from source
-    // bp2 = (100, 200) - vertical to target's y level
-
-    float sourceY = 50.0f;  // approximate
-    float targetY = 200.0f;
-
-    manager.appendBendPoint(e1_, Point{100.0f, sourceY});
-    manager.appendBendPoint(e1_, Point{100.0f, targetY});
+    manager.appendBendPoint(e1_, GridPoint{5, 3}, gridSize_);   // (100, 60)
+    manager.appendBendPoint(e1_, GridPoint{5, 10}, gridSize_);  // (100, 200)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -329,17 +321,18 @@ TEST_F(BendPointTest, Orthogonal_MultipleInsertions) {
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
 
     // First insertion: creates 2 bends for orthogonal step
-    manager.appendBendPoint(e1_, {100.0f, 25.0f});  // horizontal from source
-    manager.appendBendPoint(e1_, {100.0f, 225.0f}); // vertical to target y
+    // Source at bottom of n1 (y=50 → grid y=3 → 60)
+    // Target at left of n2 (x=200, y ~= 225 → grid y=11 → 220)
+    manager.appendBendPoint(e1_, GridPoint{5, 3}, gridSize_);   // (100, 60) horizontal from source
+    manager.appendBendPoint(e1_, GridPoint{5, 11}, gridSize_);  // (100, 220) vertical to target y
 
     // Second insertion: add more bends to create a detour
-    // Insert between bp2 and target
-    manager.appendBendPoint(e1_, {200.0f, 225.0f}); // horizontal step
-    manager.appendBendPoint(e1_, {200.0f, 225.0f}); // (same point - will merge in rendering)
+    manager.appendBendPoint(e1_, GridPoint{10, 11}, gridSize_); // (200, 220) horizontal step
+    manager.appendBendPoint(e1_, GridPoint{10, 11}, gridSize_); // same point
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -359,27 +352,27 @@ TEST_F(BendPointTest, Orthogonal_MultipleInsertions) {
 TEST_F(BendPointTest, Orthogonal_AfterClearReaddMaintainsOrthogonal) {
     ManualLayoutManager manager;
 
-
+    // n1 at (0,0), n2 at (200, 160) - grid aligned
     manager.setNodePosition(n1_, {0.0f, 0.0f});
-    manager.setNodePosition(n2_, {200.0f, 150.0f});
+    manager.setNodePosition(n2_, {200.0f, 160.0f});
 
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
     // Add bends, clear, then re-add
-    manager.appendBendPoint(e1_, {50.0f, 50.0f});
-    manager.appendBendPoint(e1_, {50.0f, 150.0f});
+    manager.appendBendPoint(e1_, GridPoint{3, 3}, gridSize_);  // (60, 60)
+    manager.appendBendPoint(e1_, GridPoint{3, 8}, gridSize_);  // (60, 160)
 
     manager.clearBendPoints(e1_);
     EXPECT_FALSE(manager.hasManualBendPoints(e1_));
 
-    // Re-add orthogonal bends
-    manager.appendBendPoint(e1_, {100.0f, 50.0f});
-    manager.appendBendPoint(e1_, {100.0f, 150.0f});
+    // Re-add orthogonal bends (source y=3, target y=8)
+    manager.appendBendPoint(e1_, GridPoint{5, 3}, gridSize_);  // (100, 60)
+    manager.appendBendPoint(e1_, GridPoint{5, 8}, gridSize_);  // (100, 160)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);

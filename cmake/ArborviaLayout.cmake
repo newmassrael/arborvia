@@ -44,6 +44,7 @@ set(ARBORVIA_LAYOUT_SOURCES
 
     # Snap point system
     src/layout/snap/GridSnapCalculator.cpp
+    src/layout/snap/SnapPointCalculator.cpp
     src/layout/snap/SnapIndexManager.cpp
     src/layout/snap/SnapDistributor.cpp
     src/layout/snap/SnapPositionUpdater.cpp

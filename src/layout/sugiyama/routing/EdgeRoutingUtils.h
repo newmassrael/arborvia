@@ -177,41 +177,9 @@ public:
         return count;
     }
 
-    /**
-     * @brief Calculate the center point of a node edge.
-     *
-     * Returns the midpoint of the specified edge of the node.
-     * Used by optimizers to determine edge attachment points.
-     *
-     * @param node The node layout
-     * @param edge Which edge of the node (Top, Bottom, Left, Right)
-     * @return Center point of the specified edge
-     */
-    static Point calculateEdgeCenter(const NodeLayout& node, NodeEdge edge) {
-        switch (edge) {
-            case NodeEdge::Top:
-                return {
-                    node.position.x + node.size.width * 0.5f,
-                    node.position.y
-                };
-            case NodeEdge::Bottom:
-                return {
-                    node.position.x + node.size.width * 0.5f,
-                    node.position.y + node.size.height
-                };
-            case NodeEdge::Left:
-                return {
-                    node.position.x,
-                    node.position.y + node.size.height * 0.5f
-                };
-            case NodeEdge::Right:
-                return {
-                    node.position.x + node.size.width,
-                    node.position.y + node.size.height * 0.5f
-                };
-        }
-        return node.center();
-    }
+    // NOTE: calculateEdgeCenter() has been deleted.
+    // Use SnapPointCalculator::calculateFromRatio(node, edge, 0.5f, gridSize) instead
+    // for grid-aligned edge center calculation (A* standard).
 
     /**
      * @brief Hash function for std::pair types.

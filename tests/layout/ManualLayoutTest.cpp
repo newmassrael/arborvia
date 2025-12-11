@@ -134,16 +134,23 @@ TEST_F(ManualLayoutTest, CalculateSnapPointTop) {
     node.position = {0, 0};
     node.size = {100, 50};
 
+    constexpr float gridSize = 10.0f;
+
     // Single snap point on top edge
-    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 1);
-    EXPECT_FLOAT_EQ(p.x, 50.0f);  // Center
+    // 50 stays at 50 (already on 10px grid)
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 1, gridSize);
+    EXPECT_FLOAT_EQ(p.x, 50.0f);  // Center, already on 10px grid
     EXPECT_FLOAT_EQ(p.y, 0.0f);   // Top edge
 
     // Two snap points on top edge
-    Point p1 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 2);
-    Point p2 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 1, 2);
-    EXPECT_FLOAT_EQ(p1.x, 100.0f / 3.0f);
-    EXPECT_FLOAT_EQ(p2.x, 200.0f / 3.0f);
+    // Formula: (snapIndex+1) / (totalSnapPoints+1) * width → grid-aligned
+    // With 10px gridSize:
+    //   snapIndex 0: 100 * 1/3 = 33.33 → round(33.33/10)*10 = round(3.33)*10 = 30
+    //   snapIndex 1: 100 * 2/3 = 66.66 → round(66.66/10)*10 = round(6.67)*10 = 70
+    Point p1 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 0, 2, gridSize);
+    Point p2 = LayoutUtils::calculateSnapPoint(node, NodeEdge::Top, 1, 2, gridSize);
+    EXPECT_FLOAT_EQ(p1.x, 30.0f);  // Grid-aligned (33.33 → 30)
+    EXPECT_FLOAT_EQ(p2.x, 70.0f);  // Grid-aligned (66.66 → 70)
 }
 
 TEST_F(ManualLayoutTest, CalculateSnapPointBottom) {
@@ -151,9 +158,12 @@ TEST_F(ManualLayoutTest, CalculateSnapPointBottom) {
     node.position = {0, 0};
     node.size = {100, 50};
 
-    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Bottom, 0, 1);
-    EXPECT_FLOAT_EQ(p.x, 50.0f);
-    EXPECT_FLOAT_EQ(p.y, 50.0f);  // Bottom edge
+    constexpr float gridSize = 10.0f;
+
+    // With grid quantization, 50 (center) snaps to nearest grid line
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Bottom, 0, 1, gridSize);
+    EXPECT_FLOAT_EQ(p.x, 50.0f);  // Center, exactly on 10px grid
+    EXPECT_FLOAT_EQ(p.y, 50.0f);  // Bottom edge (already on grid)
 }
 
 TEST_F(ManualLayoutTest, CalculateSnapPointLeft) {
@@ -161,9 +171,12 @@ TEST_F(ManualLayoutTest, CalculateSnapPointLeft) {
     node.position = {0, 0};
     node.size = {100, 50};
 
-    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Left, 0, 1);
+    constexpr float gridSize = 10.0f;
+
+    // With grid quantization, 25 (center of 50 height) snaps to nearest grid line
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Left, 0, 1, gridSize);
     EXPECT_FLOAT_EQ(p.x, 0.0f);   // Left edge
-    EXPECT_FLOAT_EQ(p.y, 25.0f);  // Center
+    EXPECT_FLOAT_EQ(p.y, 30.0f);  // Center 25 → round(25/10)*10 = 30
 }
 
 TEST_F(ManualLayoutTest, CalculateSnapPointRight) {
@@ -171,9 +184,12 @@ TEST_F(ManualLayoutTest, CalculateSnapPointRight) {
     node.position = {0, 0};
     node.size = {100, 50};
 
-    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Right, 0, 1);
-    EXPECT_FLOAT_EQ(p.x, 100.0f); // Right edge
-    EXPECT_FLOAT_EQ(p.y, 25.0f);  // Center
+    constexpr float gridSize = 10.0f;
+
+    // With grid quantization, values are snapped to grid lines
+    Point p = LayoutUtils::calculateSnapPoint(node, NodeEdge::Right, 0, 1, gridSize);
+    EXPECT_FLOAT_EQ(p.x, 100.0f); // Right edge (already on grid)
+    EXPECT_FLOAT_EQ(p.y, 30.0f);  // Center 25 → round(25/10)*10 = 30
 }
 
 // ============== JSON Serialization Tests ==============

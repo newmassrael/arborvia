@@ -7,6 +7,7 @@
 #include "arborvia/layout/interactive/PathRoutingCoordinator.h"
 #include "sugiyama/routing/EdgeRouting.h"
 #include "snap/GridSnapCalculator.h"
+#include "snap/SnapPointCalculator.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 #include <cmath>
@@ -393,47 +394,27 @@ LayoutUtils::EdgeHitResult LayoutUtils::hitTestEdge(
     return result;
 }
 
-Point LayoutUtils::calculateSnapPointFromPosition(
+Point LayoutUtils::calculateSnapPointFromRatio(
     const NodeLayout& node,
     NodeEdge edge,
-    float position)
+    float ratio,
+    float gridSize)
 {
-    switch (edge) {
-        case NodeEdge::Top:
-            return {
-                node.position.x + node.size.width * position,
-                node.position.y
-            };
-        case NodeEdge::Bottom:
-            return {
-                node.position.x + node.size.width * position,
-                node.position.y + node.size.height
-            };
-        case NodeEdge::Left:
-            return {
-                node.position.x,
-                node.position.y + node.size.height * position
-            };
-        case NodeEdge::Right:
-            return {
-                node.position.x + node.size.width,
-                node.position.y + node.size.height * position
-            };
-    }
-    return node.center();
+    // Use SnapPointCalculator for grid-aligned calculation (A* standard)
+    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::effectiveGridSize(0.0f);
+    return SnapPointCalculator::calculateFromRatio(node, edge, ratio, effectiveGridSize);
 }
 
 Point LayoutUtils::calculateSnapPoint(
     const NodeLayout& node,
     NodeEdge edge,
     int snapIndex,
-    int totalSnapPoints)
+    int totalSnapPoints,
+    float gridSize)
 {
-    if (totalSnapPoints <= 0) totalSnapPoints = 1;
-    if (snapIndex < 0) snapIndex = 0;
-    if (snapIndex >= totalSnapPoints) snapIndex = totalSnapPoints - 1;
-    float position = static_cast<float>(snapIndex + 1) / static_cast<float>(totalSnapPoints + 1);
-    return calculateSnapPointFromPosition(node, edge, position);
+    // Use SnapPointCalculator for grid-aligned calculation (A* standard)
+    float effectiveGridSize = gridSize > 0.0f ? gridSize : constants::effectiveGridSize(0.0f);
+    return SnapPointCalculator::calculateFromIndex(node, edge, snapIndex, totalSnapPoints, effectiveGridSize);
 }
 
 Point LayoutUtils::calculateEdgeLabelPosition(const EdgeLayout& edge)
@@ -679,7 +660,7 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
 
     // First get a rough position estimate, then convert to grid candidate index
-    Point roughPosition = calculateSnapPointFromPosition(node, newEdge, newPosition_);
+    Point roughPosition = calculateSnapPointFromRatio(node, newEdge, newPosition_, options.gridConfig.cellSize);
 
     // Get the candidate index for this position (will clamp to valid range, excluding corners)
     int newSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
@@ -990,7 +971,7 @@ std::vector<EdgeId> LayoutUtils::redistributeSnapPoints(
         auto edgeIt = edgeLayouts.find(snap.edgeId);
         if (edgeIt == edgeLayouts.end()) continue;
 
-        Point newSnapPos = calculateSnapPointFromPosition(node, edge, snap.position);
+        Point newSnapPos = calculateSnapPointFromRatio(node, edge, snap.position, options.gridConfig.cellSize);
 
         if (snap.isSource) {
             if (edgeIt->second.sourcePoint.x != newSnapPos.x ||

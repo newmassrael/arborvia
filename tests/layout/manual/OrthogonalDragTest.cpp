@@ -20,6 +20,13 @@ protected:
         e3_ = graph_.addEdge(n2_, n3_, "edge3");
     }
 
+    static constexpr float gridSize_ = 20.0f;
+    
+    // Convert Point to GridPoint for dragResult positions (which are in pixels)
+    GridPoint pixelToGrid(const Point& p) const {
+        return GridPoint::fromPixel(p, gridSize_);
+    }
+
     Graph graph_;
     NodeId n1_, n2_, n3_;
     EdgeId e1_, e2_, e3_;
@@ -73,15 +80,16 @@ TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Right);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
 
-    // Create orthogonal path: source(100,25) → bp1(150,25) → bp2(150,225) → target(200,225)
+    // Create orthogonal path: source(100,20) → bp1(160,20) → bp2(160,220) → target(200,220)
     // Horizontal from source, then vertical, then horizontal to target
-    manager.appendBendPoint(e1_, Point{150.0f, 25.0f});   // bp1: horizontal from source
-    manager.appendBendPoint(e1_, Point{150.0f, 225.0f});  // bp2: vertical from bp1
+    // (coordinates snapped to grid: gridSize=20)
+    manager.appendBendPoint(e1_, GridPoint{8, 1}, gridSize_);   // bp1: (160,20) horizontal from source
+    manager.appendBendPoint(e1_, GridPoint{8, 11}, gridSize_);  // bp2: (160,220) vertical from bp1
 
     // Verify initial path is orthogonal
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -102,14 +110,14 @@ TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // Apply the constrained move
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     // Re-apply and check
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     edgeLayout = result.getEdgeLayout(e1_);
     auto afterDragPath = buildPath(*edgeLayout);
@@ -132,14 +140,15 @@ TEST_F(OrthogonalDragTest, Drag_VerticalIncoming_HorizontalConstraint) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Path: source(50,50) → bp1(50,125) → bp2(250,125) → target(250,200)
+    // Path: source(60,60) → bp1(60,120) → bp2(260,120) → target(260,200)
     // Vertical from source, then horizontal, then vertical to target
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});   // bp1: vertical from source
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp2: horizontal from bp1
+    // (coordinates snapped to grid: gridSize=20)
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // bp1: (60,120) vertical from source
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // bp2: (260,120) horizontal from bp1
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -159,13 +168,13 @@ TEST_F(OrthogonalDragTest, Drag_VerticalIncoming_HorizontalConstraint) {
         << "With vertical incoming, X should be constrained to source.x";
 
     // Apply and verify
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     edgeLayout = result.getEdgeLayout(e1_);
     auto path = buildPath(*edgeLayout);
@@ -185,15 +194,15 @@ TEST_F(OrthogonalDragTest, Drag_HorizontalIncoming_VerticalConstraint) {
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
 
     // Horizontal source and target at same Y level
-    // Path with a vertical detour
-    manager.appendBendPoint(e1_, Point{150.0f, 125.0f});  // bp1
-    manager.appendBendPoint(e1_, Point{150.0f, 50.0f});   // bp2: vertical from bp1
-    manager.appendBendPoint(e1_, Point{250.0f, 50.0f});   // bp3: horizontal from bp2
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp4: vertical to target level
+    // Path with a vertical detour (grid-aligned coordinates)
+    manager.appendBendPoint(e1_, GridPoint{8, 6}, gridSize_);   // bp1: (160,120)
+    manager.appendBendPoint(e1_, GridPoint{8, 3}, gridSize_);   // bp2: (160,60) vertical from bp1
+    manager.appendBendPoint(e1_, GridPoint{13, 3}, gridSize_);  // bp3: (260,60) horizontal from bp2
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // bp4: (260,120) vertical to target level
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto path = buildPath(*result.getEdgeLayout(e1_));
     ASSERT_TRUE(isPathOrthogonal(path)) << "Initial 4-bend path should be orthogonal";
@@ -332,16 +341,17 @@ TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Initial orthogonal path: source(50,50) → bp1(50,125) → bp2(250,125) → target(250,200)
-    // Segment 1: vertical (same X=50)
-    // Segment 2: horizontal (same Y=125)
-    // Segment 3: vertical (same X=250)
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});   // bp1
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp2
+    // Initial orthogonal path: source(60,60) → bp1(60,120) → bp2(260,120) → target(260,200)
+    // Segment 1: vertical (same X=60)
+    // Segment 2: horizontal (same Y=120)
+    // Segment 3: vertical (same X=260)
+    // (grid-aligned: gridSize=20)
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // bp1: (60,120)
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // bp2: (260,120)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     ASSERT_NE(edgeLayout, nullptr);
@@ -360,14 +370,14 @@ TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // Apply the drag
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     // Re-layout and verify
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto afterPath = buildPath(*result.getEdgeLayout(e1_));
 
@@ -390,15 +400,16 @@ TEST_F(OrthogonalDragTest, TDD_Drag_MiddlePoint_CascadeAdjustment) {
     manager.setEdgeTargetEdge(e1_, NodeEdge::Left);
 
     // 4 bend points creating a detour path:
-    // source(100,125) → bp1(150,125) → bp2(150,50) → bp3(350,50) → bp4(350,125) → target(400,125)
-    manager.appendBendPoint(e1_, Point{150.0f, 125.0f});  // bp1: horizontal from source
-    manager.appendBendPoint(e1_, Point{150.0f, 50.0f});   // bp2: vertical from bp1
-    manager.appendBendPoint(e1_, Point{350.0f, 50.0f});   // bp3: horizontal from bp2
-    manager.appendBendPoint(e1_, Point{350.0f, 125.0f});  // bp4: vertical from bp3
+    // source(100,120) → bp1(160,120) → bp2(160,60) → bp3(360,60) → bp4(360,120) → target(400,120)
+    // (grid-aligned: gridSize=20)
+    manager.appendBendPoint(e1_, GridPoint{8, 6}, gridSize_);   // bp1: (160,120) horizontal from source
+    manager.appendBendPoint(e1_, GridPoint{8, 3}, gridSize_);   // bp2: (160,60) vertical from bp1
+    manager.appendBendPoint(e1_, GridPoint{18, 3}, gridSize_);  // bp3: (360,60) horizontal from bp2
+    manager.appendBendPoint(e1_, GridPoint{18, 6}, gridSize_);  // bp4: (360,120) vertical from bp3
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto initialPath = buildPath(*result.getEdgeLayout(e1_));
     ASSERT_TRUE(isPathOrthogonal(initialPath)) << "Initial 4-bend path must be orthogonal";
@@ -414,14 +425,14 @@ TEST_F(OrthogonalDragTest, TDD_Drag_MiddlePoint_CascadeAdjustment) {
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, bp3, dragTarget, true, false);
 
     // Apply the drag
-    manager.moveBendPoint(e1_, 1, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 2, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 2, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     // Re-layout and verify
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto afterPath = buildPath(*result.getEdgeLayout(e1_));
 
@@ -446,13 +457,13 @@ TEST_F(OrthogonalDragTest, TDD_Drag_VerifyEachSegment) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Create simple 2-bend orthogonal path
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});
+    // Create simple 2-bend orthogonal path (grid-aligned)
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // (60,120)
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // (260,120)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     Point source = edgeLayout->sourcePoint;
@@ -463,13 +474,13 @@ TEST_F(OrthogonalDragTest, TDD_Drag_VerifyEachSegment) {
     Point dragTarget = {50.0f, 150.0f};
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     edgeLayout = result.getEdgeLayout(e1_);
     auto path = buildPath(*edgeLayout);
@@ -496,8 +507,8 @@ TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    manager.appendBendPoint(e1_, Point{50.0f, 100.0f});
-    manager.appendBendPoint(e1_, Point{250.0f, 100.0f});
+    manager.appendBendPoint(e1_, GridPoint{3, 5}, gridSize_);   // (60,100)
+    manager.appendBendPoint(e1_, GridPoint{13, 5}, gridSize_);  // (260,100)
 
     SugiyamaLayout layout;
 
@@ -512,7 +523,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
 
     for (size_t i = 0; i < dragPositions.size(); ++i) {
         LayoutResult result = layout.layout(graph_);
-        manager.applyManualState(result, graph_);
+        manager.applyManualState(result, graph_, gridSize_);
 
         const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
         Point source = edgeLayout->sourcePoint;
@@ -521,15 +532,15 @@ TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
 
         auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragPositions[i], true, false);
 
-        manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+        manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
         if (dragResult.nextAdjusted) {
-            manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+            manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
         }
     }
 
     // Final verification
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto finalPath = buildPath(*result.getEdgeLayout(e1_));
     EXPECT_TRUE(isPathOrthogonal(finalPath))
@@ -547,13 +558,14 @@ TEST_F(OrthogonalDragTest, TDD_SourceMismatch_DetectsNonOrthogonal) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // Add bend points at positions that assume source is at (50, 50)
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});
+    // Add bend points at positions that assume source is at (60, 60)
+    // (grid-aligned: gridSize=20)
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // (60,120)
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // (260,120)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     Point source = edgeLayout->sourcePoint;
@@ -593,7 +605,7 @@ TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
 
     // Step 1: Get initial layout to find source/target positions
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     Point source = edgeLayout->sourcePoint;
@@ -616,15 +628,15 @@ TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
         bp2 = {target.x, clickPos.y};
     }
 
-    manager.appendBendPoint(e1_, bp1);
-    manager.appendBendPoint(e1_, bp2);
+    manager.appendBendPoint(e1_, GridPoint::fromPixel(bp1, gridSize_), gridSize_);
+    manager.appendBendPoint(e1_, GridPoint::fromPixel(bp2, gridSize_), gridSize_);
 
     std::cout << "Inserted BP1: (" << bp1.x << "," << bp1.y << ")\n";
     std::cout << "Inserted BP2: (" << bp2.x << "," << bp2.y << ")\n";
 
     // Step 3: Apply and verify initial orthogonality
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     edgeLayout = result.getEdgeLayout(e1_);
     auto pathAfterInsert = buildPath(*edgeLayout);
@@ -643,14 +655,14 @@ TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
     Point dragTarget = {bp1.x + 30, bp1.y + 20};
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
 
     // Step 5: Verify after drag
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto pathAfterDrag = buildPath(*result.getEdgeLayout(e1_));
 
@@ -673,7 +685,7 @@ TEST_F(OrthogonalDragTest, TDD_SourceConsistency_BetweenLayouts) {
 
     // First layout
     LayoutResult result1 = layout.layout(graph_);
-    manager.applyManualState(result1, graph_);
+    manager.applyManualState(result1, graph_, gridSize_);
     const EdgeLayout* edge1 = result1.getEdgeLayout(e1_);
     Point source1 = edge1->sourcePoint;
     Point target1 = edge1->targetPoint;
@@ -681,12 +693,12 @@ TEST_F(OrthogonalDragTest, TDD_SourceConsistency_BetweenLayouts) {
     // Add bend points based on first layout
     Point bp1 = {source1.x, (source1.y + target1.y) / 2};
     Point bp2 = {target1.x, (source1.y + target1.y) / 2};
-    manager.appendBendPoint(e1_, bp1);
-    manager.appendBendPoint(e1_, bp2);
+    manager.appendBendPoint(e1_, GridPoint::fromPixel(bp1, gridSize_), gridSize_);
+    manager.appendBendPoint(e1_, GridPoint::fromPixel(bp2, gridSize_), gridSize_);
 
     // Second layout (after adding bend points)
     LayoutResult result2 = layout.layout(graph_);
-    manager.applyManualState(result2, graph_);
+    manager.applyManualState(result2, graph_, gridSize_);
     const EdgeLayout* edge2 = result2.getEdgeLayout(e1_);
     Point source2 = edge2->sourcePoint;
     Point target2 = edge2->targetPoint;
@@ -723,12 +735,12 @@ TEST_F(OrthogonalDragTest, TDD_VisualFeedbackBug) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // (60,120)
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // (260,120)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e1_);
     Point source = edgeLayout->sourcePoint;
@@ -745,9 +757,9 @@ TEST_F(OrthogonalDragTest, TDD_VisualFeedbackBug) {
 
     // Update manualManager (correct)
     if (dragResult.nextAdjusted) {
-        manager.moveBendPoint(e1_, 1, dragResult.adjustedNextPos);
+        manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.adjustedNextPos), gridSize_);
     }
-    manager.moveBendPoint(e1_, 0, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
 
     // Get bps AFTER update
     const auto& bps_after = manager.getBendPoints(e1_);
@@ -790,13 +802,13 @@ TEST_F(OrthogonalDragTest, TDD_Drag_LastPoint_NoNextToAdjust) {
     manager.setEdgeSourceEdge(e1_, NodeEdge::Bottom);
     manager.setEdgeTargetEdge(e1_, NodeEdge::Top);
 
-    // 2 bend points
-    manager.appendBendPoint(e1_, Point{50.0f, 125.0f});   // bp1
-    manager.appendBendPoint(e1_, Point{250.0f, 125.0f});  // bp2 (last)
+    // 2 bend points (grid-aligned)
+    manager.appendBendPoint(e1_, GridPoint{3, 6}, gridSize_);   // bp1: (60,120)
+    manager.appendBendPoint(e1_, GridPoint{13, 6}, gridSize_);  // bp2: (260,120) (last)
 
     SugiyamaLayout layout;
     LayoutResult result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     auto initialPath = buildPath(*result.getEdgeLayout(e1_));
     ASSERT_TRUE(isPathOrthogonal(initialPath)) << "Initial path must be orthogonal";
@@ -815,11 +827,11 @@ TEST_F(OrthogonalDragTest, TDD_Drag_LastPoint_NoNextToAdjust) {
     auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, target, dragTarget, false, true);
 
     // Apply the drag (no next bend to adjust)
-    manager.moveBendPoint(e1_, 1, dragResult.newCurrentPos);
+    manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.newCurrentPos), gridSize_);
 
     // Re-layout and verify
     result = layout.layout(graph_);
-    manager.applyManualState(result, graph_);
+    manager.applyManualState(result, graph_, gridSize_);
 
     edgeLayout = result.getEdgeLayout(e1_);
     auto afterPath = buildPath(*edgeLayout);

@@ -1,6 +1,7 @@
 #include "layout/constraints/EdgePathValidityConstraint.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
+#include "snap/SnapPointCalculator.h"
 
 #include "arborvia/common/Logger.h"
 
@@ -19,26 +20,9 @@ Point EdgePathValidityConstraint::calculateSnapPointOnEdge(
     NodeEdge edge,
     int snapIndex) const {
 
-    float x = node.position.x;
-    float y = node.position.y;
-    float w = node.size.width;
-    float h = node.size.height;
-
-    // Calculate position along the edge based on snap index
-    // Snap index 0 is centered, negative is left/up, positive is right/down
-    float offset = static_cast<float>(snapIndex) * gridSize_;
-
-    switch (edge) {
-        case NodeEdge::Top:
-            return {x + w * 0.5f + offset, y};
-        case NodeEdge::Bottom:
-            return {x + w * 0.5f + offset, y + h};
-        case NodeEdge::Left:
-            return {x, y + h * 0.5f + offset};
-        case NodeEdge::Right:
-            return {x + w, y + h * 0.5f + offset};
-    }
-    return {x + w * 0.5f, y + h * 0.5f};
+    // Use SnapPointCalculator for all calculations (Single Source of Truth)
+    int totalSnapPoints = SnapPointCalculator::calculateTotalSnapPoints(node, edge, gridSize_);
+    return SnapPointCalculator::calculateFromIndex(node, edge, snapIndex, totalSnapPoints, gridSize_);
 }
 
 ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx) const {

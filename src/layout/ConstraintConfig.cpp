@@ -74,6 +74,35 @@ ConstraintConfig ConstraintConfig::createDefault(const LayoutOptions* options) {
     ConstraintConfig config;
     config.addDirectionAwareMargin(constants::MIN_NODE_GRID_DISTANCE);
 
+    // ROOT CAUSE ANALYSIS LOG: Compare constraint margin with layout spacing
+    // DirectionAwareMargin requires: MIN_NODE_GRID_DISTANCE * gridSize = 5.0 * gridSize
+    // CoordinateAssignment uses: minLayerSpacing = gridSize * 2.0
+    // If 5.0 * gridSize > gridSize * 2.0 (always true when MIN_NODE_GRID_DISTANCE > 2),
+    // then initial layout WILL violate constraints!
+    if (options) {
+        float gridSize = options->gridConfig.cellSize;
+        float constraintMargin = constants::MIN_NODE_GRID_DISTANCE * gridSize;
+        float layoutSpacing = gridSize * 2.0f;  // CoordinateAssignment's minLayerSpacing
+        LOG_DEBUG("[ConstraintConfig::createDefault] ROOT CAUSE ANALYSIS:");
+        LOG_DEBUG("[ConstraintConfig::createDefault]   MIN_NODE_GRID_DISTANCE={} gridSize={}",
+                  constants::MIN_NODE_GRID_DISTANCE, gridSize);
+        LOG_DEBUG("[ConstraintConfig::createDefault]   constraintMargin (MIN_NODE_GRID_DISTANCE * gridSize) = {} px",
+                  constraintMargin);
+        LOG_DEBUG("[ConstraintConfig::createDefault]   layoutSpacing (CoordinateAssignment minLayerSpacing) = {} px",
+                  layoutSpacing);
+        if (constraintMargin > layoutSpacing) {
+            LOG_DEBUG("[ConstraintConfig::createDefault]   WARNING: constraintMargin ({}) > layoutSpacing ({})!",
+                      constraintMargin, layoutSpacing);
+            LOG_DEBUG("[ConstraintConfig::createDefault]   Initial layout WILL violate constraints by {} px",
+                      constraintMargin - layoutSpacing);
+            LOG_DEBUG("[ConstraintConfig::createDefault]   FIX: Either increase nodeSpacingVertical >= {} or decrease MIN_NODE_GRID_DISTANCE <= 2",
+                      constraintMargin);
+        } else {
+            LOG_DEBUG("[ConstraintConfig::createDefault]   OK: constraintMargin ({}) <= layoutSpacing ({})",
+                      constraintMargin, layoutSpacing);
+        }
+    }
+
     // EdgePathValidity: A* path validation during drag
     // Use DragAlgorithmTraits (Single Source of Truth) to determine if validation is needed
     bool needsPathValidation = options &&

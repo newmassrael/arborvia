@@ -52,27 +52,33 @@ public:
         const Point& segmentEnd,
         Point& outClosestPoint);
 
-    /// Calculate snap point position on a node edge from index
+    /// Calculate grid-aligned snap point position on a node edge from index.
+    /// Uses SnapPointCalculator internally for grid quantization.
     /// @param node The node layout
     /// @param edge Which edge of the node (Top, Bottom, Left, Right)
     /// @param snapIndex Index of the snap point (0-based)
     /// @param totalSnapPoints Total number of snap points on this edge
-    /// @return Calculated snap point position
+    /// @param gridSize Grid cell size for quantization (must be > 0)
+    /// @return Grid-aligned snap point position
     static Point calculateSnapPoint(
         const NodeLayout& node,
         NodeEdge edge,
         int snapIndex,
-        int totalSnapPoints);
+        int totalSnapPoints,
+        float gridSize);
 
-    /// Calculate snap point position on a node edge from relative position
+    /// Calculate grid-aligned snap point position on a node edge from ratio.
+    /// Uses SnapPointCalculator internally for grid quantization.
     /// @param node The node layout
     /// @param edge Which edge of the node (Top, Bottom, Left, Right)
-    /// @param position Relative position along the edge (0.0 to 1.0)
-    /// @return Calculated snap point position
-    static Point calculateSnapPointFromPosition(
+    /// @param ratio Position along the edge (0.0 to 1.0)
+    /// @param gridSize Grid cell size for quantization (must be > 0)
+    /// @return Grid-aligned snap point position
+    static Point calculateSnapPointFromRatio(
         const NodeLayout& node,
         NodeEdge edge,
-        float position);
+        float ratio,
+        float gridSize);
 
     /// Calculate optimal label position for an edge
     /// For edges with bend points: uses the middle of the "main" segment (between bends)

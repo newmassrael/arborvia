@@ -116,7 +116,7 @@ LayoutResult SugiyamaLayout::layout(const Graph& graph) {
 
     // Apply manual edge routings (to override auto-routing if set)
     if (manualManager_) {
-        manualManager_->applyManualEdgeRoutings(state_->result);
+        manualManager_->applyManualEdgeRoutings(state_->result, options_.gridConfig.cellSize);
     }
 
     applyFinalCleanup();
@@ -178,7 +178,7 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
 
     // Apply manual edge routings (to override auto-routing if set)
     if (manualManager_) {
-        manualManager_->applyManualEdgeRoutings(state_->result);
+        manualManager_->applyManualEdgeRoutings(state_->result, options_.gridConfig.cellSize);
     }
 
     applyFinalCleanup();

@@ -60,10 +60,10 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
 
-    /// Calculate edge center point for given node edge
-    static Point calculateEdgeCenter(
+    /// Calculate edge center point for given node edge (grid-aligned using SnapPointCalculator)
+    Point calculateEdgeCenter(
         const NodeLayout& node,
-        NodeEdge edge);
+        NodeEdge edge) const;
 
     /// Predict simple orthogonal path (L-shaped or straight)
     static std::vector<BendPoint> predictOrthogonalPath(

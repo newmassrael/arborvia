@@ -100,7 +100,9 @@ IPathFinder& EdgeRouting::activePathFinder() const {
 // =============================================================================
 
 Point EdgeRouting::calculateSnapPosition(const NodeLayout& node, NodeEdge edge, float position) {
-    return LayoutUtils::calculateSnapPointFromPosition(node, edge, position);
+    // Use LayoutUtils with default gridSize (20.0f) for legacy compatibility
+    // New code should use GridSnapCalculator directly for explicit grid control
+    return LayoutUtils::calculateSnapPointFromRatio(node, edge, position, constants::effectiveGridSize(0.0f));
 }
 
 int EdgeRouting::unifiedToLocalIndex(int unifiedIdx, int offset, int count) {

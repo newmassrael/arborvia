@@ -3,6 +3,7 @@
 #include "../sugiyama/routing/PathIntersection.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
+#include "../snap/SnapPointCalculator.h"
 
 #include "arborvia/common/Logger.h"
 #include <array>
@@ -518,29 +519,8 @@ Point UnifiedRetryChain::calculateSnapPointForRatio(
 
     float gridSize = effectiveGridSize();
 
-    // Calculate edge length
-    float edgeLength = 0.0f;
-    if (edge == NodeEdge::Top || edge == NodeEdge::Bottom) {
-        edgeLength = node.size.width;
-    } else {
-        edgeLength = node.size.height;
-    }
-
-    // Calculate position from ratio
-    Point position;
-    if (edge == NodeEdge::Top) {
-        position = {node.position.x + edgeLength * ratio, node.position.y};
-    } else if (edge == NodeEdge::Bottom) {
-        position = {node.position.x + edgeLength * ratio, node.position.y + node.size.height};
-    } else if (edge == NodeEdge::Left) {
-        position = {node.position.x, node.position.y + edgeLength * ratio};
-    } else {
-        position = {node.position.x + node.size.width, node.position.y + edgeLength * ratio};
-    }
-
-    // Quantize to grid
-    position.x = std::round(position.x / gridSize) * gridSize;
-    position.y = std::round(position.y / gridSize) * gridSize;
+    // Use shared SnapPointCalculator for grid-aligned snap point calculation
+    Point position = SnapPointCalculator::calculateFromRatio(node, edge, ratio, gridSize);
 
     // Get candidate index
     if (outCandidateIndex) {

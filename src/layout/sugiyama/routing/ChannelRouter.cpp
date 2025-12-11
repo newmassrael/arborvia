@@ -6,6 +6,7 @@
 #include "arborvia/layout/api/IPathFinder.h"
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
+#include "../../snap/SnapPointCalculator.h"
 
 // Include full definitions of structs from EdgeRouting.h
 #include "EdgeRouting.h"
@@ -336,42 +337,82 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     bool isVertical = (options.direction == Direction::TopToBottom ||
                        options.direction == Direction::BottomToTop);
 
+    float gridSize = options.gridConfig.cellSize;
+
     if (isVertical) {
         // Vertical layout: source bottom, target top
+        // Use SnapPointCalculator for grid-aligned snap points (A* standard)
         if (fromCenter.y < toCenter.y) {
-            layout.sourcePoint = {fromCenter.x, fromLayout.position.y + fromLayout.size.height};
-            layout.targetPoint = {toCenter.x, toLayout.position.y};
             layout.sourceEdge = NodeEdge::Bottom;
             layout.targetEdge = NodeEdge::Top;
+            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+                fromLayout, NodeEdge::Bottom, 0.5f, gridSize);
+            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+                toLayout, NodeEdge::Top, 0.5f, gridSize);
         } else {
-            layout.sourcePoint = {fromCenter.x, fromLayout.position.y};
-            layout.targetPoint = {toCenter.x, toLayout.position.y + toLayout.size.height};
             layout.sourceEdge = NodeEdge::Top;
             layout.targetEdge = NodeEdge::Bottom;
+            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+                fromLayout, NodeEdge::Top, 0.5f, gridSize);
+            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+                toLayout, NodeEdge::Bottom, 0.5f, gridSize);
         }
 
         // Store channel Y for recalculation (already grid-aligned from computeChannelY)
         layout.channelY = channel.yPosition;
     } else {
         // Horizontal layout: source right, target left
+        // Use SnapPointCalculator for grid-aligned snap points (A* standard)
         if (fromCenter.x < toCenter.x) {
-            layout.sourcePoint = {fromLayout.position.x + fromLayout.size.width, fromCenter.y};
-            layout.targetPoint = {toLayout.position.x, toCenter.y};
             layout.sourceEdge = NodeEdge::Right;
             layout.targetEdge = NodeEdge::Left;
+            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+                fromLayout, NodeEdge::Right, 0.5f, gridSize);
+            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+                toLayout, NodeEdge::Left, 0.5f, gridSize);
         } else {
-            layout.sourcePoint = {fromLayout.position.x, fromCenter.y};
-            layout.targetPoint = {toLayout.position.x + toLayout.size.width, toCenter.y};
             layout.sourceEdge = NodeEdge::Left;
             layout.targetEdge = NodeEdge::Right;
+            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+                fromLayout, NodeEdge::Left, 0.5f, gridSize);
+            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+                toLayout, NodeEdge::Right, 0.5f, gridSize);
         }
 
         // Store channel X (stored in channelY field, already grid-aligned from computeChannelY)
         layout.channelY = channel.yPosition;
     }
 
+    // ROOT CAUSE ANALYSIS: Check if snap points are on grid vertices
+    // ARCHITECTURE PROBLEM: ChannelRouter uses center.x directly without grid quantization,
+    // while UnifiedRetryChain::calculateSnapPointForRatio does quantize to grid.
+    // This inconsistency causes snap points to be off-grid in ChannelRouter path.
+    if (gridSize > 0) {
+        bool srcOnGridX = (std::fmod(layout.sourcePoint.x, gridSize) == 0.0f);
+        bool srcOnGridY = (std::fmod(layout.sourcePoint.y, gridSize) == 0.0f);
+        bool tgtOnGridX = (std::fmod(layout.targetPoint.x, gridSize) == 0.0f);
+        bool tgtOnGridY = (std::fmod(layout.targetPoint.y, gridSize) == 0.0f);
+
+        if (!srcOnGridX || !srcOnGridY) {
+            LOG_DEBUG("[ChannelRouter] SNAP POINT OFF-GRID: edge {} src=({},{}) gridSize={} remainder=({},{})",
+                      edge.id, layout.sourcePoint.x, layout.sourcePoint.y, gridSize,
+                      std::fmod(layout.sourcePoint.x, gridSize), std::fmod(layout.sourcePoint.y, gridSize));
+            LOG_DEBUG("[ChannelRouter]   fromCenter=({},{}) fromLayout.pos=({},{}) fromLayout.size=({},{})",
+                      fromCenter.x, fromCenter.y, fromLayout.position.x, fromLayout.position.y,
+                      fromLayout.size.width, fromLayout.size.height);
+        }
+        if (!tgtOnGridX || !tgtOnGridY) {
+            LOG_DEBUG("[ChannelRouter] SNAP POINT OFF-GRID: edge {} tgt=({},{}) gridSize={} remainder=({},{})",
+                      edge.id, layout.targetPoint.x, layout.targetPoint.y, gridSize,
+                      std::fmod(layout.targetPoint.x, gridSize), std::fmod(layout.targetPoint.y, gridSize));
+            LOG_DEBUG("[ChannelRouter]   toCenter=({},{}) toLayout.pos=({},{}) toLayout.size=({},{})",
+                      toCenter.x, toCenter.y, toLayout.position.x, toLayout.position.y,
+                      toLayout.size.width, toLayout.size.height);
+        }
+    }
+
     // Calculate bend points
-    float gridSize = options.gridConfig.cellSize;
+    // gridSize already declared above
     if (allNodeLayouts) {
         calculateBendPoints(layout, *allNodeLayouts, gridSize);
     } else {

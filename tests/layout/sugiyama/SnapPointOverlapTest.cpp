@@ -22,7 +22,7 @@ protected:
     // Helper: Calculate snap point position on node edge
     Point calculateSnapPoint(const NodeLayout& node, NodeEdge edge, int snapIndex, int totalCount) {
         float position = SnapIndexManager::calculatePosition(snapIndex, totalCount, {0.0f, 1.0f});
-        return LayoutUtils::calculateSnapPointFromPosition(node, edge, position);
+        return LayoutUtils::calculateSnapPointFromRatio(node, edge, position, gridSize_);
     }
 
     // Helper: Calculate snap point with grid snapping (OLD behavior - may cause overlaps)

@@ -34,28 +34,31 @@ public:
     EdgeRoutingConfig getEdgeRouting(EdgeId id) const;
     bool hasEdgeRouting(EdgeId id) const;
 
-    // Bend point management
-    void addBendPoint(EdgeId edgeId, size_t index, const Point& position);
-    void appendBendPoint(EdgeId edgeId, const Point& position);
+    // Bend point management (GridPoint API - ensures grid alignment)
+    // gridSize is required for converting GridPoint to pixel coordinates
+    void addBendPoint(EdgeId edgeId, size_t index, const GridPoint& gridPosition, float gridSize);
+    void appendBendPoint(EdgeId edgeId, const GridPoint& gridPosition, float gridSize);
     void removeBendPoint(EdgeId edgeId, size_t index);
-    void moveBendPoint(EdgeId edgeId, size_t index, const Point& position);
+    void moveBendPoint(EdgeId edgeId, size_t index, const GridPoint& gridPosition, float gridSize);
     const std::vector<BendPoint>& getBendPoints(EdgeId edgeId) const;
     bool hasManualBendPoints(EdgeId edgeId) const;
     void clearBendPoints(EdgeId edgeId);
-    void setBendPoints(EdgeId edgeId, const std::vector<BendPoint>& points);
+    void setBendPoints(EdgeId edgeId, const std::vector<GridPoint>& gridPositions, float gridSize);
 
     /// Clear all edge routing configurations (snap edges and indices).
     /// Use this before re-routing to allow fresh routing from algorithm.
     void clearAllEdgeRoutings();
 
     // Apply manual state to layout result (node positions + edge routings)
-    void applyManualState(LayoutResult& result, const Graph& graph) const;
+    // @param gridSize Grid cell size for snap point quantization (must be > 0)
+    void applyManualState(LayoutResult& result, const Graph& graph, float gridSize) const;
 
     // Apply only manual node positions (call before edge routing)
     void applyManualNodePositions(LayoutResult& result) const;
 
     // Apply only manual edge routings (call after edge routing)
-    void applyManualEdgeRoutings(LayoutResult& result) const;
+    // @param gridSize Grid cell size for snap point quantization (must be > 0)
+    void applyManualEdgeRoutings(LayoutResult& result, float gridSize) const;
 
     // Capture current layout as manual state
     void captureFromResult(const LayoutResult& result);

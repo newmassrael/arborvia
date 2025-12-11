@@ -163,7 +163,7 @@ struct OptimizationOptions {
     DragAlgorithm dragAlgorithm = DragAlgorithm::HideUntilDrop;
 
     /// Algorithm to use after drag completes (final optimization)
-    /// AStar produces optimal obstacle-avoiding paths
+    /// AStar produces optimal paths, Geometric is faster but less optimal
     PostDragAlgorithm postDragAlgorithm = PostDragAlgorithm::AStar;
 
     /// Enable snap point sorting by other node position

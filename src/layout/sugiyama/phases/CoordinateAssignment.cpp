@@ -1,6 +1,7 @@
 #include "CoordinateAssignment.h"
 
 #include <algorithm>
+#include <arborvia/common/Logger.h>
 
 namespace arborvia {
 
@@ -59,6 +60,11 @@ void SimpleCoordinateAssignment::simpleAssignment(
     const float minLayerSpacing = gridSize * 2.0f;  // Minimum gap for edge routing channel
     const float effectiveVerticalSpacing = std::max(options.nodeSpacingVertical, minLayerSpacing);
     const float effectiveHorizontalSpacing = std::max(options.nodeSpacingHorizontal, gridSize);
+
+    LOG_DEBUG("[CoordinateAssignment] gridSize={} minLayerSpacing={} effectiveVerticalSpacing={} effectiveHorizontalSpacing={}",
+              gridSize, minLayerSpacing, effectiveVerticalSpacing, effectiveHorizontalSpacing);
+    LOG_DEBUG("[CoordinateAssignment] nodeSpacingVertical={} nodeSpacingHorizontal={} horizontal={}",
+              options.nodeSpacingVertical, options.nodeSpacingHorizontal, horizontal);
 
     float currentLayerPos = 0.0f;
 
@@ -121,10 +127,52 @@ void SimpleCoordinateAssignment::simpleAssignment(
             }
 
             result.positions[node] = pos;
+            LOG_DEBUG("[CoordinateAssignment] node {} pos=({},{}) size=({},{})",
+                      node, pos.x, pos.y, size.width, size.height);
         }
 
+        LOG_DEBUG("[CoordinateAssignment] layer {} done, layerHeight={} nextLayerPos={}",
+                  layerIdx, layerHeight, currentLayerPos + layerHeight + effectiveVerticalSpacing);
         // Move to next layer with minimum spacing for edge routing
         currentLayerPos += layerHeight + effectiveVerticalSpacing;
+    }
+
+    // Log final node distances for constraint validation analysis
+    LOG_DEBUG("[CoordinateAssignment] === FINAL NODE DISTANCES ===");
+    for (const auto& [nodeA, posA] : result.positions) {
+        auto itA = nodeSizes.find(nodeA);
+        Size sizeA = (itA != nodeSizes.end()) ? itA->second : options.defaultNodeSize;
+        
+        for (const auto& [nodeB, posB] : result.positions) {
+            if (nodeA >= nodeB) continue;  // Skip self and duplicates
+            
+            auto itB = nodeSizes.find(nodeB);
+            Size sizeB = (itB != nodeSizes.end()) ? itB->second : options.defaultNodeSize;
+            
+            // Calculate actual gap between nodes
+            float gapX = 0.0f, gapY = 0.0f;
+            
+            // X gap
+            float rightA = posA.x + sizeA.width;
+            float rightB = posB.x + sizeB.width;
+            if (posA.x > rightB) {
+                gapX = posA.x - rightB;
+            } else if (posB.x > rightA) {
+                gapX = posB.x - rightA;
+            }
+            
+            // Y gap
+            float bottomA = posA.y + sizeA.height;
+            float bottomB = posB.y + sizeB.height;
+            if (posA.y > bottomB) {
+                gapY = posA.y - bottomB;
+            } else if (posB.y > bottomA) {
+                gapY = posB.y - bottomA;
+            }
+            
+            LOG_DEBUG("[CoordinateAssignment] node {} <-> node {}: gapX={} gapY={} (gridUnits: {}, {})",
+                      nodeA, nodeB, gapX, gapY, gapX / gridSize, gapY / gridSize);
+        }
     }
 }
 

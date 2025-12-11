@@ -2,6 +2,7 @@
 #include "arborvia/common/Logger.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
+#include "snap/SnapPointCalculator.h"
 
 #include <cmath>
 #include <queue>
@@ -260,51 +261,9 @@ Point PositionFinder::calculateSnapPointOnEdge(
     NodeEdge edge,
     int snapIndex) const {
 
-    // Calculate position based on snap index
-    // This is a simplified version - should match GridSnapCalculator logic
-    float edgeLength;
-    Point basePoint;
-
-    switch (edge) {
-        case NodeEdge::Top:
-            edgeLength = node.size.width;
-            basePoint = node.position;
-            break;
-        case NodeEdge::Bottom:
-            edgeLength = node.size.width;
-            basePoint = {node.position.x, node.position.y + node.size.height};
-            break;
-        case NodeEdge::Left:
-            edgeLength = node.size.height;
-            basePoint = node.position;
-            break;
-        case NodeEdge::Right:
-            edgeLength = node.size.height;
-            basePoint = {node.position.x + node.size.width, node.position.y};
-            break;
-    }
-
-    // Calculate candidate count (excluding corners)
-    int candidateCount = static_cast<int>(edgeLength / config_.gridSize) - 1;
-    if (candidateCount < 1) candidateCount = 1;
-
-    // Clamp snap index
-    if (snapIndex < 0) snapIndex = 0;
-    if (snapIndex >= candidateCount) snapIndex = candidateCount - 1;
-
-    // Calculate position
-    float offset = config_.gridSize * (snapIndex + 1);
-
-    switch (edge) {
-        case NodeEdge::Top:
-        case NodeEdge::Bottom:
-            return {basePoint.x + offset, basePoint.y};
-        case NodeEdge::Left:
-        case NodeEdge::Right:
-            return {basePoint.x, basePoint.y + offset};
-    }
-
-    return basePoint;
+    // Use SnapPointCalculator for all calculations (Single Source of Truth)
+    int totalSnapPoints = SnapPointCalculator::calculateTotalSnapPoints(node, edge, config_.gridSize);
+    return SnapPointCalculator::calculateFromIndex(node, edge, snapIndex, totalSnapPoints, config_.gridSize);
 }
 
 }  // namespace arborvia
