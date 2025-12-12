@@ -6,6 +6,7 @@
 #include "../../snap/GridSnapCalculator.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/layout/api/IEdgePenalty.h"
+#include "arborvia/layout/constraints/SegmentObstacleProvider.h"
 
 #include <algorithm>
 #include "arborvia/common/Logger.h"
@@ -407,8 +408,9 @@ std::vector<std::pair<NodeId, NodeLayout>> GeometricEdgeOptimizer::findColliding
     const Point& p1,
     const Point& p2,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    NodeId excludeSource,
-    NodeId excludeTarget) {
+    NodeId sourceNode,
+    NodeId targetNode,
+    SegmentPosition segmentPos) {
 
     std::vector<std::pair<NodeId, NodeLayout>> colliding;
 
@@ -419,8 +421,12 @@ std::vector<std::pair<NodeId, NodeLayout>> GeometricEdgeOptimizer::findColliding
     };
 
     for (const auto& [nodeId, node] : nodeLayouts) {
-        // Skip source and target nodes
-        if (nodeId == excludeSource || nodeId == excludeTarget) {
+        // Use SegmentObstacleProvider for consistent exclusion logic (Single Source of Truth)
+        // - First segment: only source node excluded
+        // - Middle segment: no exclusions (all nodes checked including src/tgt)
+        // - Last segment: only target node excluded
+        if (SegmentObstacleProvider::shouldExcludeNode(
+                nodeId, sourceNode, targetNode, segmentPos)) {
             continue;
         }
 
@@ -519,9 +525,17 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
     
     // Helper: check if a horizontal line at Y would intersect any obstacle
     // when the vertical segments from source/target to that Y are considered
+    // Check if horizontal segment at midY would intersect any obstacle
+    // This is for MIDDLE segments of Z-path, so use SegmentPosition::Middle
+    // which means NO nodes are excluded - source/target must also be avoided
     auto yIntersectsObstacle = [&](float midY) -> const NodeLayout* {
         for (const auto& [nodeId, node] : nodeLayouts) {
-            if (nodeId == sourceNodeId || nodeId == targetNodeId) continue;
+            // Use SegmentObstacleProvider for consistent exclusion logic
+            // Middle segments must check ALL nodes including source/target
+            if (SegmentObstacleProvider::shouldExcludeNode(
+                    nodeId, sourceNodeId, targetNodeId, SegmentPosition::Middle)) {
+                continue;
+            }
             
             float nodeYmin = node.position.y;
             float nodeYmax = node.position.y + node.size.height;

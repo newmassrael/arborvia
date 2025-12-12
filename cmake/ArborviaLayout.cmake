@@ -67,6 +67,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/constraints/ConstraintViolation.cpp
     src/layout/constraints/ConstraintRegistry.cpp
     src/layout/constraints/ConstraintGateway.cpp
+    src/layout/constraints/SegmentObstacleProvider.cpp
     src/layout/constraints/builtins/OrthogonalityConstraint.cpp
     src/layout/constraints/builtins/NodePenetrationConstraint.cpp
     src/layout/constraints/builtins/DirectionalPenetrationConstraint.cpp

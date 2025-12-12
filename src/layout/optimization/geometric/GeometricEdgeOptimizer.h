@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arborvia/layout/api/IEdgeOptimizer.h"
+#include "arborvia/layout/constraints/SegmentObstacleProvider.h"
 #include "../../sugiyama/routing/PathIntersection.h"
 #include "../../sugiyama/routing/EdgeRoutingUtils.h"
 
@@ -101,12 +102,17 @@ private:
         NodeId targetNodeId);
 
     /// Find nodes that collide with a path segment
+    /// @param segmentPos Position of segment in path (First/Middle/Last)
+    ///        - First: excludes source node only
+    ///        - Middle: excludes no nodes (checks all including src/tgt)
+    ///        - Last: excludes target node only
     std::vector<std::pair<NodeId, NodeLayout>> findCollidingNodes(
         const Point& p1,
         const Point& p2,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        NodeId excludeSource,
-        NodeId excludeTarget);
+        NodeId sourceNode,
+        NodeId targetNode,
+        SegmentPosition segmentPos = SegmentPosition::Middle);
 
     /// Create detour path around an obstacle
     /// @param source Start point of segment
