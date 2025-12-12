@@ -276,17 +276,7 @@ struct LayoutOptions {
         constraintConfig = ConstraintConfig::createEmpty().addDirectionAwareMargin(gridUnits);
         return *this;
     }
-    /// @deprecated Use setDragAlgorithm() and setPostDragAlgorithm() instead
-    LayoutOptions& setUseGreedyOptimizer(bool enabled) {
-        if (enabled) {
-            optimizationOptions.dragAlgorithm = DragAlgorithm::Geometric;
-            optimizationOptions.postDragAlgorithm = PostDragAlgorithm::AStar;
-        } else {
-            optimizationOptions.dragAlgorithm = DragAlgorithm::None;
-            optimizationOptions.postDragAlgorithm = PostDragAlgorithm::None;
-        }
-        return *this;
-    }
+
     LayoutOptions& setDragAlgorithm(DragAlgorithm algo) {
         optimizationOptions.dragAlgorithm = algo;
         return *this;

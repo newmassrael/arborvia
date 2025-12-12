@@ -207,8 +207,6 @@ public:
         int end,
         int count,
         std::vector<int>& outPositions);
-
-    // NOTE: getEffectiveGridSize() moved to constants::effectiveGridSize() in GeometryUtils.h
 };
 
 }  // namespace arborvia
