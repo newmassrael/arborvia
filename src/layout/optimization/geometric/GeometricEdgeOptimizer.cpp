@@ -26,19 +26,22 @@ namespace {
     constexpr float DEFAULT_OBSTACLE_MARGIN = 15.0f;
 }
 
-GeometricEdgeOptimizer::GeometricEdgeOptimizer(float gridSize)
-    : gridSize_(gridSize) {
-    // Ensure penalty system is set
-    if (!penaltySystem()) {
-        setPenaltySystem(EdgePenaltySystem::createDefault());
-    }
-}
+// Default constructor - penalty system is set lazily in optimize() if needed
 
 std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
     const std::vector<EdgeId>& edges,
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSize,
     const std::unordered_set<NodeId>& movedNodes) {
+
+    // Store gridSize for use in helper methods
+    gridSize_ = constants::effectiveGridSize(gridSize);
+    
+    // Ensure penalty system is set
+    if (!penaltySystem()) {
+        setPenaltySystem(EdgePenaltySystem::createDefault());
+    }
 
     // Store constraint state in base class for FixedEndpointPenalty
     setConstraintState(currentLayouts, movedNodes);
@@ -561,66 +564,72 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
         return nullptr;
     };
     
-    // Compute obstacle-aware orthogonal path
-    // Instead of using simple midY, find a Y that doesn't intersect obstacles
-    float dx = target.x - source.x;
-    float dy = target.y - source.y;
-    
+    // Compute obstacle-aware orthogonal path using grid-based calculations
     bool srcHorizontal = (sourceEdge == NodeEdge::Top || sourceEdge == NodeEdge::Bottom);
     bool tgtHorizontal = (targetEdge == NodeEdge::Top || targetEdge == NodeEdge::Bottom);
     
     if (srcHorizontal == tgtHorizontal) {
         if (srcHorizontal) {
             // Both horizontal: need to go vertical first
-            // Find a midY that doesn't intersect obstacles
-            float midY = source.y + dy * 0.5f;
-            
+            // Find a midY that doesn't intersect obstacles (grid-based calculation)
+            auto srcGrid = GridPoint::fromPixel(source, gridSize_);
+            auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
+            int midYGrid = (srcGrid.y + tgtGrid.y) / 2;
+
             // Check if midY intersects any obstacle
+            float midY = midYGrid * gridSize_;
             if (const NodeLayout* obstacle = yIntersectsObstacle(midY)) {
-                // Try above or below the obstacle
-                float margin = DEFAULT_OBSTACLE_MARGIN;
-                float aboveY = obstacle->position.y - margin;
-                float belowY = obstacle->position.y + obstacle->size.height + margin;
-                
-                // Pick the one closer to midY
-                if (std::abs(midY - aboveY) < std::abs(midY - belowY)) {
-                    midY = aboveY;
+                // Try above or below the obstacle (grid-aligned)
+                int marginCells = grid::pixelToCells(DEFAULT_OBSTACLE_MARGIN, gridSize_);
+                auto obsGrid = GridPoint::fromPixel(obstacle->position, gridSize_);
+                int obsHeightCells = grid::pixelToCells(obstacle->size.height, gridSize_);
+                int aboveYGrid = obsGrid.y - marginCells;
+                int belowYGrid = obsGrid.y + obsHeightCells + marginCells;
+
+                // Pick the one closer to midY (in grid units)
+                if (std::abs(midYGrid - aboveYGrid) < std::abs(midYGrid - belowYGrid)) {
+                    midYGrid = aboveYGrid;
                 } else {
-                    midY = belowY;
+                    midYGrid = belowYGrid;
                 }
             }
-            
-            path.push_back({source.x, midY});
-            path.push_back({target.x, midY});
+
+            // Convert to pixel at final output
+            float finalMidY = midYGrid * gridSize_;
+            path.push_back({source.x, finalMidY});
+            path.push_back({target.x, finalMidY});
         } else {
-            // Both vertical: need to go horizontal first
-            float midX = source.x + dx * 0.5f;
-            
+            // Both vertical: need to go horizontal first (grid-based calculation)
+            auto srcGrid = GridPoint::fromPixel(source, gridSize_);
+            auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
+            int midXGrid = (srcGrid.x + tgtGrid.x) / 2;
+            float midX = midXGrid * gridSize_;
+
             // Check if midX or the horizontal segments would intersect any obstacle
             for (const auto& [nodeId, node] : nodeLayouts) {
                 if (nodeId == sourceNodeId || nodeId == targetNodeId) continue;
-                
+
                 float nodeXmin = node.position.x;
                 float nodeXmax = node.position.x + node.size.width;
                 float nodeYmin = node.position.y;
                 float nodeYmax = node.position.y + node.size.height;
-                
+
                 // Check if the vertical line at midX passes through node's X range
                 bool midXInNode = (midX >= nodeXmin && midX <= nodeXmax);
-                
+
                 // Check if horizontal segments from source/target to midX would hit node
                 float srcXmin = std::min(source.x, midX);
                 float srcXmax = std::max(source.x, midX);
                 bool srcSegmentHitsX = (srcXmax >= nodeXmin && srcXmin <= nodeXmax);
                 bool srcSegmentHitsY = (source.y >= nodeYmin && source.y <= nodeYmax);
-                
+
                 float tgtXmin = std::min(target.x, midX);
                 float tgtXmax = std::max(target.x, midX);
                 bool tgtSegmentHitsX = (tgtXmax >= nodeXmin && tgtXmin <= nodeXmax);
                 bool tgtSegmentHitsY = (target.y >= nodeYmin && target.y <= nodeYmax);
-                
+
                 bool wouldIntersect = false;
-                
+
                 // Vertical segment at midX from source.y to target.y
                 if (midXInNode) {
                     float yMin = std::min(source.y, target.y);
@@ -629,7 +638,7 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
                         wouldIntersect = true;
                     }
                 }
-                
+
                 // Horizontal segments
                 if (srcSegmentHitsX && srcSegmentHitsY) {
                     wouldIntersect = true;
@@ -637,22 +646,27 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
                 if (tgtSegmentHitsX && tgtSegmentHitsY) {
                     wouldIntersect = true;
                 }
-                
+
                 if (wouldIntersect) {
-                    // Path would intersect, adjust midX
-                    float margin = DEFAULT_OBSTACLE_MARGIN;
-                    float leftX = nodeXmin - margin;
-                    float rightX = nodeXmax + margin;
-                    
-                    if (std::abs(midX - leftX) < std::abs(midX - rightX)) {
-                        midX = leftX;
+                    // Path would intersect, adjust midX (grid-aligned)
+                    int marginCells = grid::pixelToCells(DEFAULT_OBSTACLE_MARGIN, gridSize_);
+                    auto nodeGrid = GridPoint::fromPixel(node.position, gridSize_);
+                    int nodeWidthCells = grid::pixelToCells(node.size.width, gridSize_);
+                    int leftXGrid = nodeGrid.x - marginCells;
+                    int rightXGrid = nodeGrid.x + nodeWidthCells + marginCells;
+
+                    if (std::abs(midXGrid - leftXGrid) < std::abs(midXGrid - rightXGrid)) {
+                        midXGrid = leftXGrid;
                     } else {
-                        midX = rightX;
+                        midXGrid = rightXGrid;
                     }
+                    midX = midXGrid * gridSize_;
                     break;
                 }
             }
-            
+
+            LOG_DEBUG("[createPath] Both vertical: midX={} (grid={}) src=({},{}) tgt=({},{})",
+                      midX, midXGrid, source.x, source.y, target.x, target.y);
             path.push_back({midX, source.y});
             path.push_back({midX, target.y});
         }
@@ -713,12 +727,17 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
                 continue;
             }
 
-            // === Create Orthogonal Detour - Try All 4 Directions ===
-            float margin = DEFAULT_OBSTACLE_MARGIN;
-            float obsLeft = closestObstacle->position.x - margin;
-            float obsRight = closestObstacle->position.x + closestObstacle->size.width + margin;
-            float obsTop = closestObstacle->position.y - margin;
-            float obsBottom = closestObstacle->position.y + closestObstacle->size.height + margin;
+            // === Create Orthogonal Detour - Try All 4 Directions (grid-aligned) ===
+            int marginCells = grid::pixelToCells(DEFAULT_OBSTACLE_MARGIN, gridSize_);
+            auto obsGrid = GridPoint::fromPixel(closestObstacle->position, gridSize_);
+            int obsWidthCells = grid::pixelToCells(closestObstacle->size.width, gridSize_);
+            int obsHeightCells = grid::pixelToCells(closestObstacle->size.height, gridSize_);
+            float obsLeft = (obsGrid.x - marginCells) * gridSize_;
+            float obsRight = (obsGrid.x + obsWidthCells + marginCells) * gridSize_;
+            float obsTop = (obsGrid.y - marginCells) * gridSize_;
+            float obsBottom = (obsGrid.y + obsHeightCells + marginCells) * gridSize_;
+            LOG_DEBUG("[createPath] Detour: marginCells={} obsGrid=({},{}) obsLeft={} obsRight={} obsTop={} obsBottom={}",
+                      marginCells, obsGrid.x, obsGrid.y, obsLeft, obsRight, obsTop, obsBottom);
 
             // Determine segment type
             bool isHorizontal = std::abs(p1.y - p2.y) < EPSILON;
@@ -893,13 +912,17 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
             bool tgtHorizontal = (targetEdge == NodeEdge::Top || targetEdge == NodeEdge::Bottom);
             
             if (srcHorizontal == tgtHorizontal) {
-                // Same orientation: need Z-path with 2 bends
+                // Same orientation: need Z-path with 2 bends (grid-aligned)
+                auto srcGrid = GridPoint::fromPixel(source, gridSize_);
+                auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
                 if (srcHorizontal) {
-                    float midY = (source.y + target.y) * 0.5f;
+                    int midYGrid = (srcGrid.y + tgtGrid.y) / 2;
+                    float midY = midYGrid * gridSize_;
                     result.push_back({{source.x, midY}});
                     result.push_back({{target.x, midY}});
                 } else {
-                    float midX = (source.x + target.x) * 0.5f;
+                    int midXGrid = (srcGrid.x + tgtGrid.x) / 2;
+                    float midX = midXGrid * gridSize_;
                     result.push_back({{midX, source.y}});
                     result.push_back({{midX, target.y}});
                 }
@@ -939,13 +962,17 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
             bool tgtHoriz = (targetEdge == NodeEdge::Top || targetEdge == NodeEdge::Bottom);
             
             if (srcHoriz == tgtHoriz) {
-                // Same orientation: need Z-path
+                // Same orientation: need Z-path (grid-aligned)
+                auto srcGrid = GridPoint::fromPixel(source, gridSize_);
+                auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
                 if (srcHoriz) {
-                    float midY = (source.y + target.y) * 0.5f;
+                    int midYGrid = (srcGrid.y + tgtGrid.y) / 2;
+                    float midY = midYGrid * gridSize_;
                     result.push_back({{source.x, midY}});
                     result.push_back({{target.x, midY}});
                 } else {
-                    float midX = (source.x + target.x) * 0.5f;
+                    int midXGrid = (srcGrid.x + tgtGrid.x) / 2;
+                    float midX = midXGrid * gridSize_;
                     result.push_back({{midX, source.y}});
                     result.push_back({{midX, target.y}});
                 }
@@ -1010,7 +1037,11 @@ float GeometricEdgeOptimizer::findAlternativeY(
 void GeometricEdgeOptimizer::regenerateBendPoints(
     const std::vector<EdgeId>& edges,
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSize) {
+    
+    // Store gridSize for use in helper methods
+    gridSize_ = constants::effectiveGridSize(gridSize);
 
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);

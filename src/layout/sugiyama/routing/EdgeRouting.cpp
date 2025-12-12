@@ -211,16 +211,16 @@ EdgeRouting::Result EdgeRouting::route(
     // Apply edge optimization if optimizer is injected or postDragAlgorithm is enabled
     IEdgeOptimizer* optimizer = edgeOptimizer_.get();
     std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
+    
+    // Get gridSize from LayoutOptions (single source of truth)
+    const float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
 
     // Use injected optimizer, or create based on postDragAlgorithm
     if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
-        const float gridSize = options.gridConfig.cellSize;
-
         switch (options.optimizationOptions.postDragAlgorithm) {
             case PostDragAlgorithm::AStar: {
                 // Create optimizer with penalty system for unified constraint handling
                 OptimizerConfig config = OptimizerConfig::balanced();
-                config.gridSize = gridSize;
                 config.pathFinder = pathFinder_;  // Share pathfinder with optimizer
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
@@ -228,7 +228,6 @@ EdgeRouting::Result EdgeRouting::route(
             }
             case PostDragAlgorithm::Geometric: {
                 OptimizerConfig config = OptimizerConfig::aggressive();
-                config.gridSize = gridSize;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("Geometric", config);
                 break;
@@ -253,7 +252,7 @@ EdgeRouting::Result EdgeRouting::route(
         }
 
         // Optimize edge layouts (optimizer now calculates actual paths internally)
-        auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts);
+        auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts, gridSize);
 
         // Merge optimized layouts (bend points already calculated by optimizer)
         // IMPORTANT: Preserve snap indices assigned by distributeAutoSnapPoints
@@ -473,20 +472,13 @@ void EdgeRouting::regenerateBendPointsOnly(
     IEdgeOptimizer* optimizer = edgeOptimizer_.get();
     std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
 
-    if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
-        // Single Source of Truth: prefer edge's stored gridSize over options
-        float gridSize = options.gridConfig.cellSize;
-        if (!affectedEdges.empty()) {
-            auto it = edgeLayouts.find(affectedEdges[0]);
-            if (it != edgeLayouts.end() && it->second.usedGridSize > 0.0f) {
-                gridSize = it->second.usedGridSize;
-            }
-        }
+    // Get gridSize from LayoutOptions (single source of truth)
+    float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
 
+    if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
         switch (options.optimizationOptions.postDragAlgorithm) {
             case PostDragAlgorithm::AStar: {
                 OptimizerConfig config = OptimizerConfig::balanced();
-                config.gridSize = gridSize;
                 config.pathFinder = pathFinder_;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
@@ -494,7 +486,6 @@ void EdgeRouting::regenerateBendPointsOnly(
             }
             case PostDragAlgorithm::Geometric: {
                 OptimizerConfig config = OptimizerConfig::aggressive();
-                config.gridSize = gridSize;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("Geometric", config);
                 break;
@@ -513,7 +504,7 @@ void EdgeRouting::regenerateBendPointsOnly(
     // This is the key difference from updateEdgeRoutingWithOptimization:
     // - updateEdgeRoutingWithOptimization: optimizer may change everything
     // - regenerateBendPointsOnly: only bendPoints are recalculated
-    optimizer->regenerateBendPoints(affectedEdges, edgeLayouts, nodeLayouts);
+    optimizer->regenerateBendPoints(affectedEdges, edgeLayouts, nodeLayouts, gridSize);
 
     // Update label positions
     for (EdgeId edgeId : affectedEdges) {

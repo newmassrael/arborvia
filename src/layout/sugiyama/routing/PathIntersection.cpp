@@ -252,11 +252,16 @@ bool hasOverlapWithOthers(
 // =============================================================================
 
 namespace {
-    /// Get detailed overlap between two segments
+    /// Get detailed overlap between two segments (returns grid coordinates)
+    /// @param gridSize Grid cell size for coordinate conversion (if 0, uses 20.0f as fallback)
     /// Returns overlap info if segments overlap on same line
-    OverlapInfo getSegmentOverlapInfo(const Point& a1, const Point& a2,
-                                       const Point& b1, const Point& b2) {
+    OverlapInfo getSegmentOverlapInfoGrid(const Point& a1, const Point& a2,
+                                           const Point& b1, const Point& b2,
+                                           float gridSize) {
         OverlapInfo info;
+
+        // Use 20.0f as fallback when grid is disabled (gridSize == 0)
+        float effectiveGridSize = constants::effectiveGridSize(gridSize);
 
         bool aHorizontal = std::abs(a1.y - a2.y) < EPSILON;
         bool aVertical = std::abs(a1.x - a2.x) < EPSILON;
@@ -276,9 +281,10 @@ namespace {
             if (overlapStart < overlapEnd - EPSILON) {
                 info.found = true;
                 info.isVertical = true;
-                info.sharedCoordinate = a1.x;
-                info.overlapStart = overlapStart;
-                info.overlapEnd = overlapEnd;
+                // Convert to grid coordinates
+                info.sharedGridCoord = static_cast<int>(std::round(a1.x / effectiveGridSize));
+                info.overlapStartGrid = static_cast<int>(std::floor(overlapStart / effectiveGridSize));
+                info.overlapEndGrid = static_cast<int>(std::ceil(overlapEnd / effectiveGridSize));
             }
         }
         // Both horizontal on same Y
@@ -294,9 +300,10 @@ namespace {
             if (overlapStart < overlapEnd - EPSILON) {
                 info.found = true;
                 info.isVertical = false;
-                info.sharedCoordinate = a1.y;
-                info.overlapStart = overlapStart;
-                info.overlapEnd = overlapEnd;
+                // Convert to grid coordinates
+                info.sharedGridCoord = static_cast<int>(std::round(a1.y / effectiveGridSize));
+                info.overlapStartGrid = static_cast<int>(std::floor(overlapStart / effectiveGridSize));
+                info.overlapEndGrid = static_cast<int>(std::ceil(overlapEnd / effectiveGridSize));
             }
         }
 
@@ -307,7 +314,8 @@ namespace {
 OverlapInfo findOverlapInfo(
     const EdgeLayout& candidate,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    EdgeId excludeEdgeId) {
+    EdgeId excludeEdgeId,
+    float gridSize) {
 
     std::vector<std::pair<Point, Point>> candidateSegments;
     candidate.forEachSegment([&](const Point& p1, const Point& p2) {
@@ -326,7 +334,7 @@ OverlapInfo findOverlapInfo(
 
         for (const auto& [a1, a2] : candidateSegments) {
             for (const auto& [b1, b2] : otherSegments) {
-                auto info = getSegmentOverlapInfo(a1, a2, b1, b2);
+                auto info = getSegmentOverlapInfoGrid(a1, a2, b1, b2, gridSize);
                 if (info.found) {
                     return info;
                 }
@@ -337,74 +345,66 @@ OverlapInfo findOverlapInfo(
     return OverlapInfo{};
 }
 
-std::vector<float> findUsedVerticalX(
+std::unordered_set<int> findUsedVerticalGridX(
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float yMin, float yMax) {
+    int yMinGrid, int yMaxGrid,
+    float gridSize) {
 
-    std::vector<float> usedX;
+    std::unordered_set<int> usedGridX;
+
+    // Use 20.0f as fallback when grid is disabled (gridSize == 0)
+    float effectiveGridSize = constants::effectiveGridSize(gridSize);
 
     for (const auto& [edgeId, layout] : assignedLayouts) {
         layout.forEachSegment([&](const Point& p1, const Point& p2) {
             // Check if vertical segment
             if (std::abs(p1.x - p2.x) < EPSILON) {
-                float segMinY = std::min(p1.y, p2.y);
-                float segMaxY = std::max(p1.y, p2.y);
+                // Convert segment Y range to grid
+                int segMinGridY = static_cast<int>(std::floor(std::min(p1.y, p2.y) / effectiveGridSize));
+                int segMaxGridY = static_cast<int>(std::ceil(std::max(p1.y, p2.y) / effectiveGridSize));
 
                 // Check if Y ranges overlap
-                if (segMinY < yMax && segMaxY > yMin) {
-                    // Avoid duplicates
-                    bool found = false;
-                    for (float x : usedX) {
-                        if (std::abs(x - p1.x) < EPSILON) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        usedX.push_back(p1.x);
-                    }
+                if (segMinGridY < yMaxGrid && segMaxGridY > yMinGrid) {
+                    // Convert X to grid and add (set automatically handles duplicates)
+                    int gridX = static_cast<int>(std::round(p1.x / effectiveGridSize));
+                    usedGridX.insert(gridX);
                 }
             }
         });
     }
 
-    std::sort(usedX.begin(), usedX.end());
-    return usedX;
+    return usedGridX;
 }
 
-std::vector<float> findUsedHorizontalY(
+std::unordered_set<int> findUsedHorizontalGridY(
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float xMin, float xMax) {
+    int xMinGrid, int xMaxGrid,
+    float gridSize) {
 
-    std::vector<float> usedY;
+    std::unordered_set<int> usedGridY;
+
+    // Use 20.0f as fallback when grid is disabled (gridSize == 0)
+    float effectiveGridSize = constants::effectiveGridSize(gridSize);
 
     for (const auto& [edgeId, layout] : assignedLayouts) {
         layout.forEachSegment([&](const Point& p1, const Point& p2) {
             // Check if horizontal segment
             if (std::abs(p1.y - p2.y) < EPSILON) {
-                float segMinX = std::min(p1.x, p2.x);
-                float segMaxX = std::max(p1.x, p2.x);
+                // Convert segment X range to grid
+                int segMinGridX = static_cast<int>(std::floor(std::min(p1.x, p2.x) / effectiveGridSize));
+                int segMaxGridX = static_cast<int>(std::ceil(std::max(p1.x, p2.x) / effectiveGridSize));
 
                 // Check if X ranges overlap
-                if (segMinX < xMax && segMaxX > xMin) {
-                    // Avoid duplicates
-                    bool found = false;
-                    for (float y : usedY) {
-                        if (std::abs(y - p1.y) < EPSILON) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        usedY.push_back(p1.y);
-                    }
+                if (segMinGridX < xMaxGrid && segMaxGridX > xMinGrid) {
+                    // Convert Y to grid and add (set automatically handles duplicates)
+                    int gridY = static_cast<int>(std::round(p1.y / effectiveGridSize));
+                    usedGridY.insert(gridY);
                 }
             }
         });
     }
 
-    std::sort(usedY.begin(), usedY.end());
-    return usedY;
+    return usedGridY;
 }
 
 // =============================================================================
@@ -416,8 +416,12 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
     float gridSpacing) {
 
-    // Check if there's any overlap
-    auto overlapInfo = findOverlapInfo(candidate, assignedLayouts, candidate.id);
+    // Use 20.0f as default when grid is disabled (gridSpacing == 0)
+    // This provides a reasonable offset for overlap avoidance
+    float effectiveGridSize = constants::effectiveGridSize(gridSpacing);
+
+    // Check if there's any overlap (returns grid coordinates)
+    auto overlapInfo = findOverlapInfo(candidate, assignedLayouts, candidate.id, effectiveGridSize);
     if (!overlapInfo.found) {
         return candidate.bendPoints;  // No overlap, return as-is
     }
@@ -433,14 +437,21 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
     // Find and adjust the overlapping segment
     std::vector<BendPoint> adjustedBends;
 
+    // Convert shared coordinate to pixel for comparison
+    float sharedPixel = overlapInfo.sharedGridCoord * effectiveGridSize;
+
     if (overlapInfo.isVertical) {
         // Vertical segment overlap - need to change X coordinate
-        float newX = findAlternativeX(
-            overlapInfo.sharedCoordinate,
-            overlapInfo.overlapStart,
-            overlapInfo.overlapEnd,
+        // Use grid-based function to find alternative (guaranteed grid-aligned when grid enabled)
+        int newGridX = findAlternativeGridX(
+            overlapInfo.sharedGridCoord,
+            overlapInfo.overlapStartGrid,
+            overlapInfo.overlapEndGrid,
             assignedLayouts,
-            gridSpacing);
+            effectiveGridSize);
+        
+        // Convert to pixel only at output boundary
+        float newX = newGridX * effectiveGridSize;
 
         // Rebuild bend points with new X
         for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
@@ -448,8 +459,8 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
             const Point& p2 = pathPoints[i + 1];
 
             // Check if this is a vertical segment at the overlapping X
-            if (std::abs(p1.x - overlapInfo.sharedCoordinate) < EPSILON &&
-                std::abs(p2.x - overlapInfo.sharedCoordinate) < EPSILON) {
+            if (std::abs(p1.x - sharedPixel) < EPSILON &&
+                std::abs(p2.x - sharedPixel) < EPSILON) {
                 // This segment needs adjustment - insert offset bend points
                 if (i > 0) {
                     // Not starting from source, add transition to new X
@@ -463,12 +474,16 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
         }
     } else {
         // Horizontal segment overlap - need to change Y coordinate
-        float newY = findAlternativeY(
-            overlapInfo.sharedCoordinate,
-            overlapInfo.overlapStart,
-            overlapInfo.overlapEnd,
+        // Use grid-based function to find alternative (guaranteed grid-aligned when grid enabled)
+        int newGridY = findAlternativeGridY(
+            overlapInfo.sharedGridCoord,
+            overlapInfo.overlapStartGrid,
+            overlapInfo.overlapEndGrid,
             assignedLayouts,
-            gridSpacing);
+            effectiveGridSize);
+        
+        // Convert to pixel only at output boundary
+        float newY = newGridY * effectiveGridSize;
 
         // Rebuild bend points with new Y
         for (size_t i = 0; i < pathPoints.size() - 1; ++i) {
@@ -476,8 +491,8 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
             const Point& p2 = pathPoints[i + 1];
 
             // Check if this is a horizontal segment at the overlapping Y
-            if (std::abs(p1.y - overlapInfo.sharedCoordinate) < EPSILON &&
-                std::abs(p2.y - overlapInfo.sharedCoordinate) < EPSILON) {
+            if (std::abs(p1.y - sharedPixel) < EPSILON &&
+                std::abs(p2.y - sharedPixel) < EPSILON) {
                 // This segment needs adjustment
                 if (i > 0) {
                     adjustedBends.push_back({{p1.x, newY}});
@@ -498,6 +513,65 @@ std::vector<BendPoint> adjustPathToAvoidOverlap(
     return candidate.bendPoints;
 }
 
+int findAlternativeGridX(
+    int originalGridX,
+    int yMinGrid,
+    int yMaxGrid,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSize) {
+
+    // Find all grid X coordinates used by vertical segments in the Y range
+    auto usedGridX = findUsedVerticalGridX(assignedLayouts, yMinGrid, yMaxGrid, gridSize);
+
+    // Try offsets in both directions to find unused grid X
+    for (int offset = 1; offset <= 5; ++offset) {
+        // Try positive offset first
+        int candidateGridX = originalGridX + offset;
+        if (usedGridX.find(candidateGridX) == usedGridX.end()) {
+            return candidateGridX;
+        }
+
+        // Try negative offset
+        candidateGridX = originalGridX - offset;
+        if (usedGridX.find(candidateGridX) == usedGridX.end()) {
+            return candidateGridX;
+        }
+    }
+
+    // Fallback: use +1 offset
+    return originalGridX + 1;
+}
+
+int findAlternativeGridY(
+    int originalGridY,
+    int xMinGrid,
+    int xMaxGrid,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+    float gridSize) {
+
+    // Find all grid Y coordinates used by horizontal segments in the X range
+    auto usedGridY = findUsedHorizontalGridY(assignedLayouts, xMinGrid, xMaxGrid, gridSize);
+
+    // Try offsets in both directions to find unused grid Y
+    for (int offset = 1; offset <= 5; ++offset) {
+        // Try positive offset first
+        int candidateGridY = originalGridY + offset;
+        if (usedGridY.find(candidateGridY) == usedGridY.end()) {
+            return candidateGridY;
+        }
+
+        // Try negative offset
+        candidateGridY = originalGridY - offset;
+        if (usedGridY.find(candidateGridY) == usedGridY.end()) {
+            return candidateGridY;
+        }
+    }
+
+    // Fallback: use +1 offset
+    return originalGridY + 1;
+}
+
+// Legacy float versions - call grid versions internally for compatibility
 float findAlternativeX(
     float originalX,
     float yMin,
@@ -505,40 +579,20 @@ float findAlternativeX(
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
     float gridSpacing) {
 
-    // Find all X coordinates used by vertical segments in the Y range
-    auto usedX = findUsedVerticalX(assignedLayouts, yMin, yMax);
+    // Use 20.0f as default when grid is disabled (gridSpacing == 0)
+    // This provides a reasonable offset for overlap avoidance
+    float effectiveGridSize = constants::effectiveGridSize(gridSpacing);
 
-    // Try offsets in both directions to find unused X
-    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
-        // Try positive offset first
-        float candidateX = originalX + offset;
-        bool used = false;
-        for (float x : usedX) {
-            if (std::abs(x - candidateX) < EPSILON) {
-                used = true;
-                break;
-            }
-        }
-        if (!used) {
-            return candidateX;
-        }
+    // Convert to grid coordinates
+    int originalGridX = static_cast<int>(std::round(originalX / effectiveGridSize));
+    int yMinGrid = static_cast<int>(std::floor(yMin / effectiveGridSize));
+    int yMaxGrid = static_cast<int>(std::ceil(yMax / effectiveGridSize));
 
-        // Try negative offset
-        candidateX = originalX - offset;
-        used = false;
-        for (float x : usedX) {
-            if (std::abs(x - candidateX) < EPSILON) {
-                used = true;
-                break;
-            }
-        }
-        if (!used) {
-            return candidateX;
-        }
-    }
+    // Call grid-based function
+    int resultGridX = findAlternativeGridX(originalGridX, yMinGrid, yMaxGrid, assignedLayouts, effectiveGridSize);
 
-    // Fallback: just use offset
-    return originalX + gridSpacing;
+    // Convert back to pixel (grid-aligned if gridSpacing > 0)
+    return resultGridX * effectiveGridSize;
 }
 
 float findAlternativeY(
@@ -548,40 +602,20 @@ float findAlternativeY(
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
     float gridSpacing) {
 
-    // Find all Y coordinates used by horizontal segments in the X range
-    auto usedY = findUsedHorizontalY(assignedLayouts, xMin, xMax);
+    // Use 20.0f as default when grid is disabled (gridSpacing == 0)
+    // This provides a reasonable offset for overlap avoidance
+    float effectiveGridSize = constants::effectiveGridSize(gridSpacing);
 
-    // Try offsets in both directions to find unused Y
-    for (float offset = gridSpacing; offset <= gridSpacing * 5; offset += gridSpacing) {
-        // Try positive offset first
-        float candidateY = originalY + offset;
-        bool used = false;
-        for (float y : usedY) {
-            if (std::abs(y - candidateY) < EPSILON) {
-                used = true;
-                break;
-            }
-        }
-        if (!used) {
-            return candidateY;
-        }
+    // Convert to grid coordinates
+    int originalGridY = static_cast<int>(std::round(originalY / effectiveGridSize));
+    int xMinGrid = static_cast<int>(std::floor(xMin / effectiveGridSize));
+    int xMaxGrid = static_cast<int>(std::ceil(xMax / effectiveGridSize));
 
-        // Try negative offset
-        candidateY = originalY - offset;
-        used = false;
-        for (float y : usedY) {
-            if (std::abs(y - candidateY) < EPSILON) {
-                used = true;
-                break;
-            }
-        }
-        if (!used) {
-            return candidateY;
-        }
-    }
+    // Call grid-based function
+    int resultGridY = findAlternativeGridY(originalGridY, xMinGrid, xMaxGrid, assignedLayouts, effectiveGridSize);
 
-    // Fallback: just use offset
-    return originalY + gridSpacing;
+    // Convert back to pixel (grid-aligned if gridSpacing > 0)
+    return resultGridY * effectiveGridSize;
 }
 
 // =========================================================================

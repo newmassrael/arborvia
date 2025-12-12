@@ -251,7 +251,7 @@ TEST_F(AStarEdgeOptimizerTest, Optimize_SingleEdge_ReturnsOptimizedLayout) {
 
     edgeLayouts_[0] = initial;
 
-    auto result = optimizer.optimize({0}, edgeLayouts_, nodeLayouts_);
+    auto result = optimizer.optimize({0}, edgeLayouts_, nodeLayouts_, 20.0f);
 
     ASSERT_EQ(1u, result.size());
     ASSERT_TRUE(result.find(0) != result.end());
@@ -279,7 +279,7 @@ TEST_F(AStarEdgeOptimizerTest, Optimize_SelfLoop_ProducesValidAdjacentEdges) {
 
     edgeLayouts_[0] = selfLoop;
 
-    auto result = optimizer.optimize({0}, edgeLayouts_, nodeLayouts_);
+    auto result = optimizer.optimize({0}, edgeLayouts_, nodeLayouts_, 20.0f);
 
     ASSERT_EQ(1u, result.size());
 
@@ -323,7 +323,7 @@ TEST_F(AStarEdgeOptimizerTest, Optimize_MultipleEdges_ConsidersIntersections) {
     edgeLayouts_[0] = e1;
     edgeLayouts_[1] = e2;
 
-    auto result = optimizer.optimize({0, 1}, edgeLayouts_, nodeLayouts_);
+    auto result = optimizer.optimize({0, 1}, edgeLayouts_, nodeLayouts_, 20.0f);
 
     EXPECT_EQ(2u, result.size());
 }

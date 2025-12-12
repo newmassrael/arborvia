@@ -4,6 +4,7 @@
 #include "arborvia/layout/config/LayoutResult.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace arborvia {
 
@@ -82,42 +83,49 @@ namespace PathIntersection {
     // Overlap Avoidance Helpers
     // =========================================================================
 
-    /// Information about an overlapping segment
+    /// Information about an overlapping segment (grid-based for internal calculations)
     struct OverlapInfo {
         bool found = false;
         bool isVertical = false;      // true: vertical (same x), false: horizontal (same y)
-        float sharedCoordinate = 0;   // The x (if vertical) or y (if horizontal) where overlap occurs
-        float overlapStart = 0;       // Start of overlap range
-        float overlapEnd = 0;         // End of overlap range
+        int sharedGridCoord = 0;      // The grid x (if vertical) or y (if horizontal) where overlap occurs
+        int overlapStartGrid = 0;     // Start of overlap range (grid units)
+        int overlapEndGrid = 0;       // End of overlap range (grid units)
     };
 
     /// Find detailed overlap information between a candidate path and assigned edges
+    /// Returns grid-based overlap info for use with grid calculation functions
     /// @param candidate Edge layout to check
     /// @param assignedLayouts Already assigned edges
     /// @param excludeEdgeId Edge to exclude from check
-    /// @return OverlapInfo with details about the first overlap found
+    /// @param gridSize Grid cell size for coordinate conversion (default 20.0f)
+    /// @return OverlapInfo with grid coordinates about the first overlap found
     OverlapInfo findOverlapInfo(
         const EdgeLayout& candidate,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        EdgeId excludeEdgeId = INVALID_EDGE);
+        EdgeId excludeEdgeId = INVALID_EDGE,
+        float gridSize = 20.0f);
 
-    /// Find all X coordinates used by vertical segments in assigned edges
+    /// Find all grid X coordinates used by vertical segments in assigned edges
     /// @param assignedLayouts Assigned edge layouts
-    /// @param yMin Minimum Y to consider
-    /// @param yMax Maximum Y to consider
-    /// @return Set of X coordinates that have vertical segments in the Y range
-    std::vector<float> findUsedVerticalX(
+    /// @param yMinGrid Minimum Y to consider (grid units)
+    /// @param yMaxGrid Maximum Y to consider (grid units)
+    /// @param gridSize Grid cell size for coordinate conversion
+    /// @return Set of grid X coordinates that have vertical segments in the Y range
+    std::unordered_set<int> findUsedVerticalGridX(
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float yMin, float yMax);
+        int yMinGrid, int yMaxGrid,
+        float gridSize);
 
-    /// Find all Y coordinates used by horizontal segments in assigned edges
+    /// Find all grid Y coordinates used by horizontal segments in assigned edges
     /// @param assignedLayouts Assigned edge layouts
-    /// @param xMin Minimum X to consider
-    /// @param xMax Maximum X to consider
-    /// @return Set of Y coordinates that have horizontal segments in the X range
-    std::vector<float> findUsedHorizontalY(
+    /// @param xMinGrid Minimum X to consider (grid units)
+    /// @param xMaxGrid Maximum X to consider (grid units)
+    /// @param gridSize Grid cell size for coordinate conversion
+    /// @return Set of grid Y coordinates that have horizontal segments in the X range
+    std::unordered_set<int> findUsedHorizontalGridY(
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float xMin, float xMax);
+        int xMinGrid, int xMaxGrid,
+        float gridSize);
 
     // =========================================================================
     // Overlap Adjustment (move segments to avoid overlap)
@@ -133,13 +141,44 @@ namespace PathIntersection {
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         float gridSpacing = 20.0f);
 
+    /// Find alternative grid X coordinate that doesn't overlap with existing vertical segments
+    /// Works entirely in grid space for guaranteed alignment
+    /// @param originalGridX The grid X coordinate that causes overlap
+    /// @param yMinGrid Minimum Y of the segment (grid units)
+    /// @param yMaxGrid Maximum Y of the segment (grid units)
+    /// @param assignedLayouts Already assigned edges
+    /// @param gridSize Grid cell size for coordinate conversion
+    /// @return Alternative grid X coordinate (int)
+    int findAlternativeGridX(
+        int originalGridX,
+        int yMinGrid,
+        int yMaxGrid,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        float gridSize);
+
+    /// Find alternative grid Y coordinate that doesn't overlap with existing horizontal segments
+    /// Works entirely in grid space for guaranteed alignment
+    /// @param originalGridY The grid Y coordinate that causes overlap
+    /// @param xMinGrid Minimum X of the segment (grid units)
+    /// @param xMaxGrid Maximum X of the segment (grid units)
+    /// @param assignedLayouts Already assigned edges
+    /// @param gridSize Grid cell size for coordinate conversion
+    /// @return Alternative grid Y coordinate (int)
+    int findAlternativeGridY(
+        int originalGridY,
+        int xMinGrid,
+        int xMaxGrid,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
+        float gridSize);
+
     /// Find alternative X coordinate that doesn't overlap with existing vertical segments
+    /// @deprecated Use findAlternativeGridX for grid-aligned calculations
     /// @param originalX The X coordinate that causes overlap
     /// @param yMin Minimum Y of the segment
     /// @param yMax Maximum Y of the segment
     /// @param assignedLayouts Already assigned edges
     /// @param gridSpacing Grid spacing for offset calculation
-    /// @return Alternative X coordinate
+    /// @return Alternative X coordinate (grid-aligned if gridSpacing > 0)
     float findAlternativeX(
         float originalX,
         float yMin,
@@ -148,12 +187,13 @@ namespace PathIntersection {
         float gridSpacing = 20.0f);
 
     /// Find alternative Y coordinate that doesn't overlap with existing horizontal segments
+    /// @deprecated Use findAlternativeGridY for grid-aligned calculations
     /// @param originalY The Y coordinate that causes overlap
     /// @param xMin Minimum X of the segment
     /// @param xMax Maximum X of the segment
     /// @param assignedLayouts Already assigned edges
     /// @param gridSpacing Grid spacing for offset calculation
-    /// @return Alternative Y coordinate
+    /// @return Alternative Y coordinate (grid-aligned if gridSpacing > 0)
     float findAlternativeY(
         float originalY,
         float xMin,

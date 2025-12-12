@@ -11,7 +11,10 @@ namespace arborvia {
 /// Configuration for edge optimizer creation
 ///
 /// Contains all settings needed to create and configure an edge optimizer.
-/// Includes penalty system, grid settings, and behavior flags.
+/// Includes penalty system and behavior flags.
+///
+/// Note: gridSize is NOT part of OptimizerConfig - it comes from
+/// LayoutOptions.gridConfig.cellSize and is passed to optimize() method.
 ///
 /// Presets:
 /// - aggressive(): Lower penalties, faster convergence
@@ -21,9 +24,8 @@ namespace arborvia {
 /// Usage:
 /// @code
 /// auto config = OptimizerConfig::balanced();
-/// config.gridSize = 15.0f;  // Override specific settings
-///
 /// auto optimizer = factory.create(config);
+/// optimizer->optimize(edges, layouts, nodes, gridSize);  // gridSize from LayoutOptions
 /// @endcode
 struct OptimizerConfig {
     /// Penalty system (shared across optimizer lifetime)
@@ -33,13 +35,6 @@ struct OptimizerConfig {
     /// Path finder for A* optimizer (optional)
     /// If nullptr, optimizer will create its own AStarPathFinder
     std::shared_ptr<IPathFinder> pathFinder;
-
-    /// Grid size in pixels for pathfinding
-    /// Larger values = faster but less precise
-    /// Typical range: 10-30 pixels
-    /// Note: 0.0f means use constants::PATHFINDING_GRID_SIZE (10.0f)
-    /// Presets use: aggressive=30, balanced=20, conservative=10
-    float gridSize = 20.0f;
 
     /// Preserve existing source/target edge directions during optimization
     /// When true, optimizer only optimizes path routing, not edge selection
@@ -76,12 +71,6 @@ struct OptimizerConfig {
     /// Set penalty system
     OptimizerConfig& withPenaltySystem(std::shared_ptr<EdgePenaltySystem> system) {
         penaltySystem = std::move(system);
-        return *this;
-    }
-
-    /// Set grid size
-    OptimizerConfig& withGridSize(float size) {
-        gridSize = size;
         return *this;
     }
 

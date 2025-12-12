@@ -14,12 +14,13 @@ namespace arborvia {
 /// Ideal for real-time feedback during drag operations.
 class GeometricEdgeOptimizer : public IEdgeOptimizer {
 public:
-    explicit GeometricEdgeOptimizer(float gridSize = 20.0f);
+    GeometricEdgeOptimizer() = default;
 
     std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
         const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
         const std::unordered_set<NodeId>& movedNodes = {}) override;
 
     const char* algorithmName() const override { return "Geometric"; }
@@ -29,7 +30,8 @@ public:
     void regenerateBendPoints(
         const std::vector<EdgeId>& edges,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize) override;
 
 private:
     /// Result of evaluating a single edge combination (uses shared type)
@@ -188,6 +190,7 @@ private:
         NodeId sourceNodeId,
         NodeId targetNodeId);
 
+    /// Grid size set during optimize() call - used by helper methods
     float gridSize_ = 20.0f;
     
     // Constraint state inherited from IEdgeOptimizer:

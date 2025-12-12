@@ -299,7 +299,7 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
         }
 
         if (edgeOptimizer && !edgesToRegenerate.empty()) {
-            edgeOptimizer->regenerateBendPoints(edgesToRegenerate, edgeLayouts, nodeLayouts);
+            edgeOptimizer->regenerateBendPoints(edgesToRegenerate, edgeLayouts, nodeLayouts, gridSizeToUse);
         }
 
         for (EdgeId edgeId : result.processedEdges) {
@@ -392,7 +392,7 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
 
         if (!edgesToReroute.empty()) {
             // Use optimizer for path regeneration (single source of truth)
-            edgeOptimizer->regenerateBendPoints(edgesToReroute, edgeLayouts, nodeLayouts);
+            edgeOptimizer->regenerateBendPoints(edgesToReroute, edgeLayouts, nodeLayouts, gridSizeToUse);
 
             // Update label positions after regeneration
             for (EdgeId edgeId : edgesToReroute) {

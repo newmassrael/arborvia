@@ -22,10 +22,8 @@
 namespace arborvia {
 
 AStarEdgeOptimizer::AStarEdgeOptimizer(
-    std::shared_ptr<IPathFinder> pathFinder,
-    float gridSize)
-    : pathFinder_(std::move(pathFinder))
-    , gridSize_(gridSize) {
+    std::shared_ptr<IPathFinder> pathFinder)
+    : pathFinder_(std::move(pathFinder)) {
 
     // Create default pathfinder if not provided
     if (!pathFinder_) {
@@ -55,10 +53,6 @@ void AStarEdgeOptimizer::setPathFinder(std::shared_ptr<IPathFinder> pathFinder) 
     }
 }
 
-void AStarEdgeOptimizer::setGridSize(float gridSize) {
-    gridSize_ = gridSize;
-}
-
 float AStarEdgeOptimizer::effectiveGridSize() const {
     return constants::effectiveGridSize(gridSize_);
 }
@@ -67,8 +61,12 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     const std::vector<EdgeId>& edges,
     const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSizeParam,
     const std::unordered_set<NodeId>& movedNodes) {
 
+    // Store gridSize for use in helper methods (effectiveGridSize() will return this)
+    gridSize_ = gridSizeParam;
+    
     // Store constraint state in base class for FixedEndpointPenalty
     setConstraintState(currentLayouts, movedNodes);
 
@@ -949,12 +947,15 @@ std::vector<ForbiddenZone> AStarEdgeOptimizer::calculateForbiddenZones(
 void AStarEdgeOptimizer::regenerateBendPoints(
     const std::vector<EdgeId>& edges,
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSizeParam) {
 
     if (edges.empty()) {
         return;
     }
 
+    // Store gridSize for use in helper methods
+    gridSize_ = gridSizeParam;
     float gridSize = effectiveGridSize();
 
     // Track already-routed edges for blocking
@@ -1368,28 +1369,32 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback
     {
         std::unordered_map<EdgeId, EdgeLayout> withA;
         withA[edgeIdA] = layoutA;
-        auto overlapInfo = PathIntersection::findOverlapInfo(layoutB, withA, layoutB.id);
+        auto overlapInfo = PathIntersection::findOverlapInfo(layoutB, withA, layoutB.id, gridSize);
 
         if (overlapInfo.found) {
+            // Convert grid coordinate to pixel
+            float sharedPixel = overlapInfo.sharedGridCoord * gridSize;
+            
             for (int dir = -1; dir <= 1; dir += 2) {
-                float offset = dir * gridSize;
+                // Use grid-based offset
+                int tryGridCoord = overlapInfo.sharedGridCoord + dir;
                 std::vector<BendPoint> newBends;
 
                 if (overlapInfo.isVertical) {
-                    float tryX = overlapInfo.sharedCoordinate + offset;
+                    float tryX = tryGridCoord * gridSize;
                     newBends.push_back({{tryX, layoutB.sourcePoint.y}});
                     for (const auto& bp : layoutB.bendPoints) {
-                        if (std::abs(bp.position.x - overlapInfo.sharedCoordinate) < 1.0f) {
+                        if (std::abs(bp.position.x - sharedPixel) < 1.0f) {
                             newBends.push_back({{tryX, bp.position.y}});
                         } else {
                             newBends.push_back(bp);
                         }
                     }
                 } else {
-                    float tryY = overlapInfo.sharedCoordinate + offset;
+                    float tryY = tryGridCoord * gridSize;
                     newBends.push_back({{layoutB.sourcePoint.x, tryY}});
                     for (const auto& bp : layoutB.bendPoints) {
-                        if (std::abs(bp.position.y - overlapInfo.sharedCoordinate) < 1.0f) {
+                        if (std::abs(bp.position.y - sharedPixel) < 1.0f) {
                             newBends.push_back({{bp.position.x, tryY}});
                         } else {
                             newBends.push_back(bp);

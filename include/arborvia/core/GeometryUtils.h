@@ -104,4 +104,20 @@ constexpr int SNAP_INDEX_UNASSIGNED = -1;
 
 }  // namespace constants
 
+/// Grid coordinate conversion utilities
+/// These complement GridPoint::fromPixel/toPixel methods in Types.h
+namespace grid {
+
+/// Convert pixel distance to grid cells (ceil for safety margin)
+/// Use this when calculating clearance or margin in grid units
+/// @param pixels Distance in pixels
+/// @param gridSize Size of each grid cell
+/// @return Number of cells (rounded up to ensure sufficient space)
+inline int pixelToCells(float pixels, float gridSize) noexcept {
+    if (gridSize <= 0.0f) return 0;
+    return static_cast<int>(std::ceil(pixels / gridSize));
+}
+
+}  // namespace grid
+
 }  // namespace arborvia

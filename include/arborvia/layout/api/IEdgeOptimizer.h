@@ -60,22 +60,26 @@ public:
     /// @param edges List of edge IDs to optimize
     /// @param currentLayouts Current edge layouts (used as original for constraint checking)
     /// @param nodeLayouts Node positions for routing calculations
+    /// @param gridSize Grid cell size for pathfinding and snap calculations
     /// @param movedNodes Nodes that were moved (endpoints on other nodes are fixed)
     ///                   Empty set means no constraints (all endpoints can change)
     virtual std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
         const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
         const std::unordered_set<NodeId>& movedNodes = {}) = 0;
 
     /// Get algorithm name for debugging/logging
     virtual const char* algorithmName() const = 0;
 
     /// Regenerate bendPoints for edges while preserving sourceEdge/targetEdge
+    /// @param gridSize Grid cell size for pathfinding and snap calculations
     virtual void regenerateBendPoints(
         const std::vector<EdgeId>& edges,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) = 0;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize) = 0;
 
 protected:
     /// Check if a candidate layout passes all hard constraints via penalty system

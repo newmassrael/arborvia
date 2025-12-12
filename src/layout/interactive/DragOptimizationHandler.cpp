@@ -199,7 +199,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             case DragAlgorithm::AStar: {
                 OptimizerConfig config = OptimizerConfig::aggressive();
                 config.preserveDirections = false;
-                config.gridSize = options.gridConfig.cellSize;
                 config.pathFinder = pathFinder_;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 optimizer = OptimizerRegistry::instance().create("AStar", config);
@@ -223,7 +222,7 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             }
 
             // Pass movedNodes to optimizer - FixedEndpointPenalty will handle constraints
-            auto optimizedLayouts = edgeOptimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts, movedNodes);
+            auto optimizedLayouts = edgeOptimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts, gridSize, movedNodes);
 
             // Copy optimized layouts
             // The optimizer respects constraints, preserving positions and snap indices

@@ -31,10 +31,8 @@ class AStarEdgeOptimizer : public IEdgeOptimizer {
 public:
     /// Constructor with optional pathfinder
     /// @param pathFinder Pathfinder for calculating orthogonal routes (uses AStarPathFinder if null)
-    /// @param gridSize Grid cell size for pathfinding (0 = use default)
     explicit AStarEdgeOptimizer(
-        std::shared_ptr<IPathFinder> pathFinder = nullptr,
-        float gridSize = 0.0f);
+        std::shared_ptr<IPathFinder> pathFinder = nullptr);
 
     /// Destructor (defined in .cpp for unique_ptr with forward-declared type)
     ~AStarEdgeOptimizer();
@@ -44,12 +42,14 @@ public:
     /// @param edges Edges to optimize (processed in order)
     /// @param currentLayouts Current edge layouts (used as base for combinations)
     /// @param nodeLayouts Node positions
+    /// @param gridSize Grid cell size for pathfinding and snap calculations
     /// @param movedNodes Nodes that were moved (endpoints on other nodes are fixed)
     /// @return Map of optimized edge layouts
     std::unordered_map<EdgeId, EdgeLayout> optimize(
         const std::vector<EdgeId>& edges,
         const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize,
         const std::unordered_set<NodeId>& movedNodes = {}) override;
 
     const char* algorithmName() const override { return "AStar"; }
@@ -59,13 +59,11 @@ public:
     void regenerateBendPoints(
         const std::vector<EdgeId>& edges,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) override;
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize) override;
 
     /// Set pathfinder
     void setPathFinder(std::shared_ptr<IPathFinder> pathFinder);
-
-    /// Set grid size for pathfinding
-    void setGridSize(float gridSize);
 
     /// Enable/disable parallel evaluation (default: true)
     void setParallelEnabled(bool enabled) { parallelEnabled_ = enabled; }

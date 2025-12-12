@@ -26,12 +26,9 @@ void RoutingOptimizer::optimize(
     std::unique_ptr<IEdgeOptimizer> fallbackOptimizer;
 
     if (!optimizer && options.optimizationOptions.postDragAlgorithm != PostDragAlgorithm::None) {
-        const float gridSize = options.gridConfig.cellSize;
-
         switch (options.optimizationOptions.postDragAlgorithm) {
             case PostDragAlgorithm::AStar: {
                 OptimizerConfig config = OptimizerConfig::balanced();
-                config.gridSize = gridSize;
                 config.pathFinder = pathFinder_;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("AStar", config);
@@ -39,7 +36,6 @@ void RoutingOptimizer::optimize(
             }
             case PostDragAlgorithm::Geometric: {
                 OptimizerConfig config = OptimizerConfig::aggressive();
-                config.gridSize = gridSize;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
                 fallbackOptimizer = OptimizerRegistry::instance().create("Geometric", config);
                 break;
@@ -62,7 +58,8 @@ void RoutingOptimizer::optimize(
     }
 
     // Run optimizer on edges with their final snap positions
-    auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts);
+    float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
+    auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts, gridSize);
 
     // Merge optimized layouts
     // IMPORTANT: Preserve snap indices (optimizer sets them to -1, we keep grid-based values)

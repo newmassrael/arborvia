@@ -5,7 +5,7 @@ namespace arborvia {
 OptimizerConfig OptimizerConfig::aggressive() {
     OptimizerConfig config;
     config.penaltySystem = EdgePenaltySystem::createMinimal();
-    config.gridSize = 30.0f;         // Larger grid = faster search
+    // Note: gridSize now comes from LayoutOptions.gridConfig.cellSize
     config.preserveDirections = false;
     config.maxIterations = 30000;    // Lower iteration limit
     config.nodeMargin = 1;
@@ -15,7 +15,7 @@ OptimizerConfig OptimizerConfig::aggressive() {
 OptimizerConfig OptimizerConfig::balanced() {
     OptimizerConfig config;
     config.penaltySystem = EdgePenaltySystem::createDefault();
-    config.gridSize = 20.0f;
+    // Note: gridSize now comes from LayoutOptions.gridConfig.cellSize
     config.preserveDirections = false;
     config.maxIterations = 50000;
     config.nodeMargin = 1;
@@ -25,7 +25,7 @@ OptimizerConfig OptimizerConfig::balanced() {
 OptimizerConfig OptimizerConfig::conservative() {
     OptimizerConfig config;
     config.penaltySystem = EdgePenaltySystem::createStrict();
-    config.gridSize = 10.0f;         // Smaller grid = more precise
+    // Note: gridSize now comes from LayoutOptions.gridConfig.cellSize
     config.preserveDirections = false;
     config.maxIterations = 100000;   // Higher iteration limit
     config.nodeMargin = 2;           // Larger margin

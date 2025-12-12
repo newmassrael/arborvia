@@ -463,7 +463,21 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     }
 
     // Final clearance check
+    std::string beforeBends;
+    for (const auto& bp : layout.bendPoints) {
+        beforeBends += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                    + std::to_string(static_cast<int>(bp.position.y)) + ")";
+    }
     ensureSourceClearance(layout, gridSize);
+    std::string afterBends;
+    for (const auto& bp : layout.bendPoints) {
+        afterBends += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                   + std::to_string(static_cast<int>(bp.position.y)) + ")";
+    }
+    if (beforeBends != afterBends) {
+        LOG_DEBUG("[routeChannelOrthogonal] Edge {} ensureSourceClearance MODIFIED bends! before:{} after:{}",
+                  layout.id, beforeBends, afterBends);
+    }
 
     // Calculate label position
     layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
@@ -512,6 +526,12 @@ void ChannelRouter::calculateBendPoints(
                 Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
                 layout.bendPoints.push_back({pixelPoint});
             }
+            std::string bendsStr;
+            for (const auto& bp : layout.bendPoints) {
+                bendsStr += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
+                         + std::to_string(static_cast<int>(bp.position.y)) + ")";
+            }
+            LOG_DEBUG("[calculateBendPoints] Edge {} A* SUCCESS: bends={}{}", layout.id, layout.bendPoints.size(), bendsStr);
             return;
         }
     }
@@ -545,6 +565,8 @@ void ChannelRouter::calculateBendPoints(
     if (std::abs(src.x - tgt.x) > 1.0f) {
         layout.bendPoints.push_back({{tgt.x, channelY}});
     }
+    LOG_DEBUG("[calculateBendPoints] Edge {} FALLBACK: src=({},{}) tgt=({},{}) channelY={} bends={}",
+              layout.id, src.x, src.y, tgt.x, tgt.y, channelY, layout.bendPoints.size());
 }
 
 void ChannelRouter::createBypassPath(
@@ -553,63 +575,67 @@ void ChannelRouter::createBypassPath(
     const std::unordered_map<NodeId, NodeLayout>& allNodeLayouts,
     float gridSize) {
 
-    float margin = constants::effectiveGridSize(gridSize);
+    float effectiveGrid = constants::effectiveGridSize(gridSize);
+    int marginCells = grid::pixelToCells(effectiveGrid, effectiveGrid);  // At least 1 cell
 
-    // Find leftmost and rightmost edges of all intermediate nodes
-    float leftmostEdge = blockingNode.position.x;
-    float rightmostEdge = blockingNode.position.x + blockingNode.size.width;
+    // Find leftmost and rightmost edges in grid coordinates
+    auto blockingGrid = GridPoint::fromPixel(blockingNode.position, effectiveGrid);
+    int blockingWidthCells = grid::pixelToCells(blockingNode.size.width, effectiveGrid);
+    int leftmostGrid = blockingGrid.x;
+    int rightmostGrid = blockingGrid.x + blockingWidthCells;
 
     for (const auto& [nid, nlayout] : allNodeLayouts) {
         if (nid == layout.from || nid == layout.to) continue;
-        leftmostEdge = std::min(leftmostEdge, nlayout.position.x);
-        rightmostEdge = std::max(rightmostEdge, nlayout.position.x + nlayout.size.width);
+        auto nodeGrid = GridPoint::fromPixel(nlayout.position, effectiveGrid);
+        int nodeWidthCells = grid::pixelToCells(nlayout.size.width, effectiveGrid);
+        leftmostGrid = std::min(leftmostGrid, nodeGrid.x);
+        rightmostGrid = std::max(rightmostGrid, nodeGrid.x + nodeWidthCells);
     }
 
-    // Choose side based on source and target positions
-    float sourceX = layout.sourcePoint.x;
-    float targetX = layout.targetPoint.x;
-    float avgX = (sourceX + targetX) / 2.0f;
-    float centerNodes = (leftmostEdge + rightmostEdge) / 2.0f;
+    // Choose side based on source and target positions (grid-based)
+    auto srcGrid = GridPoint::fromPixel(layout.sourcePoint, effectiveGrid);
+    auto tgtGrid = GridPoint::fromPixel(layout.targetPoint, effectiveGrid);
+    int avgXGrid = (srcGrid.x + tgtGrid.x) / 2;
+    int centerNodesGrid = (leftmostGrid + rightmostGrid) / 2;
 
-    float bypassX;
-    if (avgX < centerNodes) {
+    int bypassXGrid;
+    if (avgXGrid < centerNodesGrid) {
         // Prefer left bypass
-        bypassX = leftmostEdge - margin;
+        bypassXGrid = leftmostGrid - marginCells;
     } else {
         // Prefer right bypass
-        bypassX = rightmostEdge + margin;
+        bypassXGrid = rightmostGrid + marginCells;
     }
 
-    // Snap to grid if enabled
-    if (gridSize > 0.0f) {
-        bypassX = std::round(bypassX / gridSize) * gridSize;
-    }
+    // Convert to pixel once
+    float bypassX = bypassXGrid * effectiveGrid;
+    LOG_DEBUG("[createBypassPath] Edge {} gridSize={} marginCells={} leftmostGrid={} bypassXGrid={} bypassX={}",
+              layout.id, gridSize, marginCells, leftmostGrid, bypassXGrid, bypassX);
 
     // Create bypass path directly: source -> (bypassX, src.y) -> (bypassX, tgt.y) -> target
     layout.bendPoints.clear();
 
-    float exitY, entryY;
+    // Calculate exit/entry Y in grid coordinates
+    int exitYGrid, entryYGrid;
     if (layout.sourceEdge == NodeEdge::Bottom) {
-        exitY = layout.sourcePoint.y + margin;
+        exitYGrid = srcGrid.y + marginCells;
     } else if (layout.sourceEdge == NodeEdge::Top) {
-        exitY = layout.sourcePoint.y - margin;
+        exitYGrid = srcGrid.y - marginCells;
     } else {
-        exitY = layout.sourcePoint.y;
+        exitYGrid = srcGrid.y;
     }
 
     if (layout.targetEdge == NodeEdge::Top) {
-        entryY = layout.targetPoint.y - margin;
+        entryYGrid = tgtGrid.y - marginCells;
     } else if (layout.targetEdge == NodeEdge::Bottom) {
-        entryY = layout.targetPoint.y + margin;
+        entryYGrid = tgtGrid.y + marginCells;
     } else {
-        entryY = layout.targetPoint.y;
+        entryYGrid = tgtGrid.y;
     }
 
-    // Snap Y coordinates to grid
-    if (gridSize > 0.0f) {
-        exitY = std::round(exitY / gridSize) * gridSize;
-        entryY = std::round(entryY / gridSize) * gridSize;
-    }
+    // Convert to pixel once
+    float exitY = exitYGrid * effectiveGrid;
+    float entryY = entryYGrid * effectiveGrid;
 
     // Create bend points for bypass route
     layout.bendPoints.push_back({{layout.sourcePoint.x, exitY}});
@@ -619,14 +645,19 @@ void ChannelRouter::createBypassPath(
 }
 
 void ChannelRouter::ensureSourceClearance(EdgeLayout& layout, float gridSize) {
-    float minClearance = constants::effectiveGridSize(gridSize);
+    float effectiveGrid = constants::effectiveGridSize(gridSize);
+    int clearanceCells = grid::pixelToCells(effectiveGrid, effectiveGrid);  // At least 1 cell
+
     if (!layout.bendPoints.empty()) {
         Point& firstBend = layout.bendPoints[0].position;
+        auto srcGrid = GridPoint::fromPixel(layout.sourcePoint, effectiveGrid);
+        auto bendGrid = GridPoint::fromPixel(firstBend, effectiveGrid);
 
         switch (layout.sourceEdge) {
             case NodeEdge::Top:
-                if (firstBend.y > layout.sourcePoint.y - minClearance) {
-                    float newY = layout.sourcePoint.y - minClearance;
+                if (bendGrid.y > srcGrid.y - clearanceCells) {
+                    int newYGrid = srcGrid.y - clearanceCells;
+                    float newY = newYGrid * effectiveGrid;
                     firstBend.y = newY;
                     if (layout.bendPoints.size() >= 2) {
                         layout.bendPoints[1].position.y = newY;
@@ -634,8 +665,9 @@ void ChannelRouter::ensureSourceClearance(EdgeLayout& layout, float gridSize) {
                 }
                 break;
             case NodeEdge::Bottom:
-                if (firstBend.y < layout.sourcePoint.y + minClearance) {
-                    float newY = layout.sourcePoint.y + minClearance;
+                if (bendGrid.y < srcGrid.y + clearanceCells) {
+                    int newYGrid = srcGrid.y + clearanceCells;
+                    float newY = newYGrid * effectiveGrid;
                     firstBend.y = newY;
                     if (layout.bendPoints.size() >= 2) {
                         layout.bendPoints[1].position.y = newY;
@@ -643,8 +675,11 @@ void ChannelRouter::ensureSourceClearance(EdgeLayout& layout, float gridSize) {
                 }
                 break;
             case NodeEdge::Left:
-                if (firstBend.x > layout.sourcePoint.x - minClearance) {
-                    float newX = layout.sourcePoint.x - minClearance;
+                if (bendGrid.x > srcGrid.x - clearanceCells) {
+                    int newXGrid = srcGrid.x - clearanceCells;
+                    float newX = newXGrid * effectiveGrid;
+                    LOG_DEBUG("[ensureSourceClearance] Edge {} LEFT: srcGrid.x={} clearanceCells={} newXGrid={} newX={}",
+                              layout.id, srcGrid.x, clearanceCells, newXGrid, newX);
                     firstBend.x = newX;
                     if (layout.bendPoints.size() >= 2) {
                         layout.bendPoints[1].position.x = newX;
@@ -652,8 +687,9 @@ void ChannelRouter::ensureSourceClearance(EdgeLayout& layout, float gridSize) {
                 }
                 break;
             case NodeEdge::Right:
-                if (firstBend.x < layout.sourcePoint.x + minClearance) {
-                    float newX = layout.sourcePoint.x + minClearance;
+                if (bendGrid.x < srcGrid.x + clearanceCells) {
+                    int newXGrid = srcGrid.x + clearanceCells;
+                    float newX = newXGrid * effectiveGrid;
                     firstBend.x = newX;
                     if (layout.bendPoints.size() >= 2) {
                         layout.bendPoints[1].position.x = newX;

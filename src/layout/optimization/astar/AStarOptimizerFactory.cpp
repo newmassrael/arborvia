@@ -4,10 +4,9 @@
 namespace arborvia {
 
 std::unique_ptr<IEdgeOptimizer> AStarOptimizerFactory::create(const OptimizerConfig& config) {
-    // Create optimizer with provided or default pathfinder
+    // Create optimizer (gridSize is now passed to optimize() method, not constructor)
     auto optimizer = std::make_unique<AStarEdgeOptimizer>(
-        config.pathFinder,  // May be nullptr (uses default AStarPathFinder)
-        config.gridSize);
+        config.pathFinder);  // May be nullptr (uses default AStarPathFinder)
 
     // Configure penalty system
     if (config.penaltySystem) {

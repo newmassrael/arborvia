@@ -4,8 +4,8 @@
 namespace arborvia {
 
 std::unique_ptr<IEdgeOptimizer> GeometricOptimizerFactory::create(const OptimizerConfig& config) {
-    // Create optimizer with grid size
-    auto optimizer = std::make_unique<GeometricEdgeOptimizer>(config.gridSize);
+    // Create optimizer (gridSize is now passed to optimize() method, not constructor)
+    auto optimizer = std::make_unique<GeometricEdgeOptimizer>();
 
     // Configure penalty system
     if (config.penaltySystem) {

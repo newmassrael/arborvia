@@ -4,6 +4,7 @@
 #include "arborvia/layout/api/ICrossingMinimization.h"
 #include "arborvia/layout/api/ICoordinateAssignment.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "sugiyama/phases/CycleRemoval.h"
 #include "sugiyama/phases/LayerAssignment.h"
 #include "sugiyama/phases/CrossingMinimization.h"
@@ -220,9 +221,10 @@ void SugiyamaLayout::applyFinalCleanup() {
             }
         }
 
-        GeometricEdgeOptimizer optimizer(options_.gridConfig.cellSize);
+        GeometricEdgeOptimizer optimizer;
         optimizer.setPreserveDirections(true);
-        optimizer.regenerateBendPoints(needsRegeneration, edgeLayouts, state_->result.nodeLayouts());
+        float gridSize = constants::effectiveGridSize(options_.gridConfig.cellSize);
+        optimizer.regenerateBendPoints(needsRegeneration, edgeLayouts, state_->result.nodeLayouts(), gridSize);
 
         for (const auto& [edgeId, layout] : edgeLayouts) {
             state_->result.setEdgeLayout(edgeId, layout);
