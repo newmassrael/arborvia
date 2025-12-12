@@ -12,9 +12,6 @@
 #include "arborvia/common/Logger.h"
 
 // Debug flag for edge routing
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 #include <array>
 #include <cmath>
 #include <limits>
@@ -70,14 +67,13 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
             auto selfLoopCombinations = evaluateSelfLoopCombinations(
                 edgeId, baseLayout, assignedLayouts, nodeLayouts);
 
-            if (!selfLoopCombinations.empty()) {
-                const auto& best = selfLoopCombinations.front();
-                result[edgeId] = best.layout;
-                assignedLayouts[edgeId] = best.layout;
-            } else {
-                result[edgeId] = baseLayout;
-                assignedLayouts[edgeId] = baseLayout;
+            if (selfLoopCombinations.empty()) {
+                LOG_DEBUG("[GeometricEdgeOptimizer] Edge {} - selfLoopCombinations empty, skipping", edgeId);
+                continue;
             }
+            const auto& best = selfLoopCombinations.front();
+            result[edgeId] = best.layout;
+            assignedLayouts[edgeId] = best.layout;
             continue;
         }
 
@@ -102,17 +98,9 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
             edgeId, baseLayout, assignedLayouts, nodeLayouts);
 
         if (combinations.empty()) {
-            // No valid combinations - still use greedy path with current edges
-            // This should rarely happen since our greedy algorithm always succeeds
-            EdgeLayout finalLayout = createCandidateLayout(
-                baseLayout, baseLayout.sourceEdge, baseLayout.targetEdge,
-                nodeLayouts, assignedLayouts);
-            result[edgeId] = finalLayout;
-            assignedLayouts[edgeId] = finalLayout;
+            LOG_DEBUG("[GeometricEdgeOptimizer] Edge {} - combinations empty, skipping", edgeId);
             continue;
         }
-
-        // Select best combination (lowest score)
         const auto& best = combinations.front();
 
         // Use the pre-computed layout from evaluation (includes bendPoints)
@@ -154,12 +142,7 @@ GeometricEdgeOptimizer::evaluateCombinations(
 
         int score = scoreGeometricPath(candidate, assignedLayouts, nodeLayouts);
 
-        // For penalty system, check if score indicates hard constraint violation
-        // Hard constraint violation = score >= HARD_CONSTRAINT_PENALTY
-        if (score >= HARD_CONSTRAINT_PENALTY) {
-            return;  // Skip this combination
-        }
-
+        // Always include all combinations - sort by score to pick best
         results.push_back({srcEdge, tgtEdge, score, std::move(candidate)});
     };
 
@@ -167,12 +150,34 @@ GeometricEdgeOptimizer::evaluateCombinations(
         // Preserve existing direction - only evaluate current combination
         evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
     } else {
-        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
+        // Pre-filter combinations based on fixed endpoints
+        // If a node is fixed, only its original edge direction is valid
+        // This prevents FixedEndpointPenalty from rejecting 15/16 combinations
+        bool srcFixed = isNodeFixed(baseLayout.from);
+        bool tgtFixed = isNodeFixed(baseLayout.to);
+        
         constexpr std::array<NodeEdge, 4> allEdges = {
             NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
         };
-        for (NodeEdge srcEdge : allEdges) {
-            for (NodeEdge tgtEdge : allEdges) {
+        
+        // Determine which edges to try for source and target
+        std::vector<NodeEdge> srcEdgesToTry;
+        std::vector<NodeEdge> tgtEdgesToTry;
+        
+        if (srcFixed) {
+            srcEdgesToTry.push_back(baseLayout.sourceEdge);
+        } else {
+            srcEdgesToTry = {allEdges.begin(), allEdges.end()};
+        }
+        
+        if (tgtFixed) {
+            tgtEdgesToTry.push_back(baseLayout.targetEdge);
+        } else {
+            tgtEdgesToTry = {allEdges.begin(), allEdges.end()};
+        }
+        
+        for (NodeEdge srcEdge : srcEdgesToTry) {
+            for (NodeEdge tgtEdge : tgtEdgesToTry) {
                 evaluateEdge(srcEdge, tgtEdge);
             }
         }
@@ -287,22 +292,30 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
             }
             pathPoints.push_back(candidate.targetPoint);
 
+            LOG_DEBUG("[evaluateCombinations] Checking {} segments for collision (edge from={} to={})",
+                      pathPoints.size() - 1, base.from, base.to);
+
             for (size_t i = 0; i + 1 < pathPoints.size(); ++i) {
                 auto collisions = findCollidingNodes(
                     pathPoints[i], pathPoints[i + 1], 
                     nodeLayouts, base.from, base.to);
                 if (!collisions.empty()) {
+                    LOG_DEBUG("[evaluateCombinations] COLLISION at segment {}: ({},{})->({},{}) hits {} nodes",
+                              i, pathPoints[i].x, pathPoints[i].y, 
+                              pathPoints[i + 1].x, pathPoints[i + 1].y, collisions.size());
                     hasNodeCollision = true;
                     break;
                 }
             }
 
             if (hasNodeCollision) {
+                LOG_DEBUG("[evaluateCombinations] Re-running createPathWithObstacleAvoidance for collision fix");
                 // Re-run obstacle avoidance with the current source/target points
                 candidate.bendPoints = createPathWithObstacleAvoidance(
                     candidate.sourcePoint, candidate.targetPoint, 
                     sourceEdge, targetEdge,
                     nodeLayouts, base.from, base.to);
+                LOG_DEBUG("[evaluateCombinations] After obstacle avoidance: {} bends", candidate.bendPoints.size());
             }
         }
     }
@@ -414,7 +427,12 @@ std::vector<std::pair<NodeId, NodeLayout>> GeometricEdgeOptimizer::findColliding
 
     std::vector<std::pair<NodeId, NodeLayout>> colliding;
 
-    // Helper to check if point is inside node
+    // Skip zero-length segments (p1 == p2) - they can't collide with anything
+    if (std::abs(p1.x - p2.x) < EPSILON && std::abs(p1.y - p2.y) < EPSILON) {
+        return colliding;
+    }
+
+    // Helper to check if point is inside node (including boundary)
     auto isPointInsideNode = [](const Point& p, const NodeLayout& n) -> bool {
         return p.x >= n.position.x && p.x <= n.position.x + n.size.width &&
                p.y >= n.position.y && p.y <= n.position.y + n.size.height;
@@ -430,13 +448,18 @@ std::vector<std::pair<NodeId, NodeLayout>> GeometricEdgeOptimizer::findColliding
             continue;
         }
 
-        // Skip nodes that contain segment endpoints (caused by node overlap during drag)
-        // These can't be avoided at path level
-        if (isPointInsideNode(p1, node) || isPointInsideNode(p2, node)) {
+        // ONLY skip when BOTH endpoints are inside the same node (node overlap scenario)
+        // This is unavoidable at path level - the nodes themselves are overlapping
+        if (isPointInsideNode(p1, node) && isPointInsideNode(p2, node)) {
+            LOG_DEBUG("[findCollidingNodes] SKIP node {} - BOTH endpoints inside (overlap)! p1=({},{}) p2=({},{})",
+                      nodeId, p1.x, p1.y, p2.x, p2.y);
             continue;
         }
 
         if (segmentIntersectsNode(p1, p2, node, 0.0f)) {
+            LOG_DEBUG("[findCollidingNodes] COLLISION: segment ({},{})->({},{}) intersects node {} at ({},{} {}x{})",
+                      p1.x, p1.y, p2.x, p2.y, nodeId,
+                      node.position.x, node.position.y, node.size.width, node.size.height);
             colliding.emplace_back(nodeId, node);
         }
     }
@@ -491,25 +514,6 @@ std::vector<Point> GeometricEdgeOptimizer::createDetourAroundNode(
     return detourPoints;
 }
 
-/// Choose correct L-bend point based on source/target edge directions
-/// Returns the bend point that creates orthogonal segments respecting edge constraints
-static Point chooseLBendPoint(
-    const Point& source,
-    const Point& target,
-    NodeEdge sourceEdge,
-    NodeEdge /*targetEdge*/) {
-    
-    bool srcHorizontal = (sourceEdge == NodeEdge::Top || sourceEdge == NodeEdge::Bottom);
-    
-    if (srcHorizontal) {
-        // Source is Top/Bottom: first segment must be vertical -> bend at (source.x, target.y)
-        return {source.x, target.y};
-    } else {
-        // Source is Left/Right: first segment must be horizontal -> bend at (target.x, source.y)
-        return {target.x, source.y};
-    }
-}
-
 std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
     const Point& source,
     const Point& target,
@@ -518,6 +522,11 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     NodeId sourceNodeId,
     NodeId targetNodeId) {
+
+    LOG_DEBUG("[createPathWithObstacleAvoidance] ENTRY: src=({},{}) tgt=({},{}) srcEdge={} tgtEdge={} from={} to={} nodes={}",
+              source.x, source.y, target.x, target.y,
+              static_cast<int>(sourceEdge), static_cast<int>(targetEdge),
+              sourceNodeId, targetNodeId, nodeLayouts.size());
 
     // Build full path as points: source → bends → target
     std::vector<Point> path;
@@ -610,8 +619,13 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
 
             // Convert to pixel at final output
             float finalMidY = midYGrid * gridSize_;
-            path.push_back({source.x, finalMidY});
-            path.push_back({target.x, finalMidY});
+            // Only add intermediate points if midY differs from source.y
+            // Otherwise we'd create duplicate points (source == midPoint)
+            if (std::abs(finalMidY - source.y) > EPSILON) {
+                path.push_back({source.x, finalMidY});
+                path.push_back({target.x, finalMidY});
+            }
+            // else: direct horizontal path from source to target (no bends needed)
         } else {
             // Both vertical: need to go horizontal first (grid-based calculation)
             auto srcGrid = GridPoint::fromPixel(source, gridSize_);
@@ -681,8 +695,13 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
 
             LOG_DEBUG("[createPath] Both vertical: midX={} (grid={}) src=({},{}) tgt=({},{})",
                       midX, midXGrid, source.x, source.y, target.x, target.y);
-            path.push_back({midX, source.y});
-            path.push_back({midX, target.y});
+            // Only add intermediate points if midX differs from source.x
+            // Otherwise we'd create duplicate points (source == midPoint)
+            if (std::abs(midX - source.x) > EPSILON) {
+                path.push_back({midX, source.y});
+                path.push_back({midX, target.y});
+            }
+            // else: direct vertical path from source to target (no bends needed)
         }
     } else {
         // Different orientation - single L-bend
@@ -718,6 +737,8 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
             const Point& p1 = path[i];
             const Point& p2 = path[i + 1];
 
+            // Use Middle position - the "BOTH endpoints inside" check in findCollidingNodes
+            // will handle source/target exclusion for endpoints that touch their own nodes
             auto collisions = findCollidingNodes(p1, p2, nodeLayouts, sourceNodeId, targetNodeId);
             if (collisions.empty()) {
                 continue;
@@ -825,16 +846,8 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
                             bestDetour = {{obsLeft, p1.y}, {obsLeft, exitY}, {p2.x, exitY}};
                         } else if (!detourHasCollision(detourRight)) {
                             bestDetour = {{obsRight, p1.y}, {obsRight, exitY}, {p2.x, exitY}};
-                        } else {
-                            // Fallback: pick left and let next iteration handle it
-                            float distLeft = std::abs(p1.x - obsLeft);
-                            float distRight = std::abs(p1.x - obsRight);
-                            if (distLeft < distRight) {
-                                bestDetour = {{obsLeft, p1.y}, {obsLeft, exitY}, {p2.x, exitY}};
-                            } else {
-                                bestDetour = {{obsRight, p1.y}, {obsRight, exitY}, {p2.x, exitY}};
-                            }
                         }
+                        // No fallback - if both detours collide, bestDetour stays empty
                     }
                 } else {
                     // p2 is outside obstacle's Y range - simple detour works
@@ -913,87 +926,15 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createPathWithObstacleAvoidance(
         result.push_back({cleanPath[i]});
     }
 
-    // If result is empty but source and target are not aligned, we need at least one bend
-    if (result.empty()) {
-        bool directValid = std::abs(source.x - target.x) < EPSILON || 
-                           std::abs(source.y - target.y) < EPSILON;
-        if (!directValid) {
-            // Choose L-bend that respects sourceEdge/targetEdge directions
-            Point bendPoint = chooseLBendPoint(source, target, sourceEdge, targetEdge);
-            
-            // Check if same-orientation edges need Z-path
-            bool srcHorizontal = (sourceEdge == NodeEdge::Top || sourceEdge == NodeEdge::Bottom);
-            bool tgtHorizontal = (targetEdge == NodeEdge::Top || targetEdge == NodeEdge::Bottom);
-            
-            if (srcHorizontal == tgtHorizontal) {
-                // Same orientation: need Z-path with 2 bends (grid-aligned)
-                auto srcGrid = GridPoint::fromPixel(source, gridSize_);
-                auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
-                if (srcHorizontal) {
-                    int midYGrid = (srcGrid.y + tgtGrid.y) / 2;
-                    float midY = midYGrid * gridSize_;
-                    result.push_back({{source.x, midY}});
-                    result.push_back({{target.x, midY}});
-                } else {
-                    int midXGrid = (srcGrid.x + tgtGrid.x) / 2;
-                    float midX = midXGrid * gridSize_;
-                    result.push_back({{midX, source.y}});
-                    result.push_back({{midX, target.y}});
-                }
-            } else {
-                // Different orientation: single L-bend works
-                result.push_back({bendPoint});
-            }
-        }
-    }
+    // No L-bend/Z-path fallback - path should be generated by main logic above
 
-    // === Post-validation: Ensure all segments are orthogonal ===
-    {
-        std::vector<Point> fullPath;
-        fullPath.push_back(source);
-        for (const auto& bp : result) {
-            fullPath.push_back(bp.position);
-        }
-        fullPath.push_back(target);
-        
-        bool hasDiagonal = false;
-        for (size_t j = 0; j + 1 < fullPath.size(); ++j) {
-            float dx = std::abs(fullPath[j + 1].x - fullPath[j].x);
-            float dy = std::abs(fullPath[j + 1].y - fullPath[j].y);
-            if (dx > EPSILON && dy > EPSILON) {
-                hasDiagonal = true;
-                break;
-            }
-        }
-        
-        if (hasDiagonal) {
-            // Diagonal found: regenerate with safe L-bend
-            result.clear();
-            Point bendPoint = chooseLBendPoint(source, target, sourceEdge, targetEdge);
-            
-            // Check if same-orientation edges need Z-path
-            bool srcHoriz = (sourceEdge == NodeEdge::Top || sourceEdge == NodeEdge::Bottom);
-            bool tgtHoriz = (targetEdge == NodeEdge::Top || targetEdge == NodeEdge::Bottom);
-            
-            if (srcHoriz == tgtHoriz) {
-                // Same orientation: need Z-path (grid-aligned)
-                auto srcGrid = GridPoint::fromPixel(source, gridSize_);
-                auto tgtGrid = GridPoint::fromPixel(target, gridSize_);
-                if (srcHoriz) {
-                    int midYGrid = (srcGrid.y + tgtGrid.y) / 2;
-                    float midY = midYGrid * gridSize_;
-                    result.push_back({{source.x, midY}});
-                    result.push_back({{target.x, midY}});
-                } else {
-                    int midXGrid = (srcGrid.x + tgtGrid.x) / 2;
-                    float midX = midXGrid * gridSize_;
-                    result.push_back({{midX, source.y}});
-                    result.push_back({{midX, target.y}});
-                }
-            } else {
-                result.push_back({bendPoint});
-            }
-        }
+    // No post-validation L-bend/Z-path regeneration - trust main path generation
+
+    // Log final path for debugging
+    LOG_DEBUG("[createPathWithObstacleAvoidance] EXIT: {} bends", result.size());
+    for (size_t i = 0; i < result.size(); ++i) {
+        LOG_DEBUG("[createPathWithObstacleAvoidance]   bend[{}] = ({},{})", 
+                  i, result[i].position.x, result[i].position.y);
     }
 
     return result;
@@ -1060,9 +1001,6 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) {
-#if EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[regenerateBendPoints] Edge {} NOT FOUND in edgeLayouts!", edgeId);
-#endif
             continue;
         }
 
@@ -1070,32 +1008,14 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
 
         // Handle self-loops: use collision-aware path generation
         if (layout.from == layout.to) {
-#if EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[regenerateBendPoints] Edge {} is SELF-LOOP (from={}) - using createSelfLoopPath with collision avoidance",
-                      edgeId, layout.from);
-#endif
             auto nodeIt = nodeLayouts.find(layout.from);
             if (nodeIt == nodeLayouts.end()) continue;
 
             layout.bendPoints = createSelfLoopPath(layout, nodeIt->second, nodeLayouts);
 
-#if EDGE_ROUTING_DEBUG
-            std::string bendsStr;
-            for (const auto& bp : layout.bendPoints) {
-                bendsStr += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
-                          + std::to_string(static_cast<int>(bp.position.y)) + ")";
-            }
-            LOG_DEBUG("[regenerateBendPoints] Edge {} SELF-LOOP bends={}{}", edgeId, layout.bendPoints.size(), bendsStr);
-#endif
             continue;
         }
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[regenerateBendPoints] Edge {} src=({},{}) tgt=({},{}) srcEdge={} tgtEdge={}",
-                  edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
-                  layout.targetPoint.x, layout.targetPoint.y,
-                  static_cast<int>(layout.sourceEdge), static_cast<int>(layout.targetEdge));
-#endif
 
         // Use current sourcePoint/targetPoint (already updated by redistribution)
         // and existing sourceEdge/targetEdge (preserve the optimizer's decision)
@@ -1110,14 +1030,6 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
 
         layout.bendPoints = std::move(newBends);
 
-#if EDGE_ROUTING_DEBUG
-        std::string bendsStr2;
-        for (const auto& bp : layout.bendPoints) {
-            bendsStr2 += " (" + std::to_string(static_cast<int>(bp.position.x)) + "," 
-                       + std::to_string(static_cast<int>(bp.position.y)) + ")";
-        }
-        LOG_DEBUG("[regenerateBendPoints] Edge {} after createPath: bends={}{}", edgeId, layout.bendPoints.size(), bendsStr2);
-#endif
 
         // === Verify no node penetration ===
         // The greedy algorithm should have avoided all obstacles, but double-check
@@ -1129,29 +1041,12 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
         }
         pathPoints.push_back(layout.targetPoint);
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[regenerateBendPoints] Edge {} checking {} segments for collision against {} nodes",
-                  edgeId, pathPoints.size() - 1, nodeLayouts.size());
-#endif
 
         for (size_t i = 0; i + 1 < pathPoints.size(); ++i) {
             auto collisions = findCollidingNodes(
                 pathPoints[i], pathPoints[i + 1],
                 nodeLayouts, layout.from, layout.to);
             if (!collisions.empty()) {
-#if EDGE_ROUTING_DEBUG
-                std::string nodeCollisionStr;
-                for (const auto& [nodeId, node] : collisions) {
-                    nodeCollisionStr += " Node" + std::to_string(nodeId) + "(" 
-                                      + std::to_string(static_cast<int>(node.position.x)) + "," 
-                                      + std::to_string(static_cast<int>(node.position.y)) + " " 
-                                      + std::to_string(static_cast<int>(node.size.width)) + "x" 
-                                      + std::to_string(static_cast<int>(node.size.height)) + ")";
-                }
-                LOG_DEBUG("[regenerateBendPoints] Edge {} seg {} ({},{})->({},{}) COLLIDES with {} nodes:{}",
-                          edgeId, i, pathPoints[i].x, pathPoints[i].y, 
-                          pathPoints[i+1].x, pathPoints[i+1].y, collisions.size(), nodeCollisionStr);
-#endif
                 hasCollision = true;
                 break;
             }
@@ -1159,9 +1054,6 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
 
         // If collision still exists, try alternative mid-points with penalty scoring
         if (hasCollision) {
-#if EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[regenerateBendPoints] Edge {} COLLISION detected, trying alternative mid-points", edgeId);
-#endif
             // Create edgeLayouts map for penalty scoring (empty for now - could be enhanced)
             std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
             layout.bendPoints = tryAlternativeMidPoints(
@@ -1175,55 +1067,7 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
                 layout.to);
         }
         
-        // === Final orthogonality validation ===
-        // Ensure no diagonal segments exist after all processing
-        {
-            std::vector<Point> finalPath;
-            finalPath.push_back(layout.sourcePoint);
-            for (const auto& bp : layout.bendPoints) {
-                finalPath.push_back(bp.position);
-            }
-            finalPath.push_back(layout.targetPoint);
-            
-            bool hasDiagonalFinal = false;
-            for (size_t k = 0; k + 1 < finalPath.size(); ++k) {
-                float dx = std::abs(finalPath[k + 1].x - finalPath[k].x);
-                float dy = std::abs(finalPath[k + 1].y - finalPath[k].y);
-                if (dx > EPSILON && dy > EPSILON) {
-                    hasDiagonalFinal = true;
-                    break;
-                }
-            }
-            
-            if (hasDiagonalFinal) {
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[regenerateBendPoints] Edge {} DIAGONAL DETECTED in final validation! Forcing L-bend/Z-path.", edgeId);
-#endif
-                // Force regeneration with safe L-bend path
-                layout.bendPoints.clear();
-                Point bendPt = chooseLBendPoint(
-                    layout.sourcePoint, layout.targetPoint,
-                    layout.sourceEdge, layout.targetEdge);
-                
-                bool srcH = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
-                bool tgtH = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
-                
-                if (srcH == tgtH) {
-                    // Same orientation: Z-path
-                    if (srcH) {
-                        float midY = (layout.sourcePoint.y + layout.targetPoint.y) * 0.5f;
-                        layout.bendPoints.push_back({{layout.sourcePoint.x, midY}});
-                        layout.bendPoints.push_back({{layout.targetPoint.x, midY}});
-                    } else {
-                        float midX = (layout.sourcePoint.x + layout.targetPoint.x) * 0.5f;
-                        layout.bendPoints.push_back({{midX, layout.sourcePoint.y}});
-                        layout.bendPoints.push_back({{midX, layout.targetPoint.y}});
-                    }
-                } else {
-                    layout.bendPoints.push_back({bendPt});
-                }
-            }
-        }
+        // No L-bend/Z-path fallback in regenerateBendPoints - trust main path generation
     }
 }
 
@@ -1424,9 +1268,9 @@ std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
         realBlockingNodes.push_back({nodeId, node});
     }
 
-    // If all blocking nodes contain source/target, return base path
+    // If all blocking nodes contain source/target, return empty - no alternative available
     if (realBlockingNodes.empty()) {
-        return basePath;
+        return {};
     }
 
     for (const auto& [nodeId, node] : realBlockingNodes) {
@@ -1436,9 +1280,9 @@ std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
         maxBlockY = std::max(maxBlockY, node.position.y + node.size.height + MARGIN);
     }
 
-    // If no blocking nodes, just return base path
+    // If no blocking nodes, return empty - no alternative needed
     if (blockingNodes.empty()) {
-        return basePath;
+        return {};
     }
 
     // Check if source/target X/Y are inside blocking bounds
@@ -1522,30 +1366,12 @@ std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
     }
 
     if (bestNoCollision) {
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[tryAlternativeMidPoints] Found collision-free path with score {}", bestNoCollision->score);
-#endif
         return bestNoCollision->bends;
     }
 
-#if EDGE_ROUTING_DEBUG
-    std::string blockingStr;
-    for (const auto& [nid, node] : blockingNodes) {
-        blockingStr += " N" + std::to_string(nid) + "(" 
-                     + std::to_string(static_cast<int>(node.position.x)) + "," 
-                     + std::to_string(static_cast<int>(node.position.y)) + " " 
-                     + std::to_string(static_cast<int>(node.size.width)) + "x" 
-                     + std::to_string(static_cast<int>(node.size.height)) + ")";
-    }
-    LOG_DEBUG("[tryAlternativeMidPoints] src=({},{}) srcNodeId={} tgt=({},{}) tgtNodeId={} blocking={} nodes{}",
-              source.x, source.y, sourceNodeId, target.x, target.y, targetNodeId, blockingNodes.size(), blockingStr);
-    LOG_DEBUG("[tryAlternativeMidPoints] srcInside=({},{}) tgtInside=({},{}) blockBounds X[{},{}] Y[{},{}]",
-              srcXInside, srcYInside, tgtXInside, tgtYInside, minBlockX, maxBlockX, minBlockY, maxBlockY);
-    LOG_DEBUG("[tryAlternativeMidPoints] {} candidates, all collide", candidates.size());
-#endif
 
-    // Fallback: return base path (best we can do)
-    return basePath;
+    // No fallback - return empty if all candidates collide
+    return {};
 }
 
 // =============================================================================

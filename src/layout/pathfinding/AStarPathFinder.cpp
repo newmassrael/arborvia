@@ -7,9 +7,6 @@
 #include <climits>
 
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -238,12 +235,6 @@ PathResult AStarPathFinder::findPath(
             bool directionBlocked = obstacles.isBlockedForDirection(
                 neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
             if (directionBlocked) {
-#if EDGE_ROUTING_DEBUG
-                if (current.pos == start && current.lastDir == MoveDirection::None) {
-                    LOG_DEBUG("[A* DEBUG] FIRST MOVE BLOCKED by direction: from ({},{}) dir={} to ({},{})",
-                              start.x, start.y, static_cast<int>(moveDir), neighborPos.x, neighborPos.y);
-                }
-#endif
                 continue;
             }
 
@@ -253,12 +244,6 @@ PathResult AStarPathFinder::findPath(
                 // But we need to check if the node is excluded
                 bool nodeBlocked = obstacles.isBlocked(neighborPos.x, neighborPos.y, effectiveExclude);
                 if (nodeBlocked) {
-#if EDGE_ROUTING_DEBUG
-                    if (current.pos == start && current.lastDir == MoveDirection::None) {
-                        LOG_DEBUG("[A* DEBUG] FIRST MOVE BLOCKED by node: from ({},{}) dir={} to ({},{})",
-                                  start.x, start.y, static_cast<int>(moveDir), neighborPos.x, neighborPos.y);
-                    }
-#endif
                     continue;
                 }
                 // Cell is passable with exclusions, use base cost

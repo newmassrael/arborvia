@@ -34,9 +34,6 @@
 #include <unordered_map>
 
 // Debug flag for edge routing
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 

@@ -700,24 +700,21 @@ public:
                 newY = std::round(newY / gridSize) * gridSize;
             }
 
-            // Full validation using ConstraintManager
+            // Early exit if position hasn't changed (prevents unnecessary work every frame)
+            constexpr float EPSILON = 0.001f;
             Point proposedPosition = {newX, newY};
+            if (std::abs(proposedPosition.x - layout.position.x) < EPSILON &&
+                std::abs(proposedPosition.y - layout.position.y) < EPSILON) {
+                // Position unchanged - skip all processing
+                // This is critical because ImGui::IsMouseDragging returns true every frame while mouse button is held
+                return;
+            }
+
+            // Position changed - do full validation using ConstraintManager
             LOG_DEBUG("[Demo::drag] graphMouse=({},{}) dragOffset=({},{}) newX={} newY={} proposedPosition=({},{})",
                       graphMouse.x, graphMouse.y, dragOffset_.x, dragOffset_.y, newX, newY, proposedPosition.x, proposedPosition.y);
 
-            // Debug: Log current state of nodeLayouts
-            LOG_DEBUG("[Demo::drag] nodeLayouts state before constraint check:");
-            for (const auto& [nid, nl] : nodeLayouts_) {
-                LOG_DEBUG("[Demo::drag]   node {} pos=({},{}) size=({},{})",
-                          nid, nl.position.x, nl.position.y, nl.size.width, nl.size.height);
-            }
-            LOG_DEBUG("[Demo::drag] draggedNode_={} constraintManager_={} gridSize_={}",
-                      draggedNode_, constraintManager_ ? "valid" : "null", gridSize_);
-
             ConstraintContext ctx{draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
-            LOG_DEBUG("[Demo::drag] ConstraintContext created: nodeId={} newPosition=({},{}) nodeLayouts.size={} edgeLayouts.size={}",
-                      ctx.nodeId, ctx.newPosition.x, ctx.newPosition.y, ctx.nodeLayouts.size(), ctx.edgeLayouts.size());
-
             auto validation = constraintManager_->validate(ctx);
             LOG_DEBUG("[Demo::drag] validation result: valid={} failedConstraint={} reason={}",
                       validation.valid, validation.failedConstraint, validation.reason);
@@ -732,13 +729,9 @@ public:
                 lastValidPosition_ = proposedPosition;
                 manualManager_->setNodePosition(draggedNode_, layout.position);
 
-                // Re-route connected edges only when position actually changed
-                // This prevents flickering when mouse is stationary
+                // Re-route connected edges (position change already verified above)
                 // Skip rerouting in HideUntilDrop mode - edges will be calculated on drop
-                constexpr float EPSILON = 0.001f;
-                if (layoutOptions_.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop &&
-                    (std::abs(proposedPosition.x - lastRoutedPosition_.x) > EPSILON ||
-                     std::abs(proposedPosition.y - lastRoutedPosition_.y) > EPSILON)) {
+                if (layoutOptions_.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
                     rerouteAffectedEdges();
                     lastRoutedPosition_ = proposedPosition;
                 }

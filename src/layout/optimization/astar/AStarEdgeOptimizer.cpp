@@ -15,9 +15,6 @@
 #include <thread>
 #include <unordered_set>
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -391,30 +388,9 @@ AStarEdgeOptimizer::evaluateCombinations(
             if (passesHardConstraints(baseLayout, ctx)) {
                 int score = calculatePenalty(baseLayout, ctx);
                 results.push_back({srcEdge, tgtEdge, score, baseLayout, true});
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[Preserve] Edge {} original path ACCEPTED, score={}", baseLayout.id, score);
-#endif
                 return;  // Use original path, no need to generate new one
             }
-#if EDGE_ROUTING_DEBUG
-            else {
-                // Print why original path failed
-                LOG_DEBUG("[Preserve] Edge {} original path FAILED hard constraints:", baseLayout.id);
-                auto breakdown = penaltySystem_->calculatePenaltyBreakdown(baseLayout, ctx);
-                for (const auto& [name, penalty] : breakdown) {
-                    if (penalty > 0) {
-                        LOG_DEBUG("  - {}: {}", name, penalty);
-                    }
-                }
-            }
-#endif
         }
-#if EDGE_ROUTING_DEBUG
-        else if (srcEdge == baseLayout.sourceEdge && tgtEdge == baseLayout.targetEdge &&
-                 !baseLayout.bendPoints.empty()) {
-            LOG_DEBUG("[Preserve] Edge {} snap points changed, cannot preserve original path", baseLayout.id);
-        }
-#endif
 
         // Generate new path with A*
         bool pathFound = false;
@@ -1156,15 +1132,9 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         }
 
         if (dirtyEdges.empty()) {
-#if EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[RipUp] Iteration {}: No overlaps, done", iteration);
-#endif
             break;  // No overlaps, we're done
         }
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[RipUp] Iteration {}: {} edges with overlaps", iteration, dirtyEdges.size());
-#endif
 
         // Re-route dirty edges using UnifiedRetryChain
         for (EdgeId dirtyId : dirtyEdges) {
@@ -1196,15 +1166,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                     edgeLayouts[reroutedLayout.id] = reroutedLayout;
                 }
 
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[RipUp] Edge {} re-routed via UnifiedRetryChain", dirtyId);
-#endif
             }
-#if EDGE_ROUTING_DEBUG
-            else {
-                LOG_DEBUG("[RipUp] Edge {} re-route failed: {}", dirtyId, result.failureReason);
-            }
-#endif
         }
     }
 }
@@ -1625,17 +1587,6 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
             otherLayouts, nodeLayouts, forbiddenZones, gridSize);
     }
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[CoopReroute] Edges {} & {} stats: totalCombos={} pathFoundA={} passedHardA={} pathFoundB={} passedHardB={} noOverlap={}",
-              edgeIdA, edgeIdB, totalCombos, pathFoundACount, passedHardA, pathFoundBCount, passedHardB, noOverlapCount);
-    if (bestResult.valid) {
-        LOG_DEBUG("[CoopReroute] Edges {} & {}: found valid pair with score {}",
-                  edgeIdA, edgeIdB, bestResult.combinedScore);
-    } else {
-        LOG_DEBUG("[CoopReroute] Edges {} & {}: no valid non-overlapping pair found",
-                  edgeIdA, edgeIdB);
-    }
-#endif
 
     return bestResult;
 }

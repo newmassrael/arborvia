@@ -8,9 +8,6 @@
 #include <algorithm>
 #include "arborvia/common/Logger.h"
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -104,10 +101,6 @@ int SegmentOverlapPenalty::calculatePenalty(
     const PenaltyContext& context) const {
 
     if (PathIntersection::hasOverlapWithOthers(candidate, context.assignedLayouts, candidate.id)) {
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[SegmentOverlapPenalty] Edge {} OVERLAPS with others, returning {}",
-                  candidate.id, defaultWeight());
-#endif
         return defaultWeight();
     }
     return 0;

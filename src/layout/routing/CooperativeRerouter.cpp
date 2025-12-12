@@ -65,9 +65,6 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
         return result;
     }
 
-#ifdef EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[CoopReroute] B's expected path: {} grid points", myExpectedPath.size());
-#endif
 
     // Step 3: Reserve B's expected path in obstacle map
     reservePathInObstacles(obstacles, edgeId, myExpectedPath);
@@ -75,9 +72,6 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
     // Step 4: Find blocking edges (A) that overlap with B's expected path
     auto blockingEdges = findBlockingEdges(currentLayout, myExpectedPath, otherLayouts, obstacles);
 
-#ifdef EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[CoopReroute] Found {} blocking edges", blockingEdges.size());
-#endif
 
     // Step 5: Reroute blocking edges (A) to avoid B's reserved area
     for (EdgeId blockingId : blockingEdges) {
@@ -112,15 +106,9 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
             aPath.push_back(obstacles.pixelToGrid(newBlockingLayout.targetPoint));
             obstacles.markEdgePath(blockingId, aPath);
 
-#ifdef EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[CoopReroute] Edge {} rerouted to avoid edge {}", blockingId, edgeId);
-#endif
         } else {
             // Track failed reroute
             result.failedReroutes.push_back(blockingId);
-#ifdef EDGE_ROUTING_DEBUG
-            LOG_DEBUG("[CoopReroute] Edge {} could not find alternative route", blockingId);
-#endif
         }
     }
 
@@ -134,9 +122,6 @@ CooperativeRerouter::RerouteResult CooperativeRerouter::rerouteWithCooperation(
     if (bPathFound) {
         result.success = true;
         result.layout = bLayout;
-#ifdef EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[CoopReroute] B's path calculated: {} bendPoints", bLayout.bendPoints.size());
-#endif
     } else {
         result.failureReason = "B failed to find path after rerouting blocking edges";
         result.layout = currentLayout;

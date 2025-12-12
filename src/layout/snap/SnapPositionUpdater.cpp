@@ -10,9 +10,6 @@
 #include <cmath>
 #include <iostream>
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 

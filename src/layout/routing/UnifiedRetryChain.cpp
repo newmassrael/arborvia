@@ -288,9 +288,6 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
 
     // If neither endpoint can be modified, skip this step
     if (!canModifySource && !canModifyTarget) {
-#ifdef EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[UnifiedRetryChain] Edge {} skipping snap variations (neither node moved)", edgeId);
-#endif
         result.failureReason = "Neither node moved, snap variations skipped";
         return result;
     }
@@ -414,9 +411,6 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
 
     // If neither endpoint can be modified, skip this step
     if (!canModifySource && !canModifyTarget) {
-#ifdef EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[UnifiedRetryChain] Edge {} skipping NodeEdge switch (neither node moved)", edgeId);
-#endif
         result.failureReason = "Neither node moved, NodeEdge switch skipped";
         return result;
     }

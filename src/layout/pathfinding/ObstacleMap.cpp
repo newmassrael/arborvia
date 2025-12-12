@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <cmath>
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -238,10 +235,6 @@ void ObstacleMap::addEdgeSegments(
         edgeSegmentCells_.resize(grid_.size(), false);
     }
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] addEdgeSegments: excluding={} total={} gridBounds: offset=({},{}) size=({}x{}) gridSize={}",
-              excludeEdgeId, edgeLayouts.size(), offsetX_, offsetY_, width_, height_, gridSize_);
-#endif
 
     for (const auto& [edgeId, layout] : edgeLayouts) {
         if (edgeId == excludeEdgeId) {
@@ -249,9 +242,6 @@ void ObstacleMap::addEdgeSegments(
         }
         // Note: Self-loops are NOT skipped - they should block other edges too
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[ObstacleMap] Adding edge {} segments", edgeId);
-#endif
 
         // Build segments from edge layout
         std::vector<std::pair<Point, Point>> segments;
@@ -264,21 +254,10 @@ void ObstacleMap::addEdgeSegments(
         // - First segment: skip start cell (source snap point)
         // - Last segment: skip end cell (target snap point)
         // - Middle segments: full blocking
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[ObstacleMap] Edge {} has {} segments:", edgeId, segments.size());
-#endif
         for (size_t i = 0; i < segments.size(); ++i) {
             bool skipStartCell = (i == 0);  // First segment: skip source point
             bool skipEndCell = (i + 1 == segments.size());  // Last segment: skip target point
             
-#if EDGE_ROUTING_DEBUG
-            std::string skipInfo = "";
-            if (skipStartCell) skipInfo += " (skip-start)";
-            if (skipEndCell) skipInfo += " (skip-end)";
-            LOG_DEBUG("    seg[{}] ({},{})->({},{}) BLOCKED{}",
-                      i, segments[i].first.x, segments[i].first.y,
-                      segments[i].second.x, segments[i].second.y, skipInfo);
-#endif
             markSegmentBlockedWithSkip(segments[i].first, segments[i].second, skipStartCell, skipEndCell);
         }
     }
@@ -290,9 +269,6 @@ void ObstacleMap::addSingleEdgeSegments(const EdgeLayout& layout) {
         edgeSegmentCells_.resize(grid_.size(), false);
     }
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] addSingleEdgeSegments: edge={}", layout.id);
-#endif
 
     // Build segments from edge layout
     std::vector<std::pair<Point, Point>> segments;
@@ -305,21 +281,10 @@ void ObstacleMap::addSingleEdgeSegments(const EdgeLayout& layout) {
     // - First segment: skip start cell (source snap point)
     // - Last segment: skip end cell (target snap point)
     // - Middle segments: full blocking
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] Edge {} has {} segments:", layout.id, segments.size());
-#endif
     for (size_t i = 0; i < segments.size(); ++i) {
         bool skipStartCell = (i == 0);  // First segment: skip source point
         bool skipEndCell = (i + 1 == segments.size());  // Last segment: skip target point
         
-#if EDGE_ROUTING_DEBUG
-        std::string skipInfo = "";
-        if (skipStartCell) skipInfo += " (skip-start)";
-        if (skipEndCell) skipInfo += " (skip-end)";
-        LOG_DEBUG("    seg[{}] ({},{})->({},{}) BLOCKED{}",
-                  i, segments[i].first.x, segments[i].first.y,
-                  segments[i].second.x, segments[i].second.y, skipInfo);
-#endif
         markSegmentBlockedWithSkip(segments[i].first, segments[i].second, skipStartCell, skipEndCell);
     }
 }
@@ -345,10 +310,6 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
     GridPoint g1 = pixelToGrid(p1);
     GridPoint g2 = pixelToGrid(p2);
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[MARK-SEG-INPUT] pixel ({},{})->({},{}) => grid ({},{})->({},{}) gridSize={}",
-              p1.x, p1.y, p2.x, p2.y, g1.x, g1.y, g2.x, g2.y, gridSize_);
-#endif
 
     // Determine if horizontal or vertical
     if (g1.y == g2.y) {
@@ -362,24 +323,12 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
         int actualEndX = (skipEndCell && g2.x == endX) ? endX - 1 :
                          (skipStartCell && g1.x == endX) ? endX - 1 : endX;
         
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[MARK-SEG] HORIZONTAL y={} x=[{}..{}] (original x=[{}..{}] skipStart={} skipEnd={})",
-                  g1.y, actualStartX, actualEndX, startX, endX, skipStartCell, skipEndCell);
-#endif
         for (int gx = actualStartX; gx <= actualEndX; ++gx) {
             int idx = toIndex(gx, g1.y);
             if (idx >= 0) {
                 grid_[idx].horizontalSegment = true;
                 edgeSegmentCells_[idx] = true;
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[MARK-SEG]   cell({},{}) -> horizontalSegment=true", gx, g1.y);
-#endif
             }
-#if EDGE_ROUTING_DEBUG
-            else {
-                LOG_DEBUG("[MARK-SEG]   cell({},{}) OUT OF BOUNDS (skipped)", gx, g1.y);
-            }
-#endif
         }
     } else if (g1.x == g2.x) {
         // Vertical segment
@@ -392,24 +341,12 @@ void ObstacleMap::markSegmentBlockedWithSkip(const Point& p1, const Point& p2, b
         int actualEndY = (skipEndCell && g2.y == endY) ? endY - 1 :
                          (skipStartCell && g1.y == endY) ? endY - 1 : endY;
         
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[MARK-SEG] VERTICAL x={} y=[{}..{}] (original y=[{}..{}] skipStart={} skipEnd={})",
-                  g1.x, actualStartY, actualEndY, startY, endY, skipStartCell, skipEndCell);
-#endif
         for (int gy = actualStartY; gy <= actualEndY; ++gy) {
             int idx = toIndex(g1.x, gy);
             if (idx >= 0) {
                 grid_[idx].verticalSegment = true;
                 edgeSegmentCells_[idx] = true;
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[MARK-SEG]   cell({},{}) -> verticalSegment=true", g1.x, gy);
-#endif
             }
-#if EDGE_ROUTING_DEBUG
-            else {
-                LOG_DEBUG("[MARK-SEG]   cell({},{}) OUT OF BOUNDS (skipped)", g1.x, gy);
-            }
-#endif
         }
     }
     // Diagonal segments are ignored for skip logic (shouldn't happen in orthogonal routing)
@@ -557,10 +494,6 @@ bool ObstacleMap::isBlockedForDirection(int gridX, int gridY,
         // Check if any blocking node is not excluded
         for (NodeId blockingNode : cell.blockingNodes) {
             if (exclude.find(blockingNode) == exclude.end()) {
-#if EDGE_ROUTING_DEBUG
-                LOG_DEBUG("[DIR-BLOCK] Cell ({},{}) BLOCKED by NODE {} dir={}",
-                          gridX, gridY, blockingNode, static_cast<int>(moveDir));
-#endif
                 return true;  // Found non-excluded blocking node
             }
         }
@@ -846,9 +779,6 @@ void ObstacleMap::markEdgePath(EdgeId edgeId, const std::vector<GridPoint>& path
         }
     }
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] markEdgePath: edge={} path_size={}", edgeId, path.size());
-#endif
 }
 
 void ObstacleMap::clearEdgePath(EdgeId edgeId) {
@@ -885,9 +815,6 @@ void ObstacleMap::clearEdgePath(EdgeId edgeId) {
     // Remove the path
     edgePaths_.erase(it);
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] clearEdgePath: edge={}", edgeId);
-#endif
 }
 
 void ObstacleMap::clearAllEdgePaths() {
@@ -895,9 +822,6 @@ void ObstacleMap::clearAllEdgePaths() {
     edgeCostOverlay_.clear();
     cellToEdges_.clear();
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[ObstacleMap] clearAllEdgePaths");
-#endif
 }
 
 

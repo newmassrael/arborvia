@@ -7,9 +7,6 @@
 #include <cmath>
 #include "arborvia/common/Logger.h"
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -109,11 +106,6 @@ void PathCalculator::handleSelfLoop(
         layout.bendPoints.push_back({tgtExt});
     }
     
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[PathCalculator] Edge {} SELF-LOOP: src=({},{}) tgt=({},{}) bends={}",
-              layout.id, layout.sourcePoint.x, layout.sourcePoint.y,
-              layout.targetPoint.x, layout.targetPoint.y, layout.bendPoints.size());
-#endif
 }
 
 bool PathCalculator::tryAStarPathfinding(
@@ -143,19 +135,12 @@ bool PathCalculator::tryAStarPathfinding(
             otherEdges[reroutedLayout.id] = reroutedLayout;
         }
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[PathCalculator] Edge {} SUCCESS via UnifiedRetryChain astarAttempts={} cooperativeAttempts={} bends={}",
-                  layout.id, result.astarAttempts, result.cooperativeAttempts, layout.bendPoints.size());
-#endif
         return true;
     }
 
     // All attempts failed
     layout.bendPoints.clear();
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[PathCalculator] Edge {} ALL RETRIES FAILED! reason={}", layout.id, result.failureReason);
-#endif
     return false;
 }
 

@@ -5,9 +5,6 @@
 #include <cmath>
 #include "arborvia/common/Logger.h"
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -112,19 +109,12 @@ bool EdgePathFixer::detectAndFixDiagonals(
             edgeLayouts[reroutedLayout.id] = reroutedLayout;
         }
 
-#if EDGE_ROUTING_DEBUG
-        LOG_DEBUG("[EdgePathFixer] Edge {} fixed via UnifiedRetryChain astarAttempts={} cooperativeAttempts={}",
-                  edgeId, result.astarAttempts, result.cooperativeAttempts);
-#endif
         return true;
     }
 
     // Retry failed - restore original layout
     layout = originalLayout;
 
-#if EDGE_ROUTING_DEBUG
-    LOG_DEBUG("[EdgePathFixer] Edge {} fix FAILED: {}", edgeId, result.failureReason);
-#endif
     return false;
 }
 

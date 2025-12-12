@@ -8,9 +8,6 @@
 #include <cmath>
 #include "arborvia/common/Logger.h"
 
-#ifndef EDGE_ROUTING_DEBUG
-#define EDGE_ROUTING_DEBUG 0
-#endif
 
 namespace arborvia {
 
@@ -140,12 +137,6 @@ void DragOptimizationHandler::applyPostNudging(
     EdgeNudger nudger(nudgeConfig);
     auto nudgeResult = nudger.applyNudging(edgeLayouts);
 
-#if EDGE_ROUTING_DEBUG
-    if (nudgeResult.totalOverlaps > 0) {
-        LOG_DEBUG("[EdgeNudger] Applied nudging to {} overlap groups, {} segments adjusted",
-                  nudgeResult.totalOverlaps, nudgeResult.nudgedSegments.size());
-    }
-#endif
 
     // Apply nudged positions
     for (const auto& nudged : nudgeResult.nudgedSegments) {
