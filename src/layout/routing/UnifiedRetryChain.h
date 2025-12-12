@@ -54,7 +54,9 @@ public:
         bool valid = true;                             ///< Whether path meets all constraints
         bool hasOverlap = false;                       ///< Path overlaps with other edges
         bool hasDiagonal = false;                      ///< Path contains diagonal (non-orthogonal) segments
-        bool hasNodePenetration = false;               ///< Path penetrates a node
+        bool hasNodePenetration = false;               ///< Path penetrates a non-source/target node
+        bool hasSourcePenetration = false;             ///< Intermediate segment penetrates source node
+        bool hasTargetPenetration = false;             ///< Intermediate segment penetrates target node
         std::vector<EdgeId> overlappingEdges;          ///< IDs of edges this path overlaps with
         std::vector<OverlapDetail> overlapDetails;     ///< Detailed overlap information
     };

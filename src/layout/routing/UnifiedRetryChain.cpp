@@ -4,6 +4,7 @@
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 #include "../snap/SnapPointCalculator.h"
+#include "arborvia/layout/constraints/ConstraintGateway.h"
 
 #include "arborvia/common/Logger.h"
 #include <array>
@@ -43,7 +44,13 @@ namespace {
             LOG_DEBUG("  - DIAGONAL segment (non-orthogonal)");
         }
         if (validation.hasNodePenetration) {
-            LOG_DEBUG("  - NODE PENETRATION");
+            LOG_DEBUG("  - NODE PENETRATION (non-source/target)");
+        }
+        if (validation.hasSourcePenetration) {
+            LOG_DEBUG("  - SOURCE PENETRATION (intermediate segment penetrates source node)");
+        }
+        if (validation.hasTargetPenetration) {
+            LOG_DEBUG("  - TARGET PENETRATION (intermediate segment penetrates target node)");
         }
     }
 }  // anonymous namespace
@@ -539,87 +546,60 @@ UnifiedRetryChain::PathValidationResult UnifiedRetryChain::validatePathResult(
 
     PathValidationResult result;
 
-    // Build full path: source -> bends -> target
-    std::vector<Point> fullPath;
-    fullPath.push_back(layout.sourcePoint);
-    for (const auto& bp : layout.bendPoints) {
-        fullPath.push_back(bp.position);
-    }
-    fullPath.push_back(layout.targetPoint);
+    // Use ConstraintGateway for centralized constraint checking
+    ConstraintGateway gateway;
+    auto gatewayResult = gateway.validatePathResult(edgeId, layout, otherEdges, nodeLayouts);
 
-    // Check 1: Segment overlaps with other edges (with detailed info)
-    for (const auto& [otherId, otherLayout] : otherEdges) {
-        if (otherId == edgeId) continue;
-        
-        // Build other edge's full path
-        std::vector<Point> otherPath;
-        otherPath.push_back(otherLayout.sourcePoint);
-        for (const auto& bp : otherLayout.bendPoints) {
-            otherPath.push_back(bp.position);
+    // Map gateway result to our PathValidationResult
+    result.valid = gatewayResult.valid;
+    result.hasOverlap = gatewayResult.hasOverlap;
+    result.hasDiagonal = gatewayResult.hasDiagonal;
+    result.hasNodePenetration = gatewayResult.hasNodePenetration;
+    result.hasSourcePenetration = gatewayResult.hasSourcePenetration;
+    result.hasTargetPenetration = gatewayResult.hasTargetPenetration;
+    result.overlappingEdges = gatewayResult.overlappingEdges;
+
+    // Generate detailed overlap information (for logging purposes)
+    // The gateway provides the edge IDs, but we generate details here for backward compatibility
+    if (result.hasOverlap) {
+        std::vector<Point> fullPath;
+        fullPath.push_back(layout.sourcePoint);
+        for (const auto& bp : layout.bendPoints) {
+            fullPath.push_back(bp.position);
         }
-        otherPath.push_back(otherLayout.targetPoint);
-        
-        // Check each segment pair for overlap
-        bool foundOverlap = false;
-        for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
-            for (size_t j = 0; j + 1 < otherPath.size(); ++j) {
-                if (PathIntersection::segmentsOverlap(
-                        fullPath[i], fullPath[i + 1],
-                        otherPath[j], otherPath[j + 1])) {
-                    if (!foundOverlap) {
-                        result.hasOverlap = true;
-                        result.overlappingEdges.push_back(otherId);
-                        foundOverlap = true;
+        fullPath.push_back(layout.targetPoint);
+
+        for (EdgeId otherId : result.overlappingEdges) {
+            auto it = otherEdges.find(otherId);
+            if (it == otherEdges.end()) continue;
+            const auto& otherLayout = it->second;
+
+            std::vector<Point> otherPath;
+            otherPath.push_back(otherLayout.sourcePoint);
+            for (const auto& bp : otherLayout.bendPoints) {
+                otherPath.push_back(bp.position);
+            }
+            otherPath.push_back(otherLayout.targetPoint);
+
+            for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
+                for (size_t j = 0; j + 1 < otherPath.size(); ++j) {
+                    if (PathIntersection::segmentsOverlap(
+                            fullPath[i], fullPath[i + 1],
+                            otherPath[j], otherPath[j + 1])) {
+                        OverlapDetail detail;
+                        detail.otherEdgeId = otherId;
+                        detail.thisSegmentIndex = static_cast<int>(i);
+                        detail.otherSegmentIndex = static_cast<int>(j);
+                        detail.thisSegStart = fullPath[i];
+                        detail.thisSegEnd = fullPath[i + 1];
+                        detail.otherSegStart = otherPath[j];
+                        detail.otherSegEnd = otherPath[j + 1];
+                        result.overlapDetails.push_back(detail);
                     }
-                    // Add detail
-                    OverlapDetail detail;
-                    detail.otherEdgeId = otherId;
-                    detail.thisSegmentIndex = static_cast<int>(i);
-                    detail.otherSegmentIndex = static_cast<int>(j);
-                    detail.thisSegStart = fullPath[i];
-                    detail.thisSegEnd = fullPath[i + 1];
-                    detail.otherSegStart = otherPath[j];
-                    detail.otherSegEnd = otherPath[j + 1];
-                    result.overlapDetails.push_back(detail);
                 }
             }
         }
     }
-
-    // Check 2: Diagonal segments (non-orthogonal paths)
-    auto checkDiagonal = [](const Point& p1, const Point& p2) -> bool {
-        constexpr float EPSILON = 1.0f;
-        float dx = std::abs(p1.x - p2.x);
-        float dy = std::abs(p1.y - p2.y);
-        // Diagonal if neither horizontal (dy < EPSILON) nor vertical (dx < EPSILON)
-        return dx > EPSILON && dy > EPSILON;
-    };
-
-    for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
-        if (checkDiagonal(fullPath[i], fullPath[i + 1])) {
-            result.hasDiagonal = true;
-            break;
-        }
-    }
-
-    // Check 3: Node penetration (segment crosses through a node)
-    for (const auto& [nodeId, nodeLayout] : nodeLayouts) {
-        // Skip source and target nodes
-        if (nodeId == layout.from || nodeId == layout.to) continue;
-
-        for (size_t i = 0; i + 1 < fullPath.size(); ++i) {
-            if (geometry::segmentIntersectsAABB(
-                fullPath[i], fullPath[i + 1],
-                nodeLayout.position, nodeLayout.size)) {
-                result.hasNodePenetration = true;
-                break;
-            }
-        }
-        if (result.hasNodePenetration) break;
-    }
-
-    // Set overall valid flag
-    result.valid = !result.hasOverlap && !result.hasDiagonal && !result.hasNodePenetration;
 
     return result;
 }

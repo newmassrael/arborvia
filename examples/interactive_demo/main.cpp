@@ -8,6 +8,7 @@
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
 #include <arborvia/layout/api/LayoutController.h>
 #include <arborvia/layout/config/ConstraintConfig.h>
+#include <arborvia/layout/constraints/ConstraintGateway.h>
 #include "../../src/layout/interactive/ConstraintManager.h"
 #include <arborvia/layout/interactive/SnapPointController.h>
 #include "../../src/layout/pathfinding/ObstacleMap.h"
@@ -1988,67 +1989,43 @@ private:
             commandServer_.sendResponse(layoutJson);
         }
         else if (cmd.name == "check_penetration") {
-            // Check if any edge penetrates any node
-            int count = 0;
+            // Use ConstraintGateway for centralized constraint checking
+            ConstraintGateway gateway;
+            auto results = gateway.validateAll(edgeLayouts_, nodeLayouts_, gridSize_);
+
             std::ostringstream oss;
-            oss << "PENETRATION";
-            for (const auto& [edgeId, el] : edgeLayouts_) {
-                for (const auto& [nodeId, nl] : nodeLayouts_) {
-                    if (nodeId == el.from || nodeId == el.to) continue;
+            oss << "VIOLATIONS";
+            int totalCount = 0;
 
-                    // Check if edge path intersects node bounds
-                    auto checkSegment = [&](const Point& p1, const Point& p2) {
-                        // Simple bounding box check
-                        float minX = std::min(p1.x, p2.x);
-                        float maxX = std::max(p1.x, p2.x);
-                        float minY = std::min(p1.y, p2.y);
-                        float maxY = std::max(p1.y, p2.y);
-
-                        float nodeMinX = nl.position.x;
-                        float nodeMaxX = nl.position.x + nl.size.width;
-                        float nodeMinY = nl.position.y;
-                        float nodeMaxY = nl.position.y + nl.size.height;
-
-                        // Check overlap
-                        if (maxX > nodeMinX && minX < nodeMaxX &&
-                            maxY > nodeMinY && minY < nodeMaxY) {
-                            // More precise check for orthogonal segments
-                            if (p1.x == p2.x) { // Vertical segment
-                                if (p1.x > nodeMinX && p1.x < nodeMaxX) {
-                                    float segMinY = std::min(p1.y, p2.y);
-                                    float segMaxY = std::max(p1.y, p2.y);
-                                    if (segMaxY > nodeMinY && segMinY < nodeMaxY) {
-                                        return true;
-                                    }
-                                }
-                            } else if (p1.y == p2.y) { // Horizontal segment
-                                if (p1.y > nodeMinY && p1.y < nodeMaxY) {
-                                    float segMinX = std::min(p1.x, p2.x);
-                                    float segMaxX = std::max(p1.x, p2.x);
-                                    if (segMaxX > nodeMinX && segMinX < nodeMaxX) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        return false;
-                    };
-
-                    std::vector<Point> path;
-                    path.push_back(el.sourcePoint);
-                    for (const auto& bp : el.bendPoints) path.push_back(bp.position);
-                    path.push_back(el.targetPoint);
-
-                    for (size_t i = 0; i + 1 < path.size(); ++i) {
-                        if (checkSegment(path[i], path[i+1])) {
-                            oss << " e" << edgeId << "->n" << nodeId;
-                            count++;
+            for (const auto& [edgeId, result] : results) {
+                for (const auto& violation : result.violations) {
+                    totalCount++;
+                    oss << " e" << edgeId << ":";
+                    switch (violation.type) {
+                        case ConstraintViolationType::NodePenetration:
+                            oss << "NodePen";
+                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
                             break;
-                        }
+                        case ConstraintViolationType::DirectionalSourcePenetration:
+                            oss << "SrcPen";
+                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
+                            break;
+                        case ConstraintViolationType::DirectionalTargetPenetration:
+                            oss << "TgtPen";
+                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
+                            break;
+                        case ConstraintViolationType::Orthogonality:
+                            oss << "Diagonal";
+                            if (violation.segmentIndex >= 0) oss << "[" << violation.segmentIndex << "]";
+                            break;
+                        case ConstraintViolationType::SegmentOverlap:
+                            oss << "Overlap";
+                            if (violation.otherEdgeId) oss << "->e" << *violation.otherEdgeId;
+                            break;
                     }
                 }
             }
-            oss << " count=" << count;
+            oss << " count=" << totalCount;
             commandServer_.sendResponse(oss.str());
         }
         else if (cmd.name == "get_log") {

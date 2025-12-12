@@ -165,6 +165,8 @@ EdgeLayout SelfLoopRouter::route(
 
     // CONSTRAINT: Self-loops must use adjacent edges (not same or opposite)
     // Each direction routes from one edge to an adjacent edge at a corner
+    // Reserve space for 3 bend points (all cases use exactly 3)
+    layout.bendPoints.reserve(3);
     switch (dir) {
         case SelfLoopDirection::Right:
             // Right → Top (top-right corner)

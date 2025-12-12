@@ -56,12 +56,21 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/interactive/ConstraintManager.cpp
     src/layout/interactive/DragOptimizationHandler.cpp
 
-    # Constraints
+    # Constraints (node drag constraints)
     src/layout/constraints/DirectionAwareMarginConstraint.cpp
     src/layout/constraints/NoOverlapConstraint.cpp
     src/layout/constraints/EdgePathValidityConstraint.cpp
     src/layout/constraints/BoundaryConstraint.cpp
     src/layout/constraints/PositionFinder.cpp
+
+    # Constraint Gateway (edge constraint validation)
+    src/layout/constraints/ConstraintViolation.cpp
+    src/layout/constraints/ConstraintRegistry.cpp
+    src/layout/constraints/ConstraintGateway.cpp
+    src/layout/constraints/builtins/OrthogonalityConstraint.cpp
+    src/layout/constraints/builtins/NodePenetrationConstraint.cpp
+    src/layout/constraints/builtins/DirectionalPenetrationConstraint.cpp
+    src/layout/constraints/builtins/SegmentOverlapConstraint.cpp
 
     # API (centralized controllers)
     src/layout/api/LayoutController.cpp

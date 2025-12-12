@@ -844,7 +844,7 @@ std::vector<EdgeId> LayoutUtils::redistributeSnapPoints(
     float fixedPosition,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-    const Graph& graph,
+    [[maybe_unused]] const Graph& graph,
     const LayoutOptions& options) {
 
     std::vector<EdgeId> redistributed;

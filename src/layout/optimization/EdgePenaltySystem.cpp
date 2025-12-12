@@ -18,6 +18,7 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createDefault() {
     system->addPenalty(std::make_unique<ForbiddenZonePenalty>());
     system->addPenalty(std::make_unique<OrthogonalityPenalty>());
     system->addPenalty(std::make_unique<FixedEndpointPenalty>());
+    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
 
     // Soft penalties
     system->addPenalty(std::make_unique<PathIntersectionPenalty>(1000));
@@ -34,6 +35,7 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createMinimal() {
     system->addPenalty(std::make_unique<DirectionPenalty>());
     system->addPenalty(std::make_unique<SnapPointOverlapPenalty>());
     system->addPenalty(std::make_unique<OrthogonalityPenalty>());
+    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
 
     return system;
 }
@@ -50,6 +52,7 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createStrict() {
     system->addPenalty(std::make_unique<SelfOverlapPenalty>(30.0f));   // Stricter segment
     system->addPenalty(std::make_unique<ForbiddenZonePenalty>());
     system->addPenalty(std::make_unique<OrthogonalityPenalty>());
+    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
 
     // Higher weight for soft penalties
     system->addPenalty(std::make_unique<PathIntersectionPenalty>(2000));

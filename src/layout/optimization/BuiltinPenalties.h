@@ -141,4 +141,26 @@ private:
     float tolerance_;
 };
 
+/// Penalty for intermediate segments penetrating source/target nodes (Hard Constraint)
+/// First segment can touch source, last segment can touch target.
+/// All other segments must NOT penetrate source or target node interior.
+/// Weight: 200,000 (hard constraint)
+class DirectionalPenetrationPenalty : public IEdgePenalty {
+public:
+    explicit DirectionalPenetrationPenalty(float tolerance = 1.0f)
+        : tolerance_(tolerance) {}
+
+    int calculatePenalty(const EdgeLayout& candidate,
+                         const PenaltyContext& context) const override;
+    std::string name() const override { return "DirectionalPenetration"; }
+    int defaultWeight() const override { return HARD_CONSTRAINT_PENALTY; }
+    bool isHardConstraint() const override { return true; }
+
+private:
+    float tolerance_;
+    
+    bool segmentPenetratesNode(const Point& p1, const Point& p2,
+                               const NodeLayout& node) const;
+};
+
 }  // namespace arborvia
