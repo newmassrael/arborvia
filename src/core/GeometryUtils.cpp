@@ -131,4 +131,53 @@ void aabbGapDistance(
     }
 }
 
+bool segmentPenetratesNodeInterior(
+    const Point& p1,
+    const Point& p2,
+    const NodeLayout& node,
+    float tolerance) {
+
+    // Shrink node bounds by tolerance to allow boundary touches
+    float nodeLeft = node.position.x + tolerance;
+    float nodeRight = node.position.x + node.size.width - tolerance;
+    float nodeTop = node.position.y + tolerance;
+    float nodeBottom = node.position.y + node.size.height - tolerance;
+
+    // If tolerance makes bounds invalid, no penetration possible
+    if (nodeLeft >= nodeRight || nodeTop >= nodeBottom) {
+        return false;
+    }
+
+    // Segment bounding box
+    float segLeft = std::min(p1.x, p2.x);
+    float segRight = std::max(p1.x, p2.x);
+    float segTop = std::min(p1.y, p2.y);
+    float segBottom = std::max(p1.y, p2.y);
+
+    // Quick AABB rejection test
+    if (segRight < nodeLeft || segLeft > nodeRight ||
+        segBottom < nodeTop || segTop > nodeBottom) {
+        return false;
+    }
+
+    // For orthogonal segments, check interior penetration specifically
+    bool isHorizontal = std::abs(p2.y - p1.y) < tolerance;
+    bool isVertical = std::abs(p2.x - p1.x) < tolerance;
+
+    if (isHorizontal) {
+        // Horizontal segment penetrates if Y is inside interior AND X range overlaps
+        return p1.y > nodeTop && p1.y < nodeBottom &&
+               segRight > nodeLeft && segLeft < nodeRight;
+    }
+
+    if (isVertical) {
+        // Vertical segment penetrates if X is inside interior AND Y range overlaps
+        return p1.x > nodeLeft && p1.x < nodeRight &&
+               segBottom > nodeTop && segTop < nodeBottom;
+    }
+
+    // Diagonal segment - assume penetration (should be caught by OrthogonalityConstraint)
+    return true;
+}
+
 }  // namespace arborvia::geometry

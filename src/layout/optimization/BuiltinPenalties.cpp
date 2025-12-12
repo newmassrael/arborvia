@@ -409,46 +409,6 @@ int PathIntersectionPenalty::calculatePenalty(
     return totalIntersections * defaultWeight();
 }
 
-// === OrthogonalityPenalty ===
-
-int OrthogonalityPenalty::calculatePenalty(
-    const EdgeLayout& candidate,
-    const PenaltyContext& /*context*/) const {
-
-    constexpr float DIRECTION_TOLERANCE = 1.0f;
-
-    // Build path points: source → bendPoints → target
-    std::vector<Point> path;
-    path.push_back(candidate.sourcePoint);
-    for (const auto& bp : candidate.bendPoints) {
-        path.push_back(bp.position);
-    }
-    path.push_back(candidate.targetPoint);
-
-    // Need at least 2 points
-    if (path.size() < 2) {
-        return defaultWeight();  // Invalid path is non-orthogonal
-    }
-
-    // Check each segment for orthogonality
-    for (size_t i = 0; i + 1 < path.size(); ++i) {
-        const Point& p1 = path[i];
-        const Point& p2 = path[i + 1];
-
-        float dx = std::abs(p2.x - p1.x);
-        float dy = std::abs(p2.y - p1.y);
-
-        bool isHorizontal = (dy < DIRECTION_TOLERANCE);
-        bool isVertical = (dx < DIRECTION_TOLERANCE);
-
-        if (!isHorizontal && !isVertical) {
-            return defaultWeight();  // Non-orthogonal segment found
-        }
-    }
-
-    return 0;  // All segments are orthogonal
-}
-
 // === FixedEndpointPenalty ===
 
 int FixedEndpointPenalty::calculatePenalty(
@@ -499,88 +459,6 @@ int FixedEndpointPenalty::calculatePenalty(
     }
     
     return 0;
-}
-
-// === DirectionalPenetrationPenalty ===
-
-bool DirectionalPenetrationPenalty::segmentPenetratesNode(
-    const Point& p1, const Point& p2,
-    const NodeLayout& node) const {
-    
-    // Node AABB bounds (shrunk by tolerance to allow edge touching)
-    float nodeLeft = node.position.x + tolerance_;
-    float nodeRight = node.position.x + node.size.width - tolerance_;
-    float nodeTop = node.position.y + tolerance_;
-    float nodeBottom = node.position.y + node.size.height - tolerance_;
-    
-    // Segment bounding box
-    float segLeft = std::min(p1.x, p2.x);
-    float segRight = std::max(p1.x, p2.x);
-    float segTop = std::min(p1.y, p2.y);
-    float segBottom = std::max(p1.y, p2.y);
-    
-    // Quick AABB rejection test
-    if (segRight < nodeLeft || segLeft > nodeRight ||
-        segBottom < nodeTop || segTop > nodeBottom) {
-        return false;
-    }
-    
-    // For orthogonal segments, AABB overlap means intersection
-    bool isHorizontal = std::abs(p2.y - p1.y) < tolerance_;
-    bool isVertical = std::abs(p2.x - p1.x) < tolerance_;
-    
-    if (isHorizontal) {
-        return p1.y > nodeTop && p1.y < nodeBottom &&
-               segRight > nodeLeft && segLeft < nodeRight;
-    }
-    
-    if (isVertical) {
-        return p1.x > nodeLeft && p1.x < nodeRight &&
-               segBottom > nodeTop && segTop < nodeBottom;
-    }
-    
-    // Diagonal segment - assume penetration
-    return true;
-}
-
-int DirectionalPenetrationPenalty::calculatePenalty(
-    const EdgeLayout& candidate,
-    const PenaltyContext& context) const {
-    
-    // Build path: source -> bendPoints -> target
-    std::vector<Point> path;
-    path.push_back(candidate.sourcePoint);
-    for (const auto& bp : candidate.bendPoints) {
-        path.push_back(bp.position);
-    }
-    path.push_back(candidate.targetPoint);
-    
-    // Find source and target node layouts
-    auto srcIt = context.nodeLayouts.find(candidate.from);
-    auto tgtIt = context.nodeLayouts.find(candidate.to);
-    
-    // Check source penetration (skip first segment i=0)
-    if (srcIt != context.nodeLayouts.end()) {
-        const NodeLayout& srcNode = srcIt->second;
-        for (size_t i = 1; i + 1 < path.size(); ++i) {
-            if (segmentPenetratesNode(path[i], path[i + 1], srcNode)) {
-                return defaultWeight();  // Intermediate segment penetrates source
-            }
-        }
-    }
-    
-    // Check target penetration (skip last segment)
-    if (tgtIt != context.nodeLayouts.end()) {
-        const NodeLayout& tgtNode = tgtIt->second;
-        size_t lastSegmentIndex = path.size() >= 2 ? path.size() - 2 : 0;
-        for (size_t i = 0; i < lastSegmentIndex; ++i) {
-            if (segmentPenetratesNode(path[i], path[i + 1], tgtNode)) {
-                return defaultWeight();  // Intermediate segment penetrates target
-            }
-        }
-    }
-    
-    return 0;  // No directional penetration
 }
 
 }  // namespace arborvia

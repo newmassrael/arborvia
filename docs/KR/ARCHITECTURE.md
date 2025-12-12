@@ -558,6 +558,12 @@ updateSnapPositions() 호출 시:
 │  ├── AStarEdgeOptimizer      ← A* pathfinding 사용             │
 │  └── GeometricEdgeOptimizer  ← 단순 기하학적 경로               │
 │                                                                 │
+│  ConstraintGateway (제약 검증 단일 진입점)                      │
+│  └── ConstraintRegistry                                        │
+│      ├── OrthogonalityConstraint     - 직교성 제약              │
+│      ├── DirectionalSourcePenetrationConstraint - 소스 관통 제약│
+│      └── DirectionalTargetPenetrationConstraint - 타겟 관통 제약│
+│                                                                 │
 │  EdgePenaltySystem                                             │
 │  ├── SegmentOverlapPenalty   (200,000) - 세그먼트 겹침          │
 │  ├── DirectionPenalty        (200,000) - 방향 제약 위반         │
@@ -566,16 +572,19 @@ updateSnapPositions() 호출 시:
 │  ├── SelfOverlapPenalty      (200,000) - 자기 경로 백트래킹     │
 │  ├── ForbiddenZonePenalty    (200,000) - 금지 영역              │
 │  ├── SnapPointOverlapPenalty (200,000) - Snap point 겹침        │
-│  ├── OrthogonalityPenalty    (200,000) - 비직교 세그먼트        │
+│  ├── FixedEndpointPenalty    (200,000) - 고정 노드 엔드포인트   │
+│  ├── ConstraintPenaltyAdapter(OrthogonalityConstraint)          │
+│  ├── ConstraintPenaltyAdapter(DirectionalSourcePenetrationConstraint)│
+│  ├── ConstraintPenaltyAdapter(DirectionalTargetPenetrationConstraint)│
 │  └── PathIntersectionPenalty (1,000)   - 다른 엣지와 교차       │
 │                                                                 │
 │  ObstacleMap                                                   │
-│  └── 현재: bool (blocked/not blocked)                          │
+│  └── bool (blocked/not blocked) + cost API                     │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 9.6 2단계 평가 구조
+### 9.6 3단계 평가 구조
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -588,18 +597,35 @@ updateSnapPositions() 호출 시:
 │  └───────────────────────────────────────────────────────────┘  │
 │                              │                                  │
 │                              ▼                                  │
-│  Stage 2: 경로 평가 (EdgePenaltySystem)                         │
+│  Stage 2: 제약 검증 (ConstraintGateway)                         │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ ConstraintGateway                                         │  │
+│  │ - 역할: Hard Constraint 위반 여부 검증 (단일 진입점)       │  │
+│  │ - 시점: 경로 탐색 직후 (유효성 검증)                       │  │
+│  │ - 출력: 위반 목록 (ConstraintViolation[])                 │  │
+│  │ - 특징: 어떤 알고리즘도 제약 우회 불가                     │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                  │
+│                              ▼                                  │
+│  Stage 3: 경로 평가 (EdgePenaltySystem)                         │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │ EdgePenaltySystem                                         │  │
 │  │ - 역할: 후보 경로들 중 최선을 EVALUATE/SELECT              │  │
-│  │ - 시점: 경로 탐색 후 (사후 평가)                           │  │
+│  │ - 시점: 제약 검증 후 (품질 평가)                           │  │
 │  │ - 출력: 최종 선택된 경로                                   │  │
+│  │ - 특징: ConstraintPenaltyAdapter로 제약 재사용             │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 
 핵심 차이:
 - ObstacleMap Cost: "어디로 가야 할까?" (탐색 유도)
+- ConstraintGateway: "이 경로가 유효한가?" (제약 검증)
 - EdgePenaltySystem: "이 경로가 좋은가?" (품질 평가)
+
+제약 통합 (Single Source of Truth):
+- IEdgeConstraint: 제약의 원본 정의 (ConstraintGateway에서 사용)
+- ConstraintPenaltyAdapter: IEdgeConstraint를 IEdgePenalty로 래핑
+- 결과: 동일한 제약 로직을 두 시스템에서 재사용, 중복 제거
 ```
 
 ### 9.7 새 아키텍처에서 변경되는 부분
@@ -676,6 +702,138 @@ public:
 └── src/layout/sugiyama/GeometricEdgeOptimizer.cpp ← 유지
 ```
 
+### 9.10 Constraint Gateway 아키텍처
+
+#### 9.10.1 문제 정의
+
+기존 시스템의 문제점:
+1. **제약 우회 가능**: 28개 파일에서 bendPoints 직접 수정 가능
+2. **중복 로직**: 같은 제약이 여러 곳에서 구현됨 (DRY 위반)
+3. **분산된 검증**: 각 알고리즘이 독자적으로 제약 검증
+
+#### 9.10.2 해결 방안: 단일 진입점 아키텍처
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              ConstraintGateway (단일 진입점)                     │
+│  - validate(): 모든 제약 검증                                   │
+│  - 어떤 알고리즘도 이 게이트웨이를 통해서만 검증                 │
+├─────────────────────────────────────────────────────────────────┤
+│              ConstraintRegistry (제약 저장소)                    │
+│  - OrthogonalityConstraint         : 모든 세그먼트가 수평/수직   │
+│  - DirectionalSourcePenetrationConstraint: 중간 세그먼트→소스 노드 관통 금지│
+│  - DirectionalTargetPenetrationConstraint: 중간 세그먼트→타겟 노드 관통 금지│
+├─────────────────────────────────────────────────────────────────┤
+│              ConstraintPenaltyAdapter (통합 레이어)              │
+│  - IEdgeConstraint를 IEdgePenalty로 래핑                        │
+│  - EdgePenaltySystem에서 동일한 제약 재사용                     │
+├─────────────────────────────────────────────────────────────────┤
+│              PathGenerators (알고리즘들)                         │
+│  - AStarEdgeOptimizer                                           │
+│  - GeometricEdgeOptimizer                                       │
+│  - 새 알고리즘 추가 시 자동으로 제약 적용                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.10.3 핵심 컴포넌트
+
+**IEdgeConstraint 인터페이스**
+```cpp
+class IEdgeConstraint {
+public:
+    virtual ~IEdgeConstraint() = default;
+    
+    // 제약 검증 - 위반 목록 반환
+    virtual std::vector<ConstraintViolation> check(
+        const EdgeLayout& layout,
+        const EdgeConstraintContext& context) const = 0;
+    
+    // 제약 이름
+    virtual std::string name() const = 0;
+    
+    // Hard Constraint 여부
+    virtual bool isHardConstraint() const { return true; }
+};
+```
+
+**ConstraintPenaltyAdapter**
+```cpp
+class ConstraintPenaltyAdapter : public IEdgePenalty {
+public:
+    explicit ConstraintPenaltyAdapter(
+        std::shared_ptr<IEdgeConstraint> constraint,
+        float tolerance = 1.0f);
+    
+    // IEdgePenalty 구현
+    int calculatePenalty(const EdgeLayout& candidate,
+                         const PenaltyContext& context) const override;
+    
+    std::string name() const override {
+        return constraint_->name();  // 원본 제약 이름 사용
+    }
+    
+    bool isHardConstraint() const override {
+        return constraint_->isHardConstraint();
+    }
+};
+```
+
+#### 9.10.4 공유 유틸리티
+
+중복 제거를 위한 공통 기하학 함수:
+```cpp
+namespace geometry {
+    // 세그먼트가 노드 내부를 관통하는지 검사
+    // tolerance로 경계 터치 허용 (기본 1.0f)
+    bool segmentPenetratesNodeInterior(
+        const Point& p1, const Point& p2,
+        const NodeLayout& node,
+        float tolerance = 1.0f);
+}
+```
+
+사용 위치:
+- `DirectionalSourcePenetrationConstraint`
+- `DirectionalTargetPenetrationConstraint`
+- `ConstraintPenaltyAdapter` (내부적으로 위 제약 재사용)
+
+#### 9.10.5 파일 구조
+
+```
+include/arborvia/layout/constraints/
+├── ConstraintViolation.h         # 위반 타입 및 구조체
+├── EdgeConstraintContext.h       # 제약 검증 컨텍스트
+├── IEdgeConstraint.h             # 제약 인터페이스
+├── ConstraintRegistry.h          # 제약 저장소
+├── ConstraintGateway.h           # 단일 진입점 API
+├── ConstraintPenaltyAdapter.h    # IEdgeConstraint→IEdgePenalty 어댑터
+└── builtins/
+    ├── OrthogonalityConstraint.h
+    └── DirectionalPenetrationConstraint.h
+
+src/layout/constraints/
+├── ConstraintViolation.cpp
+├── ConstraintRegistry.cpp
+├── ConstraintGateway.cpp
+├── ConstraintPenaltyAdapter.cpp
+└── builtins/
+    ├── OrthogonalityConstraint.cpp
+    └── DirectionalPenetrationConstraint.cpp
+
+include/arborvia/core/GeometryUtils.h
+└── segmentPenetratesNodeInterior()  # 공유 유틸리티
+```
+
+#### 9.10.6 장점
+
+| 항목 | 기존 | 개선 후 |
+|------|------|---------|
+| 제약 정의 | 2곳 (Constraint + Penalty) | 1곳 (Constraint만) |
+| 중복 코드 | ~80줄 | 제거됨 |
+| 새 제약 추가 | 2개 클래스 작성 필요 | 1개 클래스만 작성 |
+| 제약 우회 | 가능 | 불가능 (Gateway 통과 필수) |
+| 테스트 | 각각 테스트 필요 | 제약만 테스트하면 됨 |
+
 ---
 
 ## 10. 용어 정리
@@ -750,8 +908,8 @@ TEST(PerformanceTest, RipUpConverges_WithinMaxIterations) {
 
 ---
 
-**버전:** 0.3.1
-**최종 업데이트:** 2025-12-07
+**버전:** 0.4.0
+**최종 업데이트:** 2025-12-12
 **상태:** 구현 완료
 
 **구현 상태:**
@@ -763,9 +921,20 @@ TEST(PerformanceTest, RipUpConverges_WithinMaxIterations) {
 - ✅ Rip-up and Reroute (AStarEdgeOptimizer.regenerateBendPoints에 구현)
 - ✅ EdgeNudger (구현 및 EdgeRouting pipeline 통합 완료)
 - ✅ LayoutOptions 연동 (enableRipUpAndReroute, enablePostNudging 등)
+- ✅ ConstraintGateway, ConstraintRegistry (제약 검증 단일 진입점)
+- ✅ IEdgeConstraint, ConstraintViolation (제약 인터페이스)
+- ✅ OrthogonalityConstraint, DirectionalPenetrationConstraint (Built-in 제약)
+- ✅ ConstraintPenaltyAdapter (IEdgeConstraint→IEdgePenalty 통합)
+- ✅ geometry::segmentPenetratesNodeInterior (공유 유틸리티)
 
 **아키텍처 변경 사항:**
 - 원래 계획: A*에서 동적 비용(getCostForDirection) 사용
 - 실제 구현: Blocking 기반 A* + Rip-up and Reroute
 - 이유: 동적 비용 방식은 A* 탐색 공간을 과도하게 확장 (726ms → 9ms 성능 차이)
 - 결과: blocking으로 overlap 방지, EdgeNudger로 불가피한 overlap 시각적 분리
+
+**v0.4.0 변경 사항 (Constraint Gateway):**
+- ConstraintGateway: 제약 검증 단일 진입점 구현
+- ConstraintPenaltyAdapter: IEdgeConstraint를 IEdgePenalty로 래핑하여 Single Source of Truth 확보
+- 중복 제거: OrthogonalityPenalty, DirectionalPenetrationPenalty 삭제 (~80줄)
+- 공유 유틸리티: geometry::segmentPenetratesNodeInterior()로 관통 검사 통합

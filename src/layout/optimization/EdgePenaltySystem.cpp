@@ -1,4 +1,7 @@
 #include "arborvia/layout/api/EdgePenaltySystem.h"
+#include "arborvia/layout/constraints/ConstraintPenaltyAdapter.h"
+#include "arborvia/layout/constraints/builtins/OrthogonalityConstraint.h"
+#include "arborvia/layout/constraints/builtins/DirectionalPenetrationConstraint.h"
 #include "layout/optimization/BuiltinPenalties.h"
 
 #include <stdexcept>
@@ -16,9 +19,15 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createDefault() {
     system->addPenalty(std::make_unique<SnapPointOverlapPenalty>());
     system->addPenalty(std::make_unique<SelfOverlapPenalty>(20.0f));
     system->addPenalty(std::make_unique<ForbiddenZonePenalty>());
-    system->addPenalty(std::make_unique<OrthogonalityPenalty>());
     system->addPenalty(std::make_unique<FixedEndpointPenalty>());
-    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
+
+    // Unified constraints via adapter (single source of truth)
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<OrthogonalityConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalSourcePenetrationConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalTargetPenetrationConstraint>()));
 
     // Soft penalties
     system->addPenalty(std::make_unique<PathIntersectionPenalty>(1000));
@@ -34,8 +43,14 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createMinimal() {
     system->addPenalty(std::make_unique<NodeCollisionPenalty>());
     system->addPenalty(std::make_unique<DirectionPenalty>());
     system->addPenalty(std::make_unique<SnapPointOverlapPenalty>());
-    system->addPenalty(std::make_unique<OrthogonalityPenalty>());
-    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
+
+    // Unified constraints via adapter
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<OrthogonalityConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalSourcePenetrationConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalTargetPenetrationConstraint>()));
 
     return system;
 }
@@ -51,8 +66,14 @@ std::shared_ptr<EdgePenaltySystem> EdgePenaltySystem::createStrict() {
     system->addPenalty(std::make_unique<SnapPointOverlapPenalty>());
     system->addPenalty(std::make_unique<SelfOverlapPenalty>(30.0f));   // Stricter segment
     system->addPenalty(std::make_unique<ForbiddenZonePenalty>());
-    system->addPenalty(std::make_unique<OrthogonalityPenalty>());
-    system->addPenalty(std::make_unique<DirectionalPenetrationPenalty>());
+
+    // Unified constraints via adapter
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<OrthogonalityConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalSourcePenetrationConstraint>()));
+    system->addPenalty(std::make_unique<ConstraintPenaltyAdapter>(
+        std::make_shared<DirectionalTargetPenetrationConstraint>()));
 
     // Higher weight for soft penalties
     system->addPenalty(std::make_unique<PathIntersectionPenalty>(2000));

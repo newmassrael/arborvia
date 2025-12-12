@@ -111,18 +111,6 @@ private:
     int weight_;
 };
 
-/// Penalty for non-orthogonal segments (Hard Constraint)
-/// Ensures all edge segments are either horizontal or vertical
-/// Weight: 200,000 (hard constraint)
-class OrthogonalityPenalty : public IEdgePenalty {
-public:
-    int calculatePenalty(const EdgeLayout& candidate,
-                         const PenaltyContext& context) const override;
-    std::string name() const override { return "Orthogonality"; }
-    int defaultWeight() const override { return HARD_CONSTRAINT_PENALTY; }
-    bool isHardConstraint() const override { return true; }
-};
-
 /// Penalty for changing endpoints on fixed (unmoved) nodes
 /// When a node was not moved during drag, its edge endpoints should be preserved
 /// Weight: 200,000 (hard constraint)
@@ -141,26 +129,9 @@ private:
     float tolerance_;
 };
 
-/// Penalty for intermediate segments penetrating source/target nodes (Hard Constraint)
-/// First segment can touch source, last segment can touch target.
-/// All other segments must NOT penetrate source or target node interior.
-/// Weight: 200,000 (hard constraint)
-class DirectionalPenetrationPenalty : public IEdgePenalty {
-public:
-    explicit DirectionalPenetrationPenalty(float tolerance = 1.0f)
-        : tolerance_(tolerance) {}
-
-    int calculatePenalty(const EdgeLayout& candidate,
-                         const PenaltyContext& context) const override;
-    std::string name() const override { return "DirectionalPenetration"; }
-    int defaultWeight() const override { return HARD_CONSTRAINT_PENALTY; }
-    bool isHardConstraint() const override { return true; }
-
-private:
-    float tolerance_;
-    
-    bool segmentPenetratesNode(const Point& p1, const Point& p2,
-                               const NodeLayout& node) const;
-};
+// Note: OrthogonalityPenalty and DirectionalPenetrationPenalty have been removed.
+// Use ConstraintPenaltyAdapter with OrthogonalityConstraint and
+// DirectionalSourcePenetrationConstraint/DirectionalTargetPenetrationConstraint instead.
+// This ensures a single source of truth for constraint definitions.
 
 }  // namespace arborvia

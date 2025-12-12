@@ -53,6 +53,20 @@ bool aabbOverlap(
     const Point& pos1, const Size& size1,
     const Point& pos2, const Size& size2);
 
+/// Check if a segment penetrates a node's interior (not just boundary touch)
+/// This is the single source of truth for directional penetration checking.
+/// The node bounds are shrunk by tolerance to allow boundary touches.
+/// @param p1 Start point of segment
+/// @param p2 End point of segment
+/// @param node The node layout to check against
+/// @param tolerance Amount to shrink node bounds (default 1.0f for 1 pixel margin)
+/// @return true if segment penetrates the node's interior
+bool segmentPenetratesNodeInterior(
+    const Point& p1,
+    const Point& p2,
+    const NodeLayout& node,
+    float tolerance = 1.0f);
+
 /// Calculate AABB gap distance (minimum distance between bounding boxes)
 /// @param pos1 Top-left of first box
 /// @param size1 Size of first box

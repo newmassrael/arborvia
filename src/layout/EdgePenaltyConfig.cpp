@@ -1,5 +1,8 @@
 #include "arborvia/layout/config/EdgePenaltyConfig.h"
 #include "arborvia/layout/api/EdgePenaltySystem.h"
+#include "arborvia/layout/constraints/ConstraintPenaltyAdapter.h"
+#include "arborvia/layout/constraints/builtins/OrthogonalityConstraint.h"
+#include "arborvia/layout/constraints/builtins/DirectionalPenetrationConstraint.h"
 #include "optimization/BuiltinPenalties.h"
 
 #include <nlohmann/json.hpp>
@@ -66,7 +69,20 @@ namespace {
             
             EdgePenaltyFactory::registerType("Orthogonality",
                 [](const SinglePenaltyConfig&) -> std::unique_ptr<IEdgePenalty> {
-                    return std::make_unique<OrthogonalityPenalty>();
+                    return std::make_unique<ConstraintPenaltyAdapter>(
+                        std::make_shared<OrthogonalityConstraint>());
+                });
+            
+            EdgePenaltyFactory::registerType("DirectionalSourcePenetration",
+                [](const SinglePenaltyConfig&) -> std::unique_ptr<IEdgePenalty> {
+                    return std::make_unique<ConstraintPenaltyAdapter>(
+                        std::make_shared<DirectionalSourcePenetrationConstraint>());
+                });
+            
+            EdgePenaltyFactory::registerType("DirectionalTargetPenetration",
+                [](const SinglePenaltyConfig&) -> std::unique_ptr<IEdgePenalty> {
+                    return std::make_unique<ConstraintPenaltyAdapter>(
+                        std::make_shared<DirectionalTargetPenetrationConstraint>());
                 });
             
             EdgePenaltyFactory::registerType("FixedEndpoint",
