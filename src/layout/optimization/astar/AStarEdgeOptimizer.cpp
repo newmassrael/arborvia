@@ -937,6 +937,11 @@ void AStarEdgeOptimizer::regenerateBendPoints(
     // Track already-routed edges for blocking
     std::unordered_map<EdgeId, EdgeLayout> routedEdges;
 
+    // Build base obstacle map once (from nodes only) - PERFORMANCE OPTIMIZATION
+    // This avoids rebuilding the expensive node-based grid for each edge
+    ObstacleMap baseObstacles;
+    baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0, &edgeLayouts);
+
     // Phase 1: Route edges sequentially, each sees previously-routed edges as blocking
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);
@@ -1027,18 +1032,14 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             continue;
         }
 
-        // Build obstacle map with nodes + ALL other edges as blocking
-        // This includes:
-        // 1. Edges from edgeLayouts that are NOT in the 'edges' parameter (existing edges)
-        // 2. Already-routed edges from current call (with updated paths)
-        // Include edge layouts in bounds calculation to prevent out-of-bounds segments
-        ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &edgeLayouts);
+        // Copy base obstacles and add edge segments - PERFORMANCE OPTIMIZATION
+        // This reuses the expensive node-based grid built once before the loop
+        ObstacleMap obstacles = baseObstacles;
 
         // Add all edges from edgeLayouts as obstacles (excluding current edge)
         // This ensures we avoid overlapping with edges that are NOT being re-routed
         obstacles.addEdgeSegments(edgeLayouts, edgeId);
-        
+
         // Also add already-routed edges from current call (they may have updated paths)
         if (!routedEdges.empty()) {
             obstacles.addEdgeSegments(routedEdges, edgeId);

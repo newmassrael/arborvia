@@ -2,6 +2,10 @@
 #include <arborvia/core/TaskExecutor.h>
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
 
+// Internal headers for detailed benchmarking
+#include "pathfinding/ObstacleMap.h"
+#include "pathfinding/AStarPathFinder.h"
+
 #include <benchmark/benchmark.h>
 
 #include <memory>
@@ -289,3 +293,278 @@ static void BM_Quick_ThreadSubmit(benchmark::State& state) {
 }
 
 BENCHMARK(BM_Quick_ThreadSubmit)->Name("Quick/ThreadSubmit")->Iterations(100);
+
+// ============================================================================
+// ObstacleMap Benchmarks
+// ============================================================================
+
+// Benchmark: Build ObstacleMap from nodes (current: rebuild every time)
+static void BM_ObstacleMap_Build(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 150.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    for (auto _ : state) {
+        ObstacleMap obstacles;
+        obstacles.buildFromNodes(nodeLayouts, 10.0f, 1);
+        benchmark::DoNotOptimize(obstacles);
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes");
+}
+
+BENCHMARK(BM_ObstacleMap_Build)
+    ->Arg(10)
+    ->Arg(50)
+    ->Arg(100)
+    ->Arg(200);
+
+// Benchmark: Build once and reuse (proposed caching)
+static void BM_ObstacleMap_Reuse(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 150.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    // Build once
+    ObstacleMap obstacles;
+    obstacles.buildFromNodes(nodeLayouts, 10.0f, 1);
+
+    for (auto _ : state) {
+        // Simulate reuse - just access the cached map
+        benchmark::DoNotOptimize(obstacles.width());
+        benchmark::DoNotOptimize(obstacles.height());
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes (cached)");
+}
+
+BENCHMARK(BM_ObstacleMap_Reuse)
+    ->Arg(10)
+    ->Arg(50)
+    ->Arg(100)
+    ->Arg(200);
+
+// Benchmark: Multiple rebuilds (simulating current N edges optimization)
+static void BM_ObstacleMap_MultipleBuilds(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    const int numRebuilds = state.range(1);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 150.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    for (auto _ : state) {
+        for (int r = 0; r < numRebuilds; ++r) {
+            ObstacleMap obstacles;
+            obstacles.buildFromNodes(nodeLayouts, 10.0f, 1);
+            benchmark::DoNotOptimize(obstacles);
+        }
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes x " + std::to_string(numRebuilds) + " rebuilds");
+}
+
+BENCHMARK(BM_ObstacleMap_MultipleBuilds)
+    ->Args({50, 8})    // 50 nodes, 8 edges (typical small graph)
+    ->Args({100, 20})  // 100 nodes, 20 edges (medium graph)
+    ->Args({100, 50}); // 100 nodes, 50 edges (dense graph)
+
+// ============================================================================
+// A* PathFinder Benchmarks
+// ============================================================================
+
+// Benchmark: A* pathfinding single path
+static void BM_AStar_SinglePath(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(100.0f, 900.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 100.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    ObstacleMap obstacles;
+    obstacles.buildFromNodes(nodeLayouts, 10.0f, 1);
+
+    AStarPathFinder pathFinder;
+    GridPoint start{5, 5};
+    GridPoint goal{static_cast<int>(obstacles.width()) - 5,
+                   static_cast<int>(obstacles.height()) - 5};
+
+    for (auto _ : state) {
+        auto result = pathFinder.findPath(start, goal, obstacles,
+                                          static_cast<NodeId>(0),
+                                          static_cast<NodeId>(1),
+                                          NodeEdge::Bottom,
+                                          NodeEdge::Top);
+        benchmark::DoNotOptimize(result);
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes");
+}
+
+BENCHMARK(BM_AStar_SinglePath)
+    ->Arg(10)
+    ->Arg(50)
+    ->Arg(100);
+
+// ============================================================================
+// Hot Path Allocation Benchmarks
+// ============================================================================
+
+// Benchmark: Creating unordered_set in loop (current)
+static void BM_HotPath_SetCreation(benchmark::State& state) {
+    const int iterations = state.range(0);
+
+    for (auto _ : state) {
+        for (int i = 0; i < iterations; ++i) {
+            std::unordered_set<NodeId> excludeSet;
+            excludeSet.insert(static_cast<NodeId>(0));
+            excludeSet.insert(static_cast<NodeId>(1));
+            benchmark::DoNotOptimize(excludeSet);
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * iterations);
+    state.SetLabel("new set per iteration");
+}
+
+BENCHMARK(BM_HotPath_SetCreation)
+    ->Arg(100)
+    ->Arg(1000)
+    ->Arg(10000);
+
+// Benchmark: Reusing pre-allocated set (proposed)
+static void BM_HotPath_SetReuse(benchmark::State& state) {
+    const int iterations = state.range(0);
+
+    for (auto _ : state) {
+        std::unordered_set<NodeId> excludeSet;
+        excludeSet.reserve(4);  // Pre-allocate
+
+        for (int i = 0; i < iterations; ++i) {
+            excludeSet.clear();  // Reuse allocation
+            excludeSet.insert(static_cast<NodeId>(0));
+            excludeSet.insert(static_cast<NodeId>(1));
+            benchmark::DoNotOptimize(excludeSet);
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * iterations);
+    state.SetLabel("reused set");
+}
+
+BENCHMARK(BM_HotPath_SetReuse)
+    ->Arg(100)
+    ->Arg(1000)
+    ->Arg(10000);
+
+// ============================================================================
+// ObstacleMap Copy Benchmarks (for caching optimization validation)
+// ============================================================================
+
+// Benchmark: Copy ObstacleMap (simulating the cached approach)
+static void BM_ObstacleMap_Copy(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 150.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    // Build base once
+    ObstacleMap base;
+    base.buildFromNodes(nodeLayouts, 10.0f, 1);
+
+    for (auto _ : state) {
+        ObstacleMap copy = base;  // Copy
+        benchmark::DoNotOptimize(copy);
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes copy");
+}
+
+BENCHMARK(BM_ObstacleMap_Copy)
+    ->Arg(10)
+    ->Arg(50)
+    ->Arg(100)
+    ->Arg(200);
+
+// Benchmark: Build once + N copies (new optimized approach)
+static void BM_ObstacleMap_BuildOnceCopyN(benchmark::State& state) {
+    const int numNodes = state.range(0);
+    const int numCopies = state.range(1);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+    std::uniform_real_distribution<float> sizeDist(50.0f, 150.0f);
+
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    for (int i = 0; i < numNodes; ++i) {
+        NodeId id = static_cast<NodeId>(i);
+        NodeLayout layout;
+        layout.position = {posDist(rng), posDist(rng)};
+        layout.size = {sizeDist(rng), sizeDist(rng)};
+        nodeLayouts[id] = layout;
+    }
+
+    for (auto _ : state) {
+        // Build once
+        ObstacleMap base;
+        base.buildFromNodes(nodeLayouts, 10.0f, 1);
+
+        // Copy N times (simulating loop over edges)
+        for (int i = 0; i < numCopies; ++i) {
+            ObstacleMap copy = base;
+            benchmark::DoNotOptimize(copy);
+        }
+    }
+
+    state.SetLabel(std::to_string(numNodes) + " nodes: 1 build + " +
+                   std::to_string(numCopies) + " copies");
+}
+
+BENCHMARK(BM_ObstacleMap_BuildOnceCopyN)
+    ->Args({50, 8})
+    ->Args({100, 20})
+    ->Args({100, 50});
