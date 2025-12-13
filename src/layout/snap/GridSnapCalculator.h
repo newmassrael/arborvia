@@ -187,6 +187,28 @@ public:
         float gridSize,
         int* outCandidateIndex = nullptr);
 
+    /**
+     * @brief Compute snap point position from a ratio along the edge.
+     *
+     * This is the canonical computation method that ensures:
+     * - The coordinate ALONG the edge is grid-quantized
+     * - The coordinate PERPENDICULAR to the edge is the EXACT node edge position
+     *
+     * Use this method when you need to compute a snap point position without
+     * a pre-existing snap index (e.g., for A* pathfinding initial positions).
+     *
+     * @param node Node layout
+     * @param edge Which edge the snap point is on
+     * @param ratio Position along edge (0.0 = start, 0.5 = center, 1.0 = end)
+     * @param gridSize Grid cell size
+     * @return Snap point position with exact perpendicular coordinate
+     */
+    static Point computeSnapPointFromRatio(
+        const NodeLayout& node,
+        NodeEdge edge,
+        float ratio,
+        float gridSize);
+
     // =========================================================================
     // Utility Functions
     // =========================================================================

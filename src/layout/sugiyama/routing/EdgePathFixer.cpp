@@ -124,6 +124,14 @@ bool EdgePathFixer::validateAndFixDirectionConstraints(
 
     if (layout.bendPoints.empty()) return false;
 
+    // === INTEGER GRID CALCULATION HELPERS ===
+    auto toGrid = [effectiveGridSize](float pixel) -> int {
+        return static_cast<int>(std::round(pixel / effectiveGridSize));
+    };
+    auto toPixel = [effectiveGridSize](int grid) -> float {
+        return grid * effectiveGridSize;
+    };
+
     bool sourceVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
     bool targetVertical = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
 
@@ -172,36 +180,39 @@ bool EdgePathFixer::validateAndFixDirectionConstraints(
         }
     }
 
-    // Fix source direction violation
+    // Fix source direction violation (using integer grid calculation)
     if (sourceDirectionViolation && !layout.bendPoints.empty()) {
         bool srcVertical = (layout.sourceEdge == NodeEdge::Top || layout.sourceEdge == NodeEdge::Bottom);
         const Point& fBend = layout.bendPoints.front().position;
 
+        // Convert to grid coordinates
+        int gSrcX = toGrid(layout.sourcePoint.x);
+        int gSrcY = toGrid(layout.sourcePoint.y);
+        int gFBendX = toGrid(fBend.x);
+        int gFBendY = toGrid(fBend.y);
+        int gTgtX = toGrid(layout.targetPoint.x);
+
         if (srcVertical) {
             bool shouldGoUp = (layout.sourceEdge == NodeEdge::Top);
-            float clearanceY = shouldGoUp
-                ? std::min(layout.sourcePoint.y - effectiveGridSize * 2, fBend.y - effectiveGridSize)
-                : std::max(layout.sourcePoint.y + effectiveGridSize * 2, fBend.y + effectiveGridSize);
-            if (effectiveGridSize > 0) {
-                clearanceY = std::round(clearanceY / effectiveGridSize) * effectiveGridSize;
-            }
+            int gClearanceY = shouldGoUp
+                ? std::min(gSrcY - 2, gFBendY - 1)
+                : std::max(gSrcY + 2, gFBendY + 1);
 
-            bool sameVerticalLine = std::abs(layout.sourcePoint.x - fBend.x) < 0.5f;
-            Point clearancePoint = {layout.sourcePoint.x, clearanceY};
+            bool sameVerticalLine = (gSrcX == gFBendX);
+            Point clearancePoint = {toPixel(gSrcX), toPixel(gClearanceY)};
 
             if (sameVerticalLine) {
-                bool sourceToClearanceGoesUp = clearanceY < layout.sourcePoint.y;
-                bool clearanceToFirstBendGoesUp = fBend.y < clearanceY;
+                bool sourceToClearanceGoesUp = gClearanceY < gSrcY;
+                bool clearanceToFirstBendGoesUp = gFBendY < gClearanceY;
                 bool wouldCreateSpike = (sourceToClearanceGoesUp != clearanceToFirstBendGoesUp);
 
                 if (wouldCreateSpike) {
-                    float offsetX = effectiveGridSize > 0 ? effectiveGridSize * 2 : 40.0f;
-                    if (layout.targetPoint.x > layout.sourcePoint.x) offsetX = -offsetX;
-                    float detourX = layout.sourcePoint.x + offsetX;
-                    if (effectiveGridSize > 0) detourX = std::round(detourX / effectiveGridSize) * effectiveGridSize;
+                    int gOffsetX = 2;
+                    if (gTgtX > gSrcX) gOffsetX = -gOffsetX;
+                    int gDetourX = gSrcX + gOffsetX;
 
-                    Point detourPoint1 = {detourX, clearanceY};
-                    Point detourPoint2 = {detourX, fBend.y};
+                    Point detourPoint1 = {toPixel(gDetourX), toPixel(gClearanceY)};
+                    Point detourPoint2 = {toPixel(gDetourX), toPixel(gFBendY)};
 
                     layout.bendPoints.insert(layout.bendPoints.begin(), {detourPoint2});
                     layout.bendPoints.insert(layout.bendPoints.begin(), {detourPoint1});
@@ -210,36 +221,32 @@ bool EdgePathFixer::validateAndFixDirectionConstraints(
                     layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
             } else {
-                Point connectionPoint = {fBend.x, clearanceY};
-                if (effectiveGridSize > 0) connectionPoint.x = std::round(connectionPoint.x / effectiveGridSize) * effectiveGridSize;
+                Point connectionPoint = {toPixel(gFBendX), toPixel(gClearanceY)};
                 layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
                 layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
             }
         } else {
             bool shouldGoLeft = (layout.sourceEdge == NodeEdge::Left);
-            float clearanceX = shouldGoLeft
-                ? std::min(layout.sourcePoint.x - effectiveGridSize * 2, fBend.x - effectiveGridSize)
-                : std::max(layout.sourcePoint.x + effectiveGridSize * 2, fBend.x + effectiveGridSize);
-            if (effectiveGridSize > 0) {
-                clearanceX = std::round(clearanceX / effectiveGridSize) * effectiveGridSize;
-            }
+            int gClearanceX = shouldGoLeft
+                ? std::min(gSrcX - 2, gFBendX - 1)
+                : std::max(gSrcX + 2, gFBendX + 1);
 
-            bool sameHorizontalLine = std::abs(layout.sourcePoint.y - fBend.y) < 0.5f;
-            Point clearancePoint = {clearanceX, layout.sourcePoint.y};
+            int gTgtY = toGrid(layout.targetPoint.y);
+            bool sameHorizontalLine = (gSrcY == gFBendY);
+            Point clearancePoint = {toPixel(gClearanceX), toPixel(gSrcY)};
 
             if (sameHorizontalLine) {
-                bool sourceToClearanceGoesLeft = clearanceX < layout.sourcePoint.x;
-                bool clearanceToFirstBendGoesLeft = fBend.x < clearanceX;
+                bool sourceToClearanceGoesLeft = gClearanceX < gSrcX;
+                bool clearanceToFirstBendGoesLeft = gFBendX < gClearanceX;
                 bool wouldCreateSpike = (sourceToClearanceGoesLeft != clearanceToFirstBendGoesLeft);
 
                 if (wouldCreateSpike) {
-                    float offsetY = effectiveGridSize > 0 ? effectiveGridSize * 2 : 40.0f;
-                    if (layout.targetPoint.y > layout.sourcePoint.y) offsetY = -offsetY;
-                    float detourY = layout.sourcePoint.y + offsetY;
-                    if (effectiveGridSize > 0) detourY = std::round(detourY / effectiveGridSize) * effectiveGridSize;
+                    int gOffsetY = 2;
+                    if (gTgtY > gSrcY) gOffsetY = -gOffsetY;
+                    int gDetourY = gSrcY + gOffsetY;
 
-                    Point detourPoint1 = {clearanceX, detourY};
-                    Point detourPoint2 = {fBend.x, detourY};
+                    Point detourPoint1 = {toPixel(gClearanceX), toPixel(gDetourY)};
+                    Point detourPoint2 = {toPixel(gFBendX), toPixel(gDetourY)};
 
                     layout.bendPoints.insert(layout.bendPoints.begin(), {detourPoint2});
                     layout.bendPoints.insert(layout.bendPoints.begin(), {detourPoint1});
@@ -248,96 +255,93 @@ bool EdgePathFixer::validateAndFixDirectionConstraints(
                     layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
                 }
             } else {
-                Point connectionPoint = {clearanceX, fBend.y};
-                if (effectiveGridSize > 0) connectionPoint.y = std::round(connectionPoint.y / effectiveGridSize) * effectiveGridSize;
+                Point connectionPoint = {toPixel(gClearanceX), toPixel(gFBendY)};
                 layout.bendPoints.insert(layout.bendPoints.begin(), {connectionPoint});
                 layout.bendPoints.insert(layout.bendPoints.begin(), {clearancePoint});
             }
         }
     }
 
-    // Fix target direction violation
+    // Fix target direction violation (using integer grid calculation)
     if (targetDirectionViolation && !layout.bendPoints.empty()) {
         bool tgtVertical = (layout.targetEdge == NodeEdge::Top || layout.targetEdge == NodeEdge::Bottom);
         const Point& lBend = layout.bendPoints.back().position;
 
+        // Convert to grid coordinates
+        int gTgtX = toGrid(layout.targetPoint.x);
+        int gTgtY = toGrid(layout.targetPoint.y);
+        int gLBendX = toGrid(lBend.x);
+        int gLBendY = toGrid(lBend.y);
+        int gSrcX = toGrid(layout.sourcePoint.x);
+        int gSrcY = toGrid(layout.sourcePoint.y);
+
         if (tgtVertical) {
             bool shouldEnterFromAbove = (layout.targetEdge == NodeEdge::Top);
-            float clearanceY = shouldEnterFromAbove
-                ? std::min(layout.targetPoint.y - effectiveGridSize * 2, lBend.y - effectiveGridSize)
-                : std::max(layout.targetPoint.y + effectiveGridSize * 2, lBend.y + effectiveGridSize);
-            if (effectiveGridSize > 0) {
-                clearanceY = std::round(clearanceY / effectiveGridSize) * effectiveGridSize;
-            }
+            int gClearanceY = shouldEnterFromAbove
+                ? std::min(gTgtY - 2, gLBendY - 1)
+                : std::max(gTgtY + 2, gLBendY + 1);
 
-            bool sameVerticalLine = std::abs(lBend.x - layout.targetPoint.x) < 0.5f;
+            bool sameVerticalLine = (gLBendX == gTgtX);
 
             if (sameVerticalLine) {
-                bool lastBendToClearanceGoesUp = clearanceY < lBend.y;
-                bool clearanceToTargetGoesUp = layout.targetPoint.y < clearanceY;
+                bool lastBendToClearanceGoesUp = gClearanceY < gLBendY;
+                bool clearanceToTargetGoesUp = gTgtY < gClearanceY;
                 bool wouldCreateSpike = (lastBendToClearanceGoesUp != clearanceToTargetGoesUp);
 
                 if (wouldCreateSpike) {
-                    float offsetX = effectiveGridSize > 0 ? effectiveGridSize * 2 : 40.0f;
-                    if (layout.sourcePoint.x > layout.targetPoint.x) offsetX = -offsetX;
-                    float detourX = lBend.x + offsetX;
-                    if (effectiveGridSize > 0) detourX = std::round(detourX / effectiveGridSize) * effectiveGridSize;
+                    int gOffsetX = 2;
+                    if (gSrcX > gTgtX) gOffsetX = -gOffsetX;
+                    int gDetourX = gLBendX + gOffsetX;
 
-                    Point detourPoint1 = {detourX, lBend.y};
-                    Point detourPoint2 = {detourX, clearanceY};
-                    Point clearancePoint = {layout.targetPoint.x, clearanceY};
+                    Point detourPoint1 = {toPixel(gDetourX), toPixel(gLBendY)};
+                    Point detourPoint2 = {toPixel(gDetourX), toPixel(gClearanceY)};
+                    Point clearancePoint = {toPixel(gTgtX), toPixel(gClearanceY)};
 
                     layout.bendPoints.push_back({detourPoint1});
                     layout.bendPoints.push_back({detourPoint2});
                     layout.bendPoints.push_back({clearancePoint});
                 } else {
-                    Point clearancePoint = {layout.targetPoint.x, clearanceY};
+                    Point clearancePoint = {toPixel(gTgtX), toPixel(gClearanceY)};
                     layout.bendPoints.push_back({clearancePoint});
                 }
             } else {
-                Point connectionPoint = {lBend.x, clearanceY};
-                if (effectiveGridSize > 0) connectionPoint.x = std::round(connectionPoint.x / effectiveGridSize) * effectiveGridSize;
-                Point clearancePoint = {layout.targetPoint.x, clearanceY};
+                Point connectionPoint = {toPixel(gLBendX), toPixel(gClearanceY)};
+                Point clearancePoint = {toPixel(gTgtX), toPixel(gClearanceY)};
                 layout.bendPoints.push_back({connectionPoint});
                 layout.bendPoints.push_back({clearancePoint});
             }
         } else {
             bool shouldEnterFromLeft = (layout.targetEdge == NodeEdge::Left);
-            float clearanceX = shouldEnterFromLeft
-                ? std::min(layout.targetPoint.x - effectiveGridSize * 2, lBend.x - effectiveGridSize)
-                : std::max(layout.targetPoint.x + effectiveGridSize * 2, lBend.x + effectiveGridSize);
-            if (effectiveGridSize > 0) {
-                clearanceX = std::round(clearanceX / effectiveGridSize) * effectiveGridSize;
-            }
+            int gClearanceX = shouldEnterFromLeft
+                ? std::min(gTgtX - 2, gLBendX - 1)
+                : std::max(gTgtX + 2, gLBendX + 1);
 
-            bool sameHorizontalLine = std::abs(lBend.y - layout.targetPoint.y) < 0.5f;
+            bool sameHorizontalLine = (gLBendY == gTgtY);
 
             if (sameHorizontalLine) {
-                bool lastBendToClearanceGoesLeft = clearanceX < lBend.x;
-                bool clearanceToTargetGoesLeft = layout.targetPoint.x < clearanceX;
+                bool lastBendToClearanceGoesLeft = gClearanceX < gLBendX;
+                bool clearanceToTargetGoesLeft = gTgtX < gClearanceX;
                 bool wouldCreateSpike = (lastBendToClearanceGoesLeft != clearanceToTargetGoesLeft);
 
                 if (wouldCreateSpike) {
-                    float offsetY = effectiveGridSize > 0 ? effectiveGridSize * 2 : 40.0f;
-                    if (layout.sourcePoint.y > layout.targetPoint.y) offsetY = -offsetY;
-                    float detourY = lBend.y + offsetY;
-                    if (effectiveGridSize > 0) detourY = std::round(detourY / effectiveGridSize) * effectiveGridSize;
+                    int gOffsetY = 2;
+                    if (gSrcY > gTgtY) gOffsetY = -gOffsetY;
+                    int gDetourY = gLBendY + gOffsetY;
 
-                    Point detourPoint1 = {lBend.x, detourY};
-                    Point detourPoint2 = {clearanceX, detourY};
-                    Point clearancePoint = {clearanceX, layout.targetPoint.y};
+                    Point detourPoint1 = {toPixel(gLBendX), toPixel(gDetourY)};
+                    Point detourPoint2 = {toPixel(gClearanceX), toPixel(gDetourY)};
+                    Point clearancePoint = {toPixel(gClearanceX), toPixel(gTgtY)};
 
                     layout.bendPoints.push_back({detourPoint1});
                     layout.bendPoints.push_back({detourPoint2});
                     layout.bendPoints.push_back({clearancePoint});
                 } else {
-                    Point clearancePoint = {clearanceX, layout.targetPoint.y};
+                    Point clearancePoint = {toPixel(gClearanceX), toPixel(gTgtY)};
                     layout.bendPoints.push_back({clearancePoint});
                 }
             } else {
-                Point connectionPoint = {clearanceX, lBend.y};
-                if (effectiveGridSize > 0) connectionPoint.y = std::round(connectionPoint.y / effectiveGridSize) * effectiveGridSize;
-                Point clearancePoint = {clearanceX, layout.targetPoint.y};
+                Point connectionPoint = {toPixel(gClearanceX), toPixel(gLBendY)};
+                Point clearancePoint = {toPixel(gClearanceX), toPixel(gTgtY)};
                 layout.bendPoints.push_back({connectionPoint});
                 layout.bendPoints.push_back({clearancePoint});
             }

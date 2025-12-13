@@ -1,6 +1,7 @@
 #include "AStarEdgeOptimizer.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
+#include "../../snap/GridSnapCalculator.h"
 #include "../../routing/CooperativeRerouter.h"
 #include "../../routing/UnifiedRetryChain.h"
 #include "../../sugiyama/routing/PathIntersection.h"
@@ -784,8 +785,12 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
             static_cast<int>(std::round(base.sourcePoint.y / gridSize))
         };
     } else {
-        startGrid = calculateGridPosition(srcIt->second, sourceEdge, gridSize);
-        candidate.sourcePoint = obstacles.gridToPixel(startGrid.x, startGrid.y);
+        // Use canonical computation - perpendicular coordinate is exact node edge
+        candidate.sourcePoint = GridSnapCalculator::computeSnapPointFromRatio(
+            srcIt->second, sourceEdge, 0.5f, gridSize);
+        startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
+        candidate.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+            srcIt->second, sourceEdge, candidate.sourcePoint, gridSize);
     }
     
     if (tgtFixed && targetEdge == base.targetEdge) {
@@ -797,8 +802,12 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
             static_cast<int>(std::round(base.targetPoint.y / gridSize))
         };
     } else {
-        goalGrid = calculateGridPosition(tgtIt->second, targetEdge, gridSize);
-        candidate.targetPoint = obstacles.gridToPixel(goalGrid.x, goalGrid.y);
+        // Use canonical computation - perpendicular coordinate is exact node edge
+        candidate.targetPoint = GridSnapCalculator::computeSnapPointFromRatio(
+            tgtIt->second, targetEdge, 0.5f, gridSize);
+        goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
+        candidate.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+            tgtIt->second, targetEdge, candidate.targetPoint, gridSize);
     }
 
     // Use provided pathfinder (thread-safe)

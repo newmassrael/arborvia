@@ -25,7 +25,7 @@
 #include "layout/optimization/OptimizerRegistry.h"
 #include "arborvia/layout/config/OptimizerConfig.h"
 #include "arborvia/layout/api/EdgePenaltySystem.h"
-#include "layout/routing/EdgeNudger.h"
+#include "arborvia/common/Logger.h"
 
 #include <algorithm>
 #include <cmath>
@@ -501,6 +501,35 @@ void EdgeRouting::regenerateBendPointsOnly(
     // This is the key difference from updateEdgeRoutingWithOptimization:
     // - updateEdgeRoutingWithOptimization: optimizer may change everything
     // - regenerateBendPointsOnly: only bendPoints are recalculated
+    
+    // [SNAP-SYNC-DEBUG] Log before regenerateBendPoints
+    LOG_DEBUG("[SNAP-SYNC-DEBUG] regenerateBendPointsOnly: affectedEdges={} gridSize={}", affectedEdges.size(), gridSize);
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it != edgeLayouts.end()) {
+            const auto& layout = it->second;
+            auto srcIt = nodeLayouts.find(layout.from);
+            auto tgtIt = nodeLayouts.find(layout.to);
+            LOG_DEBUG("[SNAP-SYNC-DEBUG] Edge {} from={} to={}", edgeId, layout.from, layout.to);
+            if (srcIt != nodeLayouts.end()) {
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   srcNode pos=({},{}) size=({},{})", 
+                          srcIt->second.position.x, srcIt->second.position.y,
+                          srcIt->second.size.width, srcIt->second.size.height);
+            }
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   srcPoint=({},{}) srcEdge={} srcSnapIdx={}", 
+                      layout.sourcePoint.x, layout.sourcePoint.y,
+                      static_cast<int>(layout.sourceEdge), layout.sourceSnapIndex);
+            if (tgtIt != nodeLayouts.end()) {
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   tgtNode pos=({},{}) size=({},{})", 
+                          tgtIt->second.position.x, tgtIt->second.position.y,
+                          tgtIt->second.size.width, tgtIt->second.size.height);
+            }
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   tgtPoint=({},{}) tgtEdge={} tgtSnapIdx={}", 
+                      layout.targetPoint.x, layout.targetPoint.y,
+                      static_cast<int>(layout.targetEdge), layout.targetSnapIndex);
+        }
+    }
+    
     optimizer->regenerateBendPoints(affectedEdges, edgeLayouts, nodeLayouts, gridSize);
 
     // Update label positions

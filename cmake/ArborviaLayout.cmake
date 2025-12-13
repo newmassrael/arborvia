@@ -78,7 +78,6 @@ set(ARBORVIA_LAYOUT_SOURCES
 
     # Routing utilities
     src/layout/routing/OrthogonalRouter.cpp
-    src/layout/routing/EdgeNudger.cpp
     src/layout/routing/CooperativeRerouter.cpp
     src/layout/routing/UnifiedRetryChain.cpp
 )

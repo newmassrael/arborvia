@@ -35,48 +35,75 @@ void PathCalculator::handleSelfLoop(
     const NodeLayout& srcNode,
     float effectiveGridSize) {
     
-    constexpr float BASE_OFFSET = 30.0f;
+    // === INTEGER GRID CALCULATION ===
+    // All calculations in grid units, convert to pixels at the end
+    auto toGrid = [effectiveGridSize](float pixel) -> int {
+        return static_cast<int>(std::round(pixel / effectiveGridSize));
+    };
+    auto toPixel = [effectiveGridSize](int grid) -> float {
+        return grid * effectiveGridSize;
+    };
     
-    // Generate orthogonal path for self-loop
-    Point srcExt, tgtExt;
+    constexpr int BASE_OFFSET_CELLS = 2;  // 2 grid cells offset
     
-    // Calculate source extension point (perpendicular to source edge)
+    // Source and target in grid units
+    int gSrcX = toGrid(layout.sourcePoint.x);
+    int gSrcY = toGrid(layout.sourcePoint.y);
+    int gTgtX = toGrid(layout.targetPoint.x);
+    int gTgtY = toGrid(layout.targetPoint.y);
+    
+    // Calculate extension points in grid units
+    int gSrcExtX, gSrcExtY, gTgtExtX, gTgtExtY;
+    
     switch (layout.sourceEdge) {
         case NodeEdge::Top:
-            srcExt = {layout.sourcePoint.x, layout.sourcePoint.y - BASE_OFFSET};
+            gSrcExtX = gSrcX;
+            gSrcExtY = gSrcY - BASE_OFFSET_CELLS;
             break;
         case NodeEdge::Bottom:
-            srcExt = {layout.sourcePoint.x, layout.sourcePoint.y + BASE_OFFSET};
+            gSrcExtX = gSrcX;
+            gSrcExtY = gSrcY + BASE_OFFSET_CELLS;
             break;
         case NodeEdge::Left:
-            srcExt = {layout.sourcePoint.x - BASE_OFFSET, layout.sourcePoint.y};
+            gSrcExtX = gSrcX - BASE_OFFSET_CELLS;
+            gSrcExtY = gSrcY;
             break;
         case NodeEdge::Right:
-            srcExt = {layout.sourcePoint.x + BASE_OFFSET, layout.sourcePoint.y};
+            gSrcExtX = gSrcX + BASE_OFFSET_CELLS;
+            gSrcExtY = gSrcY;
+            break;
+        default:
+            gSrcExtX = gSrcX;
+            gSrcExtY = gSrcY;
             break;
     }
     
-    // Calculate target extension point (perpendicular to target edge)
     switch (layout.targetEdge) {
         case NodeEdge::Top:
-            tgtExt = {layout.targetPoint.x, layout.targetPoint.y - BASE_OFFSET};
+            gTgtExtX = gTgtX;
+            gTgtExtY = gTgtY - BASE_OFFSET_CELLS;
             break;
         case NodeEdge::Bottom:
-            tgtExt = {layout.targetPoint.x, layout.targetPoint.y + BASE_OFFSET};
+            gTgtExtX = gTgtX;
+            gTgtExtY = gTgtY + BASE_OFFSET_CELLS;
             break;
         case NodeEdge::Left:
-            tgtExt = {layout.targetPoint.x - BASE_OFFSET, layout.targetPoint.y};
+            gTgtExtX = gTgtX - BASE_OFFSET_CELLS;
+            gTgtExtY = gTgtY;
             break;
         case NodeEdge::Right:
-            tgtExt = {layout.targetPoint.x + BASE_OFFSET, layout.targetPoint.y};
+            gTgtExtX = gTgtX + BASE_OFFSET_CELLS;
+            gTgtExtY = gTgtY;
+            break;
+        default:
+            gTgtExtX = gTgtX;
+            gTgtExtY = gTgtY;
             break;
     }
     
-    // Snap to grid
-    srcExt.x = std::round(srcExt.x / effectiveGridSize) * effectiveGridSize;
-    srcExt.y = std::round(srcExt.y / effectiveGridSize) * effectiveGridSize;
-    tgtExt.x = std::round(tgtExt.x / effectiveGridSize) * effectiveGridSize;
-    tgtExt.y = std::round(tgtExt.y / effectiveGridSize) * effectiveGridSize;
+    // Convert to pixels
+    Point srcExt = {toPixel(gSrcExtX), toPixel(gSrcExtY)};
+    Point tgtExt = {toPixel(gTgtExtX), toPixel(gTgtExtY)};
     
     layout.bendPoints.clear();
     

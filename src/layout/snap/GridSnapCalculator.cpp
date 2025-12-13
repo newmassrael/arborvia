@@ -112,26 +112,21 @@ Point GridSnapCalculator::getPositionFromCandidateIndex(
     int gridPos = gridStart + candidateIndex;
     float pixelCoord = gridPos * gridSize;
 
-    // NOTE: Snap points must be ON the actual node edge, not grid-snapped edge.
-    // Only the coordinate ALONG the edge (X for Top/Bottom, Y for Left/Right) is grid-aligned.
-    // The coordinate PERPENDICULAR to the edge is the exact node edge position.
+    // Quantize BOTH coordinates to grid for orthogonality with A* paths
+    float perpendicular;
     switch (edge) {
-        case NodeEdge::Top: {
-            // X is grid-aligned, Y is exact node top edge
-            return {pixelCoord, node.position.y};
-        }
-        case NodeEdge::Bottom: {
-            // X is grid-aligned, Y is exact node bottom edge
-            return {pixelCoord, node.position.y + node.size.height};
-        }
-        case NodeEdge::Left: {
-            // Y is grid-aligned, X is exact node left edge
-            return {node.position.x, pixelCoord};
-        }
-        case NodeEdge::Right: {
-            // Y is grid-aligned, X is exact node right edge
-            return {node.position.x + node.size.width, pixelCoord};
-        }
+        case NodeEdge::Top:
+            perpendicular = std::round(node.position.y / gridSize) * gridSize;
+            return {pixelCoord, perpendicular};
+        case NodeEdge::Bottom:
+            perpendicular = std::round((node.position.y + node.size.height) / gridSize) * gridSize;
+            return {pixelCoord, perpendicular};
+        case NodeEdge::Left:
+            perpendicular = std::round(node.position.x / gridSize) * gridSize;
+            return {perpendicular, pixelCoord};
+        case NodeEdge::Right:
+            perpendicular = std::round((node.position.x + node.size.width) / gridSize) * gridSize;
+            return {perpendicular, pixelCoord};
     }
     return node.center();
 }
@@ -287,6 +282,73 @@ Point GridSnapCalculator::calculatePositionInContext(
     }
     
     return calculateSnapPosition(*nodeLayout, nodeEdge, connectionIndex, totalConnections, gridSize, outCandidateIndex);
+}
+
+Point GridSnapCalculator::computeSnapPointFromRatio(
+    const NodeLayout& node,
+    NodeEdge edge,
+    float ratio,
+    float gridSize)
+{
+    // Calculate edge properties
+    float edgeLength, edgeStart, perpendicular;
+    
+    switch (edge) {
+        case NodeEdge::Top:
+            edgeLength = node.size.width;
+            edgeStart = node.position.x;
+            perpendicular = node.position.y;
+            break;
+        case NodeEdge::Bottom:
+            edgeLength = node.size.width;
+            edgeStart = node.position.x;
+            perpendicular = node.position.y + node.size.height;
+            break;
+        case NodeEdge::Left:
+            edgeLength = node.size.height;
+            edgeStart = node.position.y;
+            perpendicular = node.position.x;
+            break;
+        case NodeEdge::Right:
+            edgeLength = node.size.height;
+            edgeStart = node.position.y;
+            perpendicular = node.position.x + node.size.width;
+            break;
+        default:
+            return node.center();
+    }
+    
+    // Calculate position along edge
+    float rawAlongEdge = edgeStart + edgeLength * ratio;
+    
+    // Quantize BOTH coordinates to grid for orthogonality
+    if (gridSize > 0.0f) {
+        float quantizedAlongEdge = std::round(rawAlongEdge / gridSize) * gridSize;
+        float quantizedPerpendicular = std::round(perpendicular / gridSize) * gridSize;
+        
+        switch (edge) {
+            case NodeEdge::Top:
+            case NodeEdge::Bottom:
+                return {quantizedAlongEdge, quantizedPerpendicular};
+            case NodeEdge::Left:
+            case NodeEdge::Right:
+                return {quantizedPerpendicular, quantizedAlongEdge};
+            default:
+                return node.center();
+        }
+    }
+    
+    // No grid - return raw position
+    switch (edge) {
+        case NodeEdge::Top:
+        case NodeEdge::Bottom:
+            return {rawAlongEdge, perpendicular};
+        case NodeEdge::Left:
+        case NodeEdge::Right:
+            return {perpendicular, rawAlongEdge};
+        default:
+            return node.center();
+    }
 }
 
 // =============================================================================

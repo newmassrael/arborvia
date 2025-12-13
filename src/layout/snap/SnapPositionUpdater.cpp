@@ -6,6 +6,7 @@
 #include "../sugiyama/routing/SelfLoopRouter.h"
 #include "../sugiyama/routing/PathCleanup.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "arborvia/common/Logger.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -216,6 +217,18 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
             }
         }
 
+        // [SNAP-SYNC-DEBUG] Log before update
+        Point oldSnapPoint = isSource ? layout.sourcePoint : layout.targetPoint;
+        int oldSnapIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+        LOG_DEBUG("[SNAP-SYNC-DEBUG] Edge {} {} nodeId={} nodeHasMoved={} thisEdgeNeedsNewIndex={} candidateCount={}",
+                  edgeId, isSource ? "SOURCE" : "TARGET", nodeId, nodeHasMoved, thisEdgeNeedsNewIndex, candidateCount);
+        LOG_DEBUG("[SNAP-SYNC-DEBUG]   node pos=({},{}) size=({},{})",
+                  node.position.x, node.position.y, node.size.width, node.size.height);
+        LOG_DEBUG("[SNAP-SYNC-DEBUG]   BEFORE: snapPoint=({},{}) snapIndex={}",
+                  oldSnapPoint.x, oldSnapPoint.y, oldSnapIndex);
+        LOG_DEBUG("[SNAP-SYNC-DEBUG]   CALCULATED: snapPoint=({},{}) candidateIndex={}",
+                  snapPoint.x, snapPoint.y, candidateIndex);
+
         if (!nodeHasMoved) {
             if (thisEdgeNeedsNewIndex) {
                 if (isSource) {
@@ -225,6 +238,10 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
                     layout.targetPoint = snapPoint;
                     layout.targetSnapIndex = candidateIndex;
                 }
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (needsNewIndex): snapPoint=({},{}) snapIndex={}",
+                          snapPoint.x, snapPoint.y, candidateIndex);
+            } else {
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   SKIPPED: nodeHasMoved=false and !thisEdgeNeedsNewIndex");
             }
         } else {
             if (isSource) {
@@ -234,6 +251,8 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
                 layout.targetPoint = snapPoint;
                 layout.targetSnapIndex = candidateIndex;
             }
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (nodeHasMoved): snapPoint=({},{}) snapIndex={}",
+                      snapPoint.x, snapPoint.y, candidateIndex);
         }
 
         if (needsRedistribution) {
@@ -253,6 +272,25 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
 
     SnapUpdateResult result;
     float gridSizeToUse = constants::effectiveGridSize(gridSize);
+    
+    // [SNAP-SYNC-DEBUG] Log entry parameters
+    LOG_DEBUG("[SNAP-SYNC-DEBUG] updateSnapPositions called: affectedEdges={} movedNodes={} gridSize={} skipBendPointRecalc={}",
+              affectedEdges.size(), movedNodes.size(), gridSizeToUse, skipBendPointRecalc);
+    for (NodeId nid : movedNodes) {
+        auto it = nodeLayouts.find(nid);
+        if (it != nodeLayouts.end()) {
+            LOG_DEBUG("[SNAP-SYNC-DEBUG] movedNode {} pos=({},{})", nid, it->second.position.x, it->second.position.y);
+        }
+    }
+    for (EdgeId eid : affectedEdges) {
+        auto it = edgeLayouts.find(eid);
+        if (it != edgeLayouts.end()) {
+            LOG_DEBUG("[SNAP-SYNC-DEBUG] affectedEdge {} from={} to={} srcPoint=({},{}) tgtPoint=({},{})",
+                      eid, it->second.from, it->second.to,
+                      it->second.sourcePoint.x, it->second.sourcePoint.y,
+                      it->second.targetPoint.x, it->second.targetPoint.y);
+        }
+    }
 
     // Phase 1: Collect affected connections
     auto affectedConnections = collectAffectedConnections(edgeLayouts, affectedEdges);

@@ -102,13 +102,6 @@ private:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
-    /**
-     * @brief Apply post-nudging for visual overlap separation.
-     */
-    void applyPostNudging(
-        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const LayoutOptions& options);
-
     std::shared_ptr<IPathFinder> pathFinder_;
     SnapUpdateFunc snapUpdateFunc_;
     RecalcBendPointsFunc recalcFunc_;

@@ -87,17 +87,6 @@ Intersection (허용):          Overlap (금지):
 │  │  3. dirty 엣지 재라우팅 (새 경로가 장애물로 작용)           │  │
 │  │  4. 반복 (수렴할 때까지 또는 최대 반복 횟수)               │  │
 │  └───────────────────────────────────────────────────────────┘  │
-│                              │                                  │
-│                              ▼                                  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    EdgeNudger (새로 추가)                  │  │
-│  │                                                           │  │
-│  │  렌더링 직전 단계:                                         │  │
-│  │  1. 같은 좌표를 공유하는 segment 그룹 찾기                 │  │
-│  │  2. 각 그룹에 시각적 offset 적용 (±2px)                   │  │
-│  │                                                           │  │
-│  │  결과: 논리적 overlap → 시각적 분리                        │  │
-│  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -210,62 +199,6 @@ void EdgeRouting::ripUpAndReroute(EdgeId newEdgeId,
 }
 ```
 
-### 3.4 EdgeNudger (새 컴포넌트)
-
-```cpp
-// include/arborvia/layout/EdgeNudger.h
-
-class EdgeNudger {
-public:
-    /// 겹치는 엣지들을 시각적으로 분리
-    static void applyNudging(
-        std::unordered_map<EdgeId, EdgeLayout>& layouts,
-        float nudgeOffset = 2.0f);
-
-private:
-    struct SegmentGroup {
-        bool isVertical;
-        float coordinate;  // x (수직) 또는 y (수평)
-        std::vector<Segment*> segments;
-    };
-    
-    static std::vector<SegmentGroup> findOverlappingSegments(
-        const std::unordered_map<EdgeId, EdgeLayout>& layouts);
-};
-
-// src/layout/EdgeNudger.cpp
-
-void EdgeNudger::applyNudging(
-    std::unordered_map<EdgeId, EdgeLayout>& layouts,
-    float nudgeOffset) {
-    
-    auto groups = findOverlappingSegments(layouts);
-    
-    for (auto& group : groups) {
-        int count = group.segments.size();
-        if (count <= 1) continue;
-        
-        // 중심에서 균등 분산
-        float totalWidth = nudgeOffset * (count - 1);
-        float startOffset = -totalWidth / 2.0f;
-        
-        for (int i = 0; i < count; ++i) {
-            float offset = startOffset + i * nudgeOffset;
-            
-            if (group.isVertical) {
-                // 수직 segment → x 좌표 조정
-                group.segments[i]->p1.x += offset;
-                group.segments[i]->p2.x += offset;
-            } else {
-                // 수평 segment → y 좌표 조정
-                group.segments[i]->p1.y += offset;
-                group.segments[i]->p2.y += offset;
-            }
-        }
-    }
-}
-```
-
 ---
 
 ## 4. 드래그/드롭 통합
@@ -279,7 +212,6 @@ void EdgeNudger::applyNudging(
 ┌────────────────────────────────────────┐
 │ 모든 엣지 A* 라우팅                     │
 │ + Rip-up and Reroute                  │
-│ + EdgeNudger                          │
 └────────────────────────────────────────┘
      │
      ▼
@@ -300,7 +232,6 @@ void EdgeNudger::applyNudging(
 │ 드래그 후:                              │
 │ 1. 이동된 노드의 엣지들 A* 실행          │
 │ 2. Rip-up and Reroute (겹친 엣지 재계산)│
-│ 3. EdgeNudger (시각적 분리)             │
 └────────────────────────────────────────┘
      │
      ▼
@@ -327,12 +258,10 @@ enum class PostDragAlgorithm {
 struct OptimizationOptions {
     DragAlgorithm dragAlgorithm = DragAlgorithm::HideUntilDrop;
     PostDragAlgorithm postDragAlgorithm = PostDragAlgorithm::AStar;
-    
+
     // 새로 추가
     bool enableRipUpAndReroute = true;
     int maxRipUpIterations = 3;
-    bool enablePostNudging = true;
-    float nudgeOffset = 2.0f;
 };
 ```
 
@@ -366,12 +295,7 @@ struct OptimizationOptions {
 - [ ] EdgeRouting에 통합
 - [ ] 최대 반복 횟수 설정
 
-### Phase 4: EdgeNudger (1일)
-- [ ] `findOverlappingSegments()` 구현
-- [ ] `applyNudging()` 구현
-- [ ] EdgeRouting 파이프라인에 통합
-
-### Phase 5: 테스트 및 튜닝 (1일)
+### Phase 4: 테스트 및 튜닝 (1일)
 - [ ] 기존 테스트 통과 확인
 - [ ] 50 drags 테스트 → 0 시각적 overlap 확인
 - [ ] 비용 상수 튜닝
@@ -381,12 +305,7 @@ struct OptimizationOptions {
 ## 7. 파일 구조
 
 ```
-include/arborvia/layout/
-├── EdgeNudger.h              # 새로 생성
-
-src/layout/
-├── EdgeNudger.cpp            # 새로 생성
-└── sugiyama/
+src/layout/sugiyama/
     ├── ObstacleMap.h         # 수정: 동적 비용 지원
     ├── ObstacleMap.cpp       # 수정
     ├── AStarPathFinder.cpp   # 수정: 비용 함수 개조
@@ -636,7 +555,6 @@ updateSnapPositions() 호출 시:
 | **A* Cost** | 균일 비용 (1) | 동적 비용 (1~100) |
 | **EdgePenaltySystem** | 유지 | 유지 (변경 없음) |
 | **IEdgeOptimizer** | 유지 | 유지 (변경 없음) |
-| **EdgeNudger** | 없음 | 새로 추가 |
 | **Rip-up and Reroute** | 없음 | 새로 추가 |
 
 ### 9.8 IEdgeOptimizer 인터페이스 (기존)
@@ -688,10 +606,6 @@ public:
 ├── src/layout/sugiyama/ObstacleMap.h      ← 비용 기반으로 확장
 ├── src/layout/sugiyama/AStarPathFinder.cpp ← 동적 비용 사용
 └── src/layout/sugiyama/EdgeRouting.cpp    ← Rip-up and Reroute 추가
-
-새로 추가되는 파일:
-├── include/arborvia/layout/EdgeNudger.h   ← Post-Nudging
-└── src/layout/EdgeNudger.cpp              ← Post-Nudging
 
 변경되지 않는 파일:
 ├── include/arborvia/layout/IEdgePenalty.h        ← 유지
@@ -846,7 +760,6 @@ include/arborvia/core/GeometryUtils.h
 | **Soft Penalty** | 위반 시 감점 (1,000점 등) | IEdgePenalty |
 | **Rip-up** | 기존 경로 제거 | EdgeRouting |
 | **Reroute** | 새 경로 재계산 | EdgeRouting |
-| **Nudging** | 겹치는 엣지 시각적 분리 | EdgeNudger |
 | **Channel** | 경로의 중간 세그먼트 좌표 | 수학적 개념 |
 
 ---
@@ -873,13 +786,6 @@ TEST(EdgeRoutingTest, RipUpAndReroute_ReducesOverlap) {
     // 의도적으로 겹치는 경로 생성
     // Rip-up and Reroute 실행
     // 겹침 감소 확인
-}
-
-// EdgeNudger 테스트
-TEST(EdgeNudgerTest, ApplyNudging_SeparatesOverlappingSegments) {
-    // 같은 좌표의 세그먼트들 생성
-    // Nudging 적용
-    // 시각적으로 분리되었는지 확인
 }
 ```
 
@@ -919,8 +825,7 @@ TEST(PerformanceTest, RipUpConverges_WithinMaxIterations) {
 - ✅ AStarPathFinder (균일 비용 - 성능 최적화)
 - ✅ ObstacleMap 동적 비용 API (구현됨, A*에서는 미사용 - 성능 이유)
 - ✅ Rip-up and Reroute (AStarEdgeOptimizer.regenerateBendPoints에 구현)
-- ✅ EdgeNudger (구현 및 EdgeRouting pipeline 통합 완료)
-- ✅ LayoutOptions 연동 (enableRipUpAndReroute, enablePostNudging 등)
+- ✅ LayoutOptions 연동 (enableRipUpAndReroute 등)
 - ✅ ConstraintGateway, ConstraintRegistry (제약 검증 단일 진입점)
 - ✅ IEdgeConstraint, ConstraintViolation (제약 인터페이스)
 - ✅ OrthogonalityConstraint, DirectionalPenetrationConstraint (Built-in 제약)
@@ -931,7 +836,7 @@ TEST(PerformanceTest, RipUpConverges_WithinMaxIterations) {
 - 원래 계획: A*에서 동적 비용(getCostForDirection) 사용
 - 실제 구현: Blocking 기반 A* + Rip-up and Reroute
 - 이유: 동적 비용 방식은 A* 탐색 공간을 과도하게 확장 (726ms → 9ms 성능 차이)
-- 결과: blocking으로 overlap 방지, EdgeNudger로 불가피한 overlap 시각적 분리
+- 결과: blocking으로 overlap 방지
 
 **v0.4.0 변경 사항 (Constraint Gateway):**
 - ConstraintGateway: 제약 검증 단일 진입점 구현

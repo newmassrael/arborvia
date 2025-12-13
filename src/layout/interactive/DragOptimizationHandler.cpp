@@ -3,7 +3,6 @@
 #include "layout/optimization/OptimizerRegistry.h"
 #include "arborvia/layout/config/OptimizerConfig.h"
 #include "arborvia/layout/api/EdgePenaltySystem.h"
-#include "layout/routing/EdgeNudger.h"
 #include <algorithm>
 #include <cmath>
 #include "arborvia/common/Logger.h"
@@ -123,47 +122,6 @@ std::vector<EdgeId> DragOptimizationHandler::collectAllPenetratingEdges(
     return penetratingEdges;
 }
 
-void DragOptimizationHandler::applyPostNudging(
-    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-    const LayoutOptions& options) {
-
-    if (!options.optimizationOptions.enablePostNudging) return;
-
-    EdgeNudger::Config nudgeConfig;
-    nudgeConfig.nudgeOffset = options.optimizationOptions.nudgeOffset;
-    nudgeConfig.minSegmentLength = options.optimizationOptions.minNudgeSegmentLength;
-    nudgeConfig.enabled = true;
-
-    EdgeNudger nudger(nudgeConfig);
-    auto nudgeResult = nudger.applyNudging(edgeLayouts);
-
-
-    // Apply nudged positions
-    for (const auto& nudged : nudgeResult.nudgedSegments) {
-        auto it = edgeLayouts.find(nudged.edgeId);
-        if (it == edgeLayouts.end()) continue;
-
-        EdgeLayout& layout = it->second;
-
-        if (nudged.segmentIndex == 0) {
-            layout.sourcePoint = nudged.p1;
-            if (layout.bendPoints.empty()) {
-                layout.targetPoint = nudged.p2;
-            } else {
-                layout.bendPoints[0].position = nudged.p2;
-            }
-        } else if (nudged.segmentIndex < layout.bendPoints.size()) {
-            layout.bendPoints[nudged.segmentIndex - 1].position = nudged.p1;
-            layout.bendPoints[nudged.segmentIndex].position = nudged.p2;
-        } else if (nudged.segmentIndex == layout.bendPoints.size()) {
-            if (!layout.bendPoints.empty()) {
-                layout.bendPoints.back().position = nudged.p1;
-            }
-            layout.targetPoint = nudged.p2;
-        }
-    }
-}
-
 void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -257,9 +215,6 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             }
         }
     }
-
-    // Post-nudging
-    applyPostNudging(edgeLayouts, options);
 }
 
 } // namespace arborvia

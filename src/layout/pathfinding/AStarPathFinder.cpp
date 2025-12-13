@@ -144,6 +144,12 @@ PathResult AStarPathFinder::findPath(
 
     int iterations = 0;
 
+    // Pre-allocate reusable sets for hot path optimization
+    // Avoids repeated heap allocations inside the search loop
+    std::unordered_set<NodeId> cellExcludeReusable;
+    cellExcludeReusable.reserve(4);
+    const std::unordered_set<NodeId> sourceTargetExcludes{sourceNode, targetNode};
+
     while (!openSet.empty() && iterations < MAX_ITERATIONS) {
         ++iterations;
 
@@ -202,15 +208,16 @@ PathResult AStarPathFinder::findPath(
             // - First move from start: also exclude sourceNode (edge starts from node boundary)
             // - Goal cell: exclude targetNode + extraGoalExcludes
             // - All other cells: no exclusions
-            std::unordered_set<NodeId> cellExclude;
+            // Reuse pre-allocated set to avoid heap allocations in hot path
+            cellExcludeReusable.clear();
             if (neighborPos == start) {
-                cellExclude = startExcludes;
+                cellExcludeReusable = startExcludes;
             } else if (neighborPos == goal) {
-                cellExclude = goalExcludes;
+                cellExcludeReusable = goalExcludes;
             } else if (current.pos == start && current.lastDir == MoveDirection::None) {
                 // First move from start: the neighboring cell might still overlap
                 // with source node since we start at the node's edge
-                cellExclude = startExcludes;
+                cellExcludeReusable = startExcludes;
             }
             // else: empty exclude set for intermediate cells (normal edges)
 
@@ -223,15 +230,16 @@ PathResult AStarPathFinder::findPath(
 
             // Get cost for this cell including proximity penalty
             // For self-loop intermediate cells, don't exclude the node so penetration is detected
-            std::unordered_set<NodeId> excludeForProximity = isSelfLoopIntermediate
-                ? std::unordered_set<NodeId>{}
-                : std::unordered_set<NodeId>{sourceNode, targetNode};
+            // Use pre-allocated sourceTargetExcludes to avoid heap allocation
+            const auto& excludeForProximity = isSelfLoopIntermediate
+                ? emptyExcludeSet
+                : sourceTargetExcludes;
             int cellCost = obstacles.getCostForDirectionWithExcludes(
                 neighborPos.x, neighborPos.y, moveDir, excludeForProximity);
 
             // ALWAYS check direction-aware blocking for edge segments
             // Edge segments use isBlockedForDirection, not cost-based blocking
-            const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExclude;
+            const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExcludeReusable;
             bool directionBlocked = obstacles.isBlockedForDirection(
                 neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
             if (directionBlocked) {
@@ -558,9 +566,13 @@ bool AStarPathFinder::validateSegmentWithEndpoints(
     int x = from.x;
     int y = from.y;
 
+    // Pre-allocate reusable set for hot path optimization
+    std::unordered_set<NodeId> cellExclude;
+    cellExclude.reserve(4);
+
     while (true) {
-        // Determine exclude set for this cell
-        std::unordered_set<NodeId> cellExclude;
+        // Determine exclude set for this cell - reuse pre-allocated set
+        cellExclude.clear();
         bool isStartCell = (x == from.x && y == from.y);
         bool isEndCell = (x == to.x && y == to.y);
 

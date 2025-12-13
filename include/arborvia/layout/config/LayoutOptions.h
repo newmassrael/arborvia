@@ -181,16 +181,6 @@ struct OptimizationOptions {
 
     /// Maximum iterations for Rip-up and Reroute
     int maxRipUpIterations = 3;
-
-    /// Enable post-processing nudging for visual separation
-    /// Applies small offset to visually separate overlapping segments
-    bool enablePostNudging = true;
-
-    /// Pixel offset for nudging overlapping segments
-    float nudgeOffset = 2.0f;
-
-    /// Minimum segment length to consider for nudging
-    float minNudgeSegmentLength = 10.0f;
 };
 
 /// Crossing minimization strategy
@@ -303,14 +293,6 @@ struct LayoutOptions {
     }
     LayoutOptions& setMaxRipUpIterations(int iterations) {
         optimizationOptions.maxRipUpIterations = iterations;
-        return *this;
-    }
-    LayoutOptions& setEnablePostNudging(bool enabled) {
-        optimizationOptions.enablePostNudging = enabled;
-        return *this;
-    }
-    LayoutOptions& setNudgeOffset(float offset) {
-        optimizationOptions.nudgeOffset = offset;
         return *this;
     }
 };

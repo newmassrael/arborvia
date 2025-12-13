@@ -1,4 +1,5 @@
 #include "SnapPointCalculator.h"
+#include "GridSnapCalculator.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,27 +32,11 @@ Point SnapPointCalculator::calculateFromRatio(
     float ratio,
     float gridSize)
 {
-    // Calculate edge length using helper
-    float edgeLength = getEdgeLength(node, edge);
-
-    // Calculate position from ratio (A* standard implementation)
-    Point position;
-    if (edge == NodeEdge::Top) {
-        position = {node.position.x + edgeLength * ratio, node.position.y};
-    } else if (edge == NodeEdge::Bottom) {
-        position = {node.position.x + edgeLength * ratio, node.position.y + node.size.height};
-    } else if (edge == NodeEdge::Left) {
-        position = {node.position.x, node.position.y + edgeLength * ratio};
-    } else { // Right
-        position = {node.position.x + node.size.width, node.position.y + edgeLength * ratio};
-    }
-
-    // Quantize to grid (CRITICAL - A* standard)
-    // Division by zero protection: if gridSize <= 0, return position as-is
-    if (gridSize > 0.0f) {
-        position.x = std::round(position.x / gridSize) * gridSize;
-        position.y = std::round(position.y / gridSize) * gridSize;
-    }
+    // Delegate to GridSnapCalculator for consistent computation
+    // This ensures:
+    // - Coordinate along edge is grid-quantized
+    // - Coordinate perpendicular to edge is EXACT node edge position
+    Point position = GridSnapCalculator::computeSnapPointFromRatio(node, edge, ratio, gridSize);
 
     // Debug logging for ratio-based snap point calculation
     const char* edgeName = (edge == NodeEdge::Top) ? "top" : 

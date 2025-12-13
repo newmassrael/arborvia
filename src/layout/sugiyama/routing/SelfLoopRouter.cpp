@@ -144,46 +144,67 @@ EdgeLayout SelfLoopRouter::route(
     }
 
     float gridSize = options.gridConfig.cellSize;
-    float spacing = calculateSpacing(gridSize);
+    if (gridSize <= 0.0f) {
+        gridSize = DEFAULT_SPACING;  // Fallback
+    }
 
-    // Calculate loop spacing with boundary check (shared by offset and snapOffset)
-    // Limit to 40% of smaller node dimension to prevent overflow
-    float loopSpacing = static_cast<float>(loopIndex) * config.stackSpacing;
-    float maxLoopSpacing = std::min(nodeLayout.size.width, nodeLayout.size.height) * 0.4f;
-    loopSpacing = std::min(loopSpacing, maxLoopSpacing);
+    // === ALL CALCULATIONS IN GRID UNITS (integers) ===
+    // Convert pixel to grid: round(pixel / gridSize)
+    // Convert grid to pixel: grid * gridSize
+    auto toGrid = [gridSize](float pixel) -> int {
+        return static_cast<int>(std::round(pixel / gridSize));
+    };
+    auto toPixel = [gridSize](int grid) -> float {
+        return grid * gridSize;
+    };
 
-    // offset: distance from node edge for bend points
-    // snapOffset: shift for source/target snap points
-    float offset = config.loopOffset + loopSpacing;
-    float snapOffset = loopSpacing;
+    // Node boundaries in grid units
+    int gNodeLeft = toGrid(nodeLayout.position.x);
+    int gNodeRight = toGrid(nodeLayout.position.x + nodeLayout.size.width);
+    int gNodeTop = toGrid(nodeLayout.position.y);
+    int gNodeBottom = toGrid(nodeLayout.position.y + nodeLayout.size.height);
 
-    // Node boundaries
-    float nodeLeft = nodeLayout.position.x;
-    float nodeRight = nodeLayout.position.x + nodeLayout.size.width;
-    float nodeTop = nodeLayout.position.y;
-    float nodeBottom = nodeLayout.position.y + nodeLayout.size.height;
+    // Spacing in grid units (minimum 1 cell)
+    int gSpacing = std::max(1, toGrid(calculateSpacing(gridSize)));
+
+    // Loop offset in grid units
+    int gLoopOffset = std::max(1, toGrid(config.loopOffset));
+    int gStackSpacing = std::max(0, toGrid(config.stackSpacing));
+    int gSnapOffset = loopIndex * gStackSpacing;
+
+    // Limit snap offset to 40% of smaller dimension
+    int maxSnapOffset = std::min(gNodeRight - gNodeLeft, gNodeBottom - gNodeTop) * 4 / 10;
+    gSnapOffset = std::min(gSnapOffset, maxSnapOffset);
+
+    // Total offset from node edge for bend points
+    int gOffset = gLoopOffset + gSnapOffset;
 
     // CONSTRAINT: Self-loops must use adjacent edges (not same or opposite)
     // Each direction routes from one edge to an adjacent edge at a corner
     // Reserve space for 3 bend points (all cases use exactly 3)
     layout.bendPoints.reserve(3);
+
+    // Grid coordinates for source, target, and bend points
+    int gSrcX, gSrcY, gTgtX, gTgtY;
+    int gBend1X, gBend1Y, gBend2X, gBend2Y, gBend3X, gBend3Y;
+
     switch (dir) {
         case SelfLoopDirection::Right:
             // Right → Top (top-right corner)
             layout.sourceEdge = NodeEdge::Right;
             layout.targetEdge = NodeEdge::Top;
 
-            // Source: Right edge, near top (corner position)
-            // Each loop shifts source DOWN by snapOffset
-            layout.sourcePoint = {nodeRight, nodeTop + spacing + snapOffset};
-            // Target: Top edge, near right (corner position)
-            // Each loop shifts target LEFT by snapOffset
-            layout.targetPoint = {nodeRight - spacing - snapOffset, nodeTop};
+            // Source: Right edge, shifted down from top
+            gSrcX = gNodeRight;
+            gSrcY = gNodeTop + gSpacing + gSnapOffset;
+            // Target: Top edge, shifted left from right
+            gTgtX = gNodeRight - gSpacing - gSnapOffset;
+            gTgtY = gNodeTop;
 
             // Bend points: route around top-right corner
-            layout.bendPoints.push_back({{nodeRight + offset, layout.sourcePoint.y}});
-            layout.bendPoints.push_back({{nodeRight + offset, nodeTop - offset}});
-            layout.bendPoints.push_back({{layout.targetPoint.x, nodeTop - offset}});
+            gBend1X = gNodeRight + gOffset;  gBend1Y = gSrcY;
+            gBend2X = gNodeRight + gOffset;  gBend2Y = gNodeTop - gOffset;
+            gBend3X = gTgtX;                 gBend3Y = gNodeTop - gOffset;
             break;
 
         case SelfLoopDirection::Left:
@@ -191,17 +212,17 @@ EdgeLayout SelfLoopRouter::route(
             layout.sourceEdge = NodeEdge::Left;
             layout.targetEdge = NodeEdge::Bottom;
 
-            // Source: Left edge, near bottom (corner position)
-            // Each loop shifts source UP by snapOffset
-            layout.sourcePoint = {nodeLeft, nodeBottom - spacing - snapOffset};
-            // Target: Bottom edge, near left (corner position)
-            // Each loop shifts target RIGHT by snapOffset
-            layout.targetPoint = {nodeLeft + spacing + snapOffset, nodeBottom};
+            // Source: Left edge, shifted up from bottom
+            gSrcX = gNodeLeft;
+            gSrcY = gNodeBottom - gSpacing - gSnapOffset;
+            // Target: Bottom edge, shifted right from left
+            gTgtX = gNodeLeft + gSpacing + gSnapOffset;
+            gTgtY = gNodeBottom;
 
             // Bend points: route around bottom-left corner
-            layout.bendPoints.push_back({{nodeLeft - offset, layout.sourcePoint.y}});
-            layout.bendPoints.push_back({{nodeLeft - offset, nodeBottom + offset}});
-            layout.bendPoints.push_back({{layout.targetPoint.x, nodeBottom + offset}});
+            gBend1X = gNodeLeft - gOffset;   gBend1Y = gSrcY;
+            gBend2X = gNodeLeft - gOffset;   gBend2Y = gNodeBottom + gOffset;
+            gBend3X = gTgtX;                 gBend3Y = gNodeBottom + gOffset;
             break;
 
         case SelfLoopDirection::Top:
@@ -209,17 +230,17 @@ EdgeLayout SelfLoopRouter::route(
             layout.sourceEdge = NodeEdge::Top;
             layout.targetEdge = NodeEdge::Right;
 
-            // Source: Top edge, near right (corner position)
-            // Each loop shifts source LEFT by snapOffset
-            layout.sourcePoint = {nodeRight - spacing - snapOffset, nodeTop};
-            // Target: Right edge, near top (corner position)
-            // Each loop shifts target DOWN by snapOffset
-            layout.targetPoint = {nodeRight, nodeTop + spacing + snapOffset};
+            // Source: Top edge, shifted left from right
+            gSrcX = gNodeRight - gSpacing - gSnapOffset;
+            gSrcY = gNodeTop;
+            // Target: Right edge, shifted down from top
+            gTgtX = gNodeRight;
+            gTgtY = gNodeTop + gSpacing + gSnapOffset;
 
             // Bend points: route around top-right corner
-            layout.bendPoints.push_back({{layout.sourcePoint.x, nodeTop - offset}});
-            layout.bendPoints.push_back({{nodeRight + offset, nodeTop - offset}});
-            layout.bendPoints.push_back({{nodeRight + offset, layout.targetPoint.y}});
+            gBend1X = gSrcX;                 gBend1Y = gNodeTop - gOffset;
+            gBend2X = gNodeRight + gOffset;  gBend2Y = gNodeTop - gOffset;
+            gBend3X = gNodeRight + gOffset;  gBend3Y = gTgtY;
             break;
 
         case SelfLoopDirection::Bottom:
@@ -227,23 +248,33 @@ EdgeLayout SelfLoopRouter::route(
             layout.sourceEdge = NodeEdge::Bottom;
             layout.targetEdge = NodeEdge::Left;
 
-            // Source: Bottom edge, near left (corner position)
-            // Each loop shifts source RIGHT by snapOffset
-            layout.sourcePoint = {nodeLeft + spacing + snapOffset, nodeBottom};
-            // Target: Left edge, near bottom (corner position)
-            // Each loop shifts target UP by snapOffset
-            layout.targetPoint = {nodeLeft, nodeBottom - spacing - snapOffset};
+            // Source: Bottom edge, shifted right from left
+            gSrcX = gNodeLeft + gSpacing + gSnapOffset;
+            gSrcY = gNodeBottom;
+            // Target: Left edge, shifted up from bottom
+            gTgtX = gNodeLeft;
+            gTgtY = gNodeBottom - gSpacing - gSnapOffset;
 
             // Bend points: route around bottom-left corner
-            layout.bendPoints.push_back({{layout.sourcePoint.x, nodeBottom + offset}});
-            layout.bendPoints.push_back({{nodeLeft - offset, nodeBottom + offset}});
-            layout.bendPoints.push_back({{nodeLeft - offset, layout.targetPoint.y}});
+            gBend1X = gSrcX;                 gBend1Y = gNodeBottom + gOffset;
+            gBend2X = gNodeLeft - gOffset;   gBend2Y = gNodeBottom + gOffset;
+            gBend3X = gNodeLeft - gOffset;   gBend3Y = gTgtY;
             break;
 
         case SelfLoopDirection::Auto:
             // Auto is converted to Right above, this case should never be reached
+            // Initialize to avoid uninitialized variable warnings
+            gSrcX = gSrcY = gTgtX = gTgtY = 0;
+            gBend1X = gBend1Y = gBend2X = gBend2Y = gBend3X = gBend3Y = 0;
             break;
     }
+
+    // === CONVERT GRID COORDINATES TO PIXELS ===
+    layout.sourcePoint = {toPixel(gSrcX), toPixel(gSrcY)};
+    layout.targetPoint = {toPixel(gTgtX), toPixel(gTgtY)};
+    layout.bendPoints.push_back({{toPixel(gBend1X), toPixel(gBend1Y)}});
+    layout.bendPoints.push_back({{toPixel(gBend2X), toPixel(gBend2Y)}});
+    layout.bendPoints.push_back({{toPixel(gBend3X), toPixel(gBend3Y)}});
 
     // Calculate label position
     layout.labelPosition = LayoutUtils::calculateEdgeLabelPosition(layout);
