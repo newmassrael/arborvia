@@ -49,11 +49,6 @@ IPathFinder& PathRoutingCoordinator::currentPathFinder() const {
 // === State Management ===
 
 void PathRoutingCoordinator::onDragStart(const std::vector<EdgeId>& affectedEdges) {
-    // If we were pending, cancel the pending optimization
-    if (state_ == RoutingState::Pending) {
-        // Cancel pending - new drag started
-    }
-
     // Invalidate previous async results
     ++generation_;
 

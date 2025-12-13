@@ -17,6 +17,7 @@
 #include "../../src/layout/routing/OrthogonalRouter.h"
 #include "../../src/layout/routing/CooperativeRerouter.h"
 #include "CommandServer.h"
+#include <arborvia/core/TaskExecutor.h>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -211,6 +212,13 @@ public:
 
         setupGraph();
         doLayout();
+    }
+
+    ~InteractiveDemo() {
+        // Ensure all async tasks complete before destroying this
+        if (executor_) {
+            executor_->shutdown();
+        }
     }
 
     // IRoutingListener implementation
@@ -1594,6 +1602,7 @@ private:
     // Async optimization state
     std::queue<std::function<void()>> mainThreadQueue_;
     std::mutex queueMutex_;
+    std::unique_ptr<ITaskExecutor> executor_ = std::make_unique<JThreadExecutor>();
 
 public:
     // Start command server
@@ -1656,20 +1665,20 @@ private:
                   << " edges=" << allEdges.size() 
                   << " movedNodes=" << movedNodes.size() << std::endl;
         
-        // Start async optimization
-        std::thread([this, gen, allEdges, snapshotEdges, snapshotNodes, options, movedNodes]() {
+        // Start async optimization via executor
+        executor_->submit([this, gen, allEdges, snapshotEdges, snapshotNodes, options, movedNodes]() {
             // Worker thread: run optimization on snapshot
             auto workingEdges = snapshotEdges;
-            
+
             LayoutUtils::updateEdgePositions(
                 workingEdges, snapshotNodes, allEdges,
                 options, movedNodes);
-            
+
             // Post result to main thread
             postToMainThread([this, gen, workingEdges = std::move(workingEdges)]() {
                 onAsyncOptimizationComplete(workingEdges, gen);
             });
-        }).detach();
+        });
     }
 
     void onAsyncOptimizationComplete(
