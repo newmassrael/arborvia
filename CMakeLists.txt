@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(ARBORVIA_ENABLE_SVG_EXPORT "Enable SVG export module" ON)
 option(ARBORVIA_BUILD_TESTS "Build tests" ON)
+option(ARBORVIA_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(ARBORVIA_BUILD_EXAMPLES "Build examples" ON)
 option(ARBORVIA_USE_SPDLOG "Use spdlog for logging (otherwise use default backend)" ON)
 
@@ -175,6 +176,11 @@ if(ARBORVIA_BUILD_EXAMPLES)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(interactive_demo PRIVATE -Wall -Wextra)
     endif()
+endif()
+
+# Benchmarks
+if(ARBORVIA_BUILD_BENCHMARKS)
+    add_subdirectory(tests/benchmarks)
 endif()
 
 # Install

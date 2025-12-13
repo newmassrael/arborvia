@@ -1648,23 +1648,23 @@ private:
     {
         // Get current generation for this optimization
         uint64_t gen = routingCoordinator_->currentGeneration();
-        
+
         // Snapshot current state
         auto snapshotEdges = edgeLayouts_;
         auto snapshotNodes = nodeLayouts_;
         auto options = layoutOptions_;
-        
+
         // Collect all edges for optimization
         std::vector<EdgeId> allEdges;
         allEdges.reserve(snapshotEdges.size());
         for (const auto& [edgeId, layout] : snapshotEdges) {
             allEdges.push_back(edgeId);
         }
-        
-        std::cout << "[Async] Starting optimization gen=" << gen 
-                  << " edges=" << allEdges.size() 
+
+        std::cout << "[Async] Starting optimization gen=" << gen
+                  << " edges=" << allEdges.size()
                   << " movedNodes=" << movedNodes.size() << std::endl;
-        
+
         // Start async optimization via executor
         executor_->submit([this, gen, allEdges, snapshotEdges, snapshotNodes, options, movedNodes]() {
             // Worker thread: run optimization on snapshot
