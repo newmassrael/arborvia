@@ -3,6 +3,7 @@
 #include "../api/IPathFinder.h"
 #include "../../core/Types.h"
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -10,9 +11,7 @@
 #include <unordered_set>
 
 namespace arborvia {
-
 // Forward declarations
-struct EdgeLayout;
 struct NodeLayout;
 
 /// State of the routing coordinator
@@ -163,6 +162,36 @@ public:
     /// This allows the coordinator to trigger re-routing through EdgeRouting
     void setOptimizationCallback(OptimizationCallback callback);
 
+    // === Async Mode ===
+    // 
+    // In async mode:
+    // - optimizationCallback_ is called to START async optimization
+    // - Caller is responsible for:
+    //   1. Creating snapshot of layouts
+    //   2. Running optimization in worker thread
+    //   3. Calling canApplyResult() to check validity
+    //   4. Applying results on main thread
+    //   5. Notifying listener via onOptimizationComplete()
+    // - Generation ID tracks optimization validity across drag operations
+
+    /// Enable or disable async mode
+    void setAsyncMode(bool enabled);
+
+    /// Check if async mode is enabled
+    bool isAsyncMode() const;
+
+    /// Get current generation ID (for result validation)
+    uint64_t currentGeneration() const;
+
+    /// Check if optimization result can be applied
+    /// @param generation Generation ID of the result
+    /// @return true if result is still valid (no new drag started)
+    bool canApplyResult(uint64_t generation) const;
+
+    /// Notify listener that optimization is complete (for async mode)
+    /// Call this after applying async results
+    void notifyOptimizationComplete(const std::vector<EdgeId>& optimizedEdges);
+
 private:
     std::shared_ptr<IPathFinder> dragPathFinder_;
     std::shared_ptr<IPathFinder> dropPathFinder_;
@@ -175,6 +204,10 @@ private:
     std::unordered_set<NodeId> movedNodes_;
     IRoutingListener* listener_ = nullptr;
     OptimizationCallback optimizationCallback_;
+
+    // Async mode state
+    bool asyncMode_ = false;
+    std::atomic<uint64_t> generation_{0};
 
     void executeOptimization();
 };

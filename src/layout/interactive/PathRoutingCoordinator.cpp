@@ -54,6 +54,9 @@ void PathRoutingCoordinator::onDragStart(const std::vector<EdgeId>& affectedEdge
         // Cancel pending - new drag started
     }
 
+    // Invalidate previous async results
+    ++generation_;
+
     state_ = RoutingState::Dragging;
     pendingEdges_ = affectedEdges;
     dropTimeMs_ = 0;
@@ -158,22 +161,50 @@ void PathRoutingCoordinator::executeOptimization() {
         return;
     }
 
-    // Execute the optimization callback if set
+    // Call optimization callback (both sync and async modes)
     if (optimizationCallback_) {
         optimizationCallback_(pendingEdges_, movedNodes_);
     }
 
-    // Notify listener
-    if (listener_) {
+    // Sync mode: notify listener immediately
+    // Async mode: caller must call notifyOptimizationComplete() after applying results
+    if (!asyncMode_ && listener_) {
         listener_->onOptimizationComplete(pendingEdges_);
     }
 
     // Clear pending state
-    std::vector<EdgeId> optimizedEdges = std::move(pendingEdges_);
     pendingEdges_.clear();
     movedNodes_.clear();
     dropTimeMs_ = 0;
 }
 
+
+// === Async Mode ===
+
+void PathRoutingCoordinator::setAsyncMode(bool enabled) {
+    asyncMode_ = enabled;
+}
+
+bool PathRoutingCoordinator::isAsyncMode() const {
+    return asyncMode_;
+}
+
+uint64_t PathRoutingCoordinator::currentGeneration() const {
+    return generation_.load();
+}
+
+bool PathRoutingCoordinator::canApplyResult(uint64_t generation) const {
+    // Result is valid only if:
+    // 1. Generation matches (no new drag started)
+    // 2. Not currently dragging
+    return generation == generation_.load() && state_ != RoutingState::Dragging;
+}
+
+void PathRoutingCoordinator::notifyOptimizationComplete(const std::vector<EdgeId>& optimizedEdges) {
+    // For async mode: caller notifies listener after applying results
+    if (listener_) {
+        listener_->onOptimizationComplete(optimizedEdges);
+    }
+}
 
 }  // namespace arborvia

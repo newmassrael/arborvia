@@ -29,6 +29,8 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <queue>
+#include <future>
 
 using namespace arborvia;
 
@@ -194,26 +196,17 @@ public:
         // Enable grid by default
         layoutOptions_.gridConfig.cellSize = gridSize_;
 
-        // Configure routing coordinator
+        // Configure routing coordinator with async mode
         routingCoordinator_->setDebounceDelay(0);  // Immediate A* after drop (no delay)
         routingCoordinator_->setListener(this);
+        routingCoordinator_->setAsyncMode(true);  // Enable async optimization
+        
+        // Sync callback (used internally, not for async result delivery)
         routingCoordinator_->setOptimizationCallback(
-            [this](const std::vector<EdgeId>& /*affectedEdges*/,
+            [this](const std::vector<EdgeId>& affectedEdges,
                    const std::unordered_set<NodeId>& movedNodes) {
-            // Re-route ALL edges with A* after drop
-            // This ensures all transitions are recalculated, including self-loops
-            std::vector<EdgeId> allEdges;
-            allEdges.reserve(edgeLayouts_.size());
-            for (const auto& [edgeId, layout] : edgeLayouts_) {
-                allEdges.push_back(edgeId);
-            }
-
-            std::cout << "[DEBUG-optimizationCallback] allEdges.size()=" << allEdges.size() 
-                      << " movedNodes.size()=" << movedNodes.size() << std::endl;
-
-            LayoutUtils::updateEdgePositions(
-                edgeLayouts_, nodeLayouts_, allEdges,
-                layoutOptions_, movedNodes);
+            // In async mode, this callback triggers async optimization start
+            startAsyncOptimization(affectedEdges, movedNodes);
         });
 
         setupGraph();
@@ -1598,6 +1591,10 @@ private:
     std::string pauseMessage_;
     bool shouldQuit_ = false;
 
+    // Async optimization state
+    std::queue<std::function<void()>> mainThreadQueue_;
+    std::mutex queueMutex_;
+
 public:
     // Start command server
     bool startCommandServer() {
@@ -1617,7 +1614,92 @@ public:
     bool shouldQuit() const { return shouldQuit_; }
     int port() const { return port_; }
 
+    // Process async optimization results (call from main loop)
+    void processMainThreadQueue() {
+        std::queue<std::function<void()>> toProcess;
+        {
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            std::swap(toProcess, mainThreadQueue_);
+        }
+        while (!toProcess.empty()) {
+            toProcess.front()();
+            toProcess.pop();
+        }
+    }
+
 private:
+    void postToMainThread(std::function<void()> fn) {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        mainThreadQueue_.push(std::move(fn));
+    }
+
+    void startAsyncOptimization(
+        const std::vector<EdgeId>& /*affectedEdges*/,
+        const std::unordered_set<NodeId>& movedNodes)
+    {
+        // Get current generation for this optimization
+        uint64_t gen = routingCoordinator_->currentGeneration();
+        
+        // Snapshot current state
+        auto snapshotEdges = edgeLayouts_;
+        auto snapshotNodes = nodeLayouts_;
+        auto options = layoutOptions_;
+        
+        // Collect all edges for optimization
+        std::vector<EdgeId> allEdges;
+        allEdges.reserve(snapshotEdges.size());
+        for (const auto& [edgeId, layout] : snapshotEdges) {
+            allEdges.push_back(edgeId);
+        }
+        
+        std::cout << "[Async] Starting optimization gen=" << gen 
+                  << " edges=" << allEdges.size() 
+                  << " movedNodes=" << movedNodes.size() << std::endl;
+        
+        // Start async optimization
+        std::thread([this, gen, allEdges, snapshotEdges, snapshotNodes, options, movedNodes]() {
+            // Worker thread: run optimization on snapshot
+            auto workingEdges = snapshotEdges;
+            
+            LayoutUtils::updateEdgePositions(
+                workingEdges, snapshotNodes, allEdges,
+                options, movedNodes);
+            
+            // Post result to main thread
+            postToMainThread([this, gen, workingEdges = std::move(workingEdges)]() {
+                onAsyncOptimizationComplete(workingEdges, gen);
+            });
+        }).detach();
+    }
+
+    void onAsyncOptimizationComplete(
+        const std::unordered_map<EdgeId, EdgeLayout>& result,
+        uint64_t generation)
+    {
+        // Check if result is still valid
+        if (!routingCoordinator_->canApplyResult(generation)) {
+            std::cout << "[Async] Result discarded (gen=" << generation 
+                      << ", current=" << routingCoordinator_->currentGeneration() 
+                      << ", state=" << static_cast<int>(routingCoordinator_->state())
+                      << ")" << std::endl;
+            return;
+        }
+        
+        // Apply result
+        std::vector<EdgeId> optimizedEdges;
+        optimizedEdges.reserve(result.size());
+        for (const auto& [id, layout] : result) {
+            edgeLayouts_[id] = layout;
+            optimizedEdges.push_back(id);
+        }
+        
+        // Notify listener (this clears affectedEdges_ via onOptimizationComplete)
+        routingCoordinator_->notifyOptimizationComplete(optimizedEdges);
+        
+        std::cout << "[Async] Result applied (gen=" << generation 
+                  << ", edges=" << result.size() << ")" << std::endl;
+    }
+
     void processCommand(const Command& cmd) {
         if (cmd.name == "drag" && cmd.args.size() >= 3) {
             // drag <node_id> <dx> <dy> - uses LayoutController API with validation
@@ -2227,6 +2309,10 @@ int main(int argc, char* argv[]) {
     while (running) {
         // Process external commands
         demo.processCommands();
+        
+        // Process async optimization results
+        demo.processMainThreadQueue();
+        
         if (demo.shouldQuit()) {
             running = false;
             break;
