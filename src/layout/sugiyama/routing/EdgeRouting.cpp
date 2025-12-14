@@ -329,6 +329,7 @@ bool EdgeRouting::validateAndFixDirectionConstraints(
 EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize,
@@ -359,7 +360,7 @@ EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     // Delegate to SnapPositionUpdater
     SnapPositionUpdater updater(pathFinder_, recalcFunc, detectFixFunc, validateFixFunc);
     arborvia::SnapUpdateResult result = updater.updateSnapPositions(
-        edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize,
+        edgeLayouts, nodeLayouts, oldNodeLayouts, affectedEdges, movedNodes, gridSize,
         skipBendPointRecalc, edgeOptimizer_.get());
 
     // Convert SnapPositionUpdater::SnapUpdateResult to EdgeRouting::SnapUpdateResult
@@ -370,6 +371,18 @@ EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
     edgeRoutingResult.needsFullReroute = result.needsFullReroute;
     edgeRoutingResult.edgesNeedingReroute.assign(result.edgesNeedingReroute.begin(), result.edgesNeedingReroute.end());
     return edgeRoutingResult;
+}
+
+// Convenience overload: uses nodeLayouts as oldNodeLayouts (backward compatible)
+EdgeRouting::SnapUpdateResult EdgeRouting::updateSnapPositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    const std::unordered_set<NodeId>& movedNodes,
+    float gridSize,
+    bool skipBendPointRecalc) {
+    // Delegate to main implementation with nodeLayouts as oldNodeLayouts
+    return updateSnapPositions(edgeLayouts, nodeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize, skipBendPointRecalc);
 }
 
 void EdgeRouting::updateEdgeRoutingWithOptimization(

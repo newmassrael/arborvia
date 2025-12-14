@@ -144,13 +144,26 @@ public:
     /// The returned SnapUpdateResult shows exactly which edges were processed.
     ///
     /// @param edgeLayouts The edge layouts to update (modified in place)
-    /// @param nodeLayouts Current node positions
+    /// @param nodeLayouts Current node positions (after move)
+    /// @param oldNodeLayouts Previous node positions (before move). Used to correctly
+    ///                       compute candidateIdx from old snap positions. If empty,
+    ///                       nodeLayouts is used (backward compatible behavior).
     /// @param affectedEdges Edges that need updating (connected to moved nodes)
     /// @param movedNodes Optional set of nodes that actually moved. If provided, only endpoints
     ///                   on these nodes will be recalculated. If empty, all endpoints are updated.
     /// @param gridSize Grid cell size for coordinate snapping (0 = disabled)
     /// @param skipBendPointRecalc If true, skip bend point recalculation (use existing bendPoints)
     /// @return SnapUpdateResult showing which edges were actually processed
+    SnapUpdateResult updateSnapPositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f,
+        bool skipBendPointRecalc = false);
+
+    /// @brief Convenience overload that uses nodeLayouts as oldNodeLayouts (backward compatible)
     SnapUpdateResult updateSnapPositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,

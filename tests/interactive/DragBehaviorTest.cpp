@@ -699,6 +699,9 @@ TEST_F(DragBehaviorTest, Snap_DuringDrag_PointsDontMerge) {
     NodeId draggedNode = error_;
     std::vector<EdgeId> affectedEdges = {e_fail_, e_reset_};
 
+    // Save old node layouts BEFORE updating position (required for correct candidateIdx calculation)
+    std::unordered_map<NodeId, NodeLayout> oldNodeLayouts = nodeLayouts;
+
     // === Simulate drag (update node position) ===
     Point dragOffset = {50.0f, -30.0f};
     nodeLayouts[draggedNode].position.x += dragOffset.x;
@@ -707,8 +710,9 @@ TEST_F(DragBehaviorTest, Snap_DuringDrag_PointsDontMerge) {
     std::cout << "\nDragging Error by (" << dragOffset.x << ", " << dragOffset.y << ")" << std::endl;
 
     // Use library API for edge position updates (same as interactive demo)
+    // Pass oldNodeLayouts to correctly preserve candidateIdx during node move
     LayoutUtils::updateEdgePositions(
-        edgeLayouts, nodeLayouts, affectedEdges);
+        edgeLayouts, nodeLayouts, oldNodeLayouts, affectedEdges);
 
     // Check Error's connections after simulated drag
     std::cout << "\nAfter drag (using library API):" << std::endl;
@@ -1635,7 +1639,9 @@ TEST_F(DragBehaviorTest, Drag_OrthogonalityMaintained) {
         nodeLayouts[dragNode].position = originalPos;
         for (EdgeId edgeId : affectedEdges) {
             // Re-update to restore
-            LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, {edgeId}, {dragNode});
+            std::vector<EdgeId> singleEdge = {edgeId};
+            std::unordered_set<NodeId> singleNode = {dragNode};
+            LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, singleEdge, singleNode);
         }
     }
 

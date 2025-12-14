@@ -105,13 +105,24 @@ namespace {
 void LayoutUtils::updateEdgePositions(
     std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
     const std::vector<EdgeId>& affectedEdges,
     const std::unordered_set<NodeId>& movedNodes,
     float gridSize) {
 
     EdgeRouting routing;
     routing.updateSnapPositions(
-        edgeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
+        edgeLayouts, nodeLayouts, oldNodeLayouts, affectedEdges, movedNodes, gridSize);
+}
+
+void LayoutUtils::updateEdgePositions(
+    std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::vector<EdgeId>& affectedEdges,
+    const std::unordered_set<NodeId>& movedNodes,
+    float gridSize) {
+    // Backward compatible: use nodeLayouts as oldNodeLayouts
+    updateEdgePositions(edgeLayouts, nodeLayouts, nodeLayouts, affectedEdges, movedNodes, gridSize);
 }
 
 void LayoutUtils::updateEdgePositions(

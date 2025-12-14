@@ -779,36 +779,58 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
 
     GridPoint startGrid, goalGrid;
     
-    if (srcFixed && sourceEdge == base.sourceEdge) {
-        // Source is fixed - preserve existing position
-        candidate.sourcePoint = base.sourcePoint;
+    // === SOURCE SNAP POSITION ===
+    // Rule: Same NodeEdge → preserve SnapDistributor's position (respect distributed candidateIdx)
+    //       Different NodeEdge → compute center position for new edge
+    if (sourceEdge == base.sourceEdge) {
+        // Same NodeEdge - preserve existing position (SnapDistributor already distributed)
+        if (srcFixed) {
+            // Node is fixed - position unchanged
+            candidate.sourcePoint = base.sourcePoint;
+        } else {
+            // Node moved - recalculate position preserving candidateIdx
+            int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                srcIt->second, base.sourceEdge, base.sourcePoint, gridSize);
+            // Recompute position at same candidateIdx (accounts for node movement)
+            candidate.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
+                srcIt->second, sourceEdge, candidateIdx, gridSize);
+        }
         startGrid = {
-            static_cast<int>(std::round(base.sourcePoint.x / gridSize)),
-            static_cast<int>(std::round(base.sourcePoint.y / gridSize))
+            static_cast<int>(std::round(candidate.sourcePoint.x / gridSize)),
+            static_cast<int>(std::round(candidate.sourcePoint.y / gridSize))
         };
     } else {
-        // Use canonical computation - perpendicular coordinate is exact node edge
-        candidate.sourcePoint = GridSnapCalculator::computeSnapPointFromRatio(
-            srcIt->second, sourceEdge, 0.5f, gridSize);
+        // Different NodeEdge - compute center position (grid-aligned)
+        // Use center candidateIdx for new edge
+        int candidateCount = GridSnapCalculator::getCandidateCount(srcIt->second, sourceEdge, gridSize);
+        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
+        candidate.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            srcIt->second, sourceEdge, centerIdx, gridSize);
         startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
-        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} SOURCE recalculated pos=({},{})",
-                  base.id, candidate.sourcePoint.x, candidate.sourcePoint.y);
     }
     
-    if (tgtFixed && targetEdge == base.targetEdge) {
-        // Target is fixed - preserve existing position
-        candidate.targetPoint = base.targetPoint;
+    // === TARGET SNAP POSITION ===
+    if (targetEdge == base.targetEdge) {
+        // Same NodeEdge - preserve existing position
+        if (tgtFixed) {
+            candidate.targetPoint = base.targetPoint;
+        } else {
+            int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                tgtIt->second, base.targetEdge, base.targetPoint, gridSize);
+            candidate.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+                tgtIt->second, targetEdge, candidateIdx, gridSize);
+        }
         goalGrid = {
-            static_cast<int>(std::round(base.targetPoint.x / gridSize)),
-            static_cast<int>(std::round(base.targetPoint.y / gridSize))
+            static_cast<int>(std::round(candidate.targetPoint.x / gridSize)),
+            static_cast<int>(std::round(candidate.targetPoint.y / gridSize))
         };
     } else {
-        // Use canonical computation - perpendicular coordinate is exact node edge
-        candidate.targetPoint = GridSnapCalculator::computeSnapPointFromRatio(
-            tgtIt->second, targetEdge, 0.5f, gridSize);
+        // Different NodeEdge - compute center position (grid-aligned)
+        int candidateCount = GridSnapCalculator::getCandidateCount(tgtIt->second, targetEdge, gridSize);
+        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
+        candidate.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            tgtIt->second, targetEdge, centerIdx, gridSize);
         goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
-        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} TARGET recalculated pos=({},{})",
-                  base.id, candidate.targetPoint.x, candidate.targetPoint.y);
     }
 
     // Use provided pathfinder (thread-safe)

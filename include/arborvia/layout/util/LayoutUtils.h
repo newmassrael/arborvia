@@ -212,6 +212,17 @@ public:
     };
 
     /// Update edge positions when nodes move (internal - prefer moveNode())
+    /// @param oldNodeLayouts Previous node positions (before move). Used to correctly
+    ///                       compute candidateIdx from old snap positions.
+    static void updateEdgePositions(
+        std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
+        const std::vector<EdgeId>& affectedEdges,
+        const std::unordered_set<NodeId>& movedNodes = {},
+        float gridSize = 0.0f);
+
+    /// Convenience overload (backward compatible - uses nodeLayouts as oldNodeLayouts)
     static void updateEdgePositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,

@@ -83,7 +83,9 @@ public:
      * @brief Update snap positions for affected edges.
      *
      * @param edgeLayouts All edge layouts (modified in place).
-     * @param nodeLayouts All node layouts.
+     * @param nodeLayouts Current node layouts (after move).
+     * @param oldNodeLayouts Previous node layouts (before move). Used to correctly
+     *                       compute candidateIdx from old snap positions.
      * @param affectedEdges Edges that need snap position updates.
      * @param movedNodes Set of nodes that were moved.
      * @param gridSize Grid size for snapping.
@@ -94,6 +96,7 @@ public:
     SnapUpdateResult updateSnapPositions(
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
         const std::vector<EdgeId>& affectedEdges,
         const std::unordered_set<NodeId>& movedNodes,
         float gridSize,
@@ -119,6 +122,7 @@ private:
         const std::vector<std::pair<EdgeId, bool>>& connections,
         std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& oldNodeLayouts,
         const std::unordered_set<NodeId>& movedNodes,
         float effectiveGridSize,
         SnapUpdateResult& result);
