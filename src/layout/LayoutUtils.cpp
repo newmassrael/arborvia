@@ -10,6 +10,7 @@
 #include "snap/SnapPointCalculator.h"
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
+#include "sugiyama/routing/SelfLoopRouter.h"
 #include <cmath>
 #include "arborvia/common/Logger.h"
 #include <algorithm>
@@ -673,51 +674,67 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     result.newEdge = newEdge;
     result.newSnapIndex = newSnapIndex;
 
-    // === Pre-validation: Check if A* path exists to this position ===
+    // === Pre-validation: Check if valid path exists to this position ===
     // This prevents moving to blocked positions (same validation as SnapPointController)
     {
-        // Single Source of Truth: use edge's stored gridSize if available
-        // This ensures consistent gridSize with the original layout creation
-        float validationGridSize = edge.usedGridSize > 0.0f
-            ? edge.usedGridSize
-            : constants::effectiveGridSize(options.gridConfig.cellSize);
+        // Handle self-loops: use SelfLoopRouter validation instead of A*
+        // Self-loops can only use adjacent edges (not same or opposite edges)
+        if (edge.from == edge.to) {
+            NodeEdge otherNodeEdge = isSource ? edge.targetEdge : edge.sourceEdge;
+            if (!SelfLoopRouter::isValidSelfLoopCombination(newEdge, otherNodeEdge)) {
+                result.success = false;
+                result.reason = "Self-loop requires adjacent edges (not same or opposite)";
+                LOG_DEBUG("[moveSnapPoint] Self-loop validation failed: newEdge={} otherEdge={}",
+                          static_cast<int>(newEdge), static_cast<int>(otherNodeEdge));
+                return result;
+            }
+            LOG_DEBUG("[moveSnapPoint] Self-loop validation passed: newEdge={} otherEdge={}",
+                      static_cast<int>(newEdge), static_cast<int>(otherNodeEdge));
+        } else {
+            // Regular edge: use A* pathfinding validation
+            // Single Source of Truth: use edge's stored gridSize if available
+            // This ensures consistent gridSize with the original layout creation
+            float validationGridSize = edge.usedGridSize > 0.0f
+                ? edge.usedGridSize
+                : constants::effectiveGridSize(options.gridConfig.cellSize);
 
-        // Build obstacle map
-        // Include edge layouts in bounds calculation to prevent out-of-bounds segments
-        ObstacleMap obstacles;
-        obstacles.buildFromNodes(nodeLayouts, validationGridSize, 0, &edgeLayouts);
-        obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Other edges as obstacles
-        
-        // Get the other endpoint
-        Point otherEndpoint = isSource ? edge.targetPoint : edge.sourcePoint;
-        NodeEdge otherNodeEdge = isSource ? edge.targetEdge : edge.sourceEdge;
-        NodeId otherNodeId = isSource ? edge.to : edge.from;
-        
-        // Calculate grid points
-        GridPoint startGrid = obstacles.pixelToGrid(result.actualPosition);
-        GridPoint goalGrid = obstacles.pixelToGrid(otherEndpoint);
-        
-        // Determine source/target for pathfinding
-        NodeEdge srcEdge = isSource ? newEdge : otherNodeEdge;
-        NodeEdge tgtEdge = isSource ? otherNodeEdge : newEdge;
-        NodeId srcNode = isSource ? nodeId : otherNodeId;
-        NodeId tgtNode = isSource ? otherNodeId : nodeId;
-        GridPoint pathStart = isSource ? startGrid : goalGrid;
-        GridPoint pathGoal = isSource ? goalGrid : startGrid;
-        
-        // Try A* pathfinding
-        LOG_DEBUG("[CALLER:LayoutUtils.cpp] A* findPath called");
-        AStarPathFinder pathFinder;
-        auto pathResult = pathFinder.findPath(
-            pathStart, pathGoal, obstacles,
-            srcNode, tgtNode,
-            srcEdge, tgtEdge,
-            {}, {});
-        
-        if (!pathResult.found || pathResult.path.size() < 2) {
-            result.success = false;
-            result.reason = "No valid A* path to target position";
-            return result;
+            // Build obstacle map
+            // Include edge layouts in bounds calculation to prevent out-of-bounds segments
+            ObstacleMap obstacles;
+            obstacles.buildFromNodes(nodeLayouts, validationGridSize, 0, &edgeLayouts);
+            obstacles.addEdgeSegments(edgeLayouts, edgeId);  // Other edges as obstacles
+            
+            // Get the other endpoint
+            Point otherEndpoint = isSource ? edge.targetPoint : edge.sourcePoint;
+            NodeEdge otherNodeEdge = isSource ? edge.targetEdge : edge.sourceEdge;
+            NodeId otherNodeId = isSource ? edge.to : edge.from;
+            
+            // Calculate grid points
+            GridPoint startGrid = obstacles.pixelToGrid(result.actualPosition);
+            GridPoint goalGrid = obstacles.pixelToGrid(otherEndpoint);
+            
+            // Determine source/target for pathfinding
+            NodeEdge srcEdge = isSource ? newEdge : otherNodeEdge;
+            NodeEdge tgtEdge = isSource ? otherNodeEdge : newEdge;
+            NodeId srcNode = isSource ? nodeId : otherNodeId;
+            NodeId tgtNode = isSource ? otherNodeId : nodeId;
+            GridPoint pathStart = isSource ? startGrid : goalGrid;
+            GridPoint pathGoal = isSource ? goalGrid : startGrid;
+            
+            // Try A* pathfinding
+            LOG_DEBUG("[CALLER:LayoutUtils.cpp] A* findPath called");
+            AStarPathFinder pathFinder;
+            auto pathResult = pathFinder.findPath(
+                pathStart, pathGoal, obstacles,
+                srcNode, tgtNode,
+                srcEdge, tgtEdge,
+                {}, {});
+            
+            if (!pathResult.found || pathResult.path.size() < 2) {
+                result.success = false;
+                result.reason = "No valid A* path to target position";
+                return result;
+            }
         }
     }
 

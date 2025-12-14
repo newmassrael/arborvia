@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <gtest/gtest.h>
+#include <set>
 #include "../../../src/layout/snap/GridSnapCalculator.h"
 
 using namespace arborvia;
@@ -157,4 +159,96 @@ TEST_F(GridSnapCalculatorTest, GetPositionFromStoredIndex_ClampsOutOfRange) {
 
     EXPECT_FLOAT_EQ(posHigh.x, posLast.x) << "Out of range should clamp to last";
     EXPECT_FLOAT_EQ(posHigh.y, posLast.y);
+}
+
+// =============================================================================
+// Snap Index Consistency Tests (TDD: position <-> index must be bijective)
+// =============================================================================
+
+TEST_F(GridSnapCalculatorTest, DifferentPositions_MustHaveDifferentIndices) {
+    // This test verifies the critical invariant:
+    // Different positions on the same edge MUST have different candidate indices
+    
+    // Use node similar to the bug scenario: node at (300,600) size (200,100)
+    NodeLayout errorNode;
+    errorNode.id = 4;
+    errorNode.position = {300.0f, 600.0f};
+    errorNode.size = {200.0f, 100.0f};
+    float gridSize = 20.0f;
+    
+    // Right edge: x=500, y range = [600, 700]
+    // With corner exclusion and gridSize=20: valid y positions are 620, 640, 660, 680
+    
+    // Two different positions on the right edge
+    Point pos1 = {500.0f, 620.0f};  // First valid grid position
+    Point pos2 = {500.0f, 660.0f};  // Third valid grid position
+    
+    int index1 = GridSnapCalculator::getCandidateIndexFromPosition(
+        errorNode, NodeEdge::Right, pos1, gridSize);
+    int index2 = GridSnapCalculator::getCandidateIndexFromPosition(
+        errorNode, NodeEdge::Right, pos2, gridSize);
+    
+    // Critical assertion: different positions MUST have different indices
+    EXPECT_NE(index1, index2) 
+        << "Different positions y=" << pos1.y << " and y=" << pos2.y 
+        << " on same edge must have different indices, but both got index=" << index1;
+    
+    // Verify indices are reasonable
+    EXPECT_GE(index1, 0) << "Index for y=620 should be >= 0";
+    EXPECT_GE(index2, 0) << "Index for y=660 should be >= 0";
+    EXPECT_LT(index1, index2) << "y=620 should have smaller index than y=660";
+}
+
+TEST_F(GridSnapCalculatorTest, PositionToIndex_IndexToPosition_RoundTrip) {
+    // For each valid candidate position, converting position->index->position 
+    // should return the same position
+    
+    NodeLayout testNode;
+    testNode.id = 1;
+    testNode.position = {300.0f, 600.0f};
+    testNode.size = {200.0f, 100.0f};
+    float gridSize = 20.0f;
+    
+    int candidateCount = GridSnapCalculator::getCandidateCount(testNode, NodeEdge::Right, gridSize);
+    ASSERT_GT(candidateCount, 0) << "Should have at least one candidate";
+    
+    for (int i = 0; i < candidateCount; ++i) {
+        // Get position for index i
+        Point pos = GridSnapCalculator::getPositionFromCandidateIndex(
+            testNode, NodeEdge::Right, i, gridSize);
+        
+        // Convert position back to index
+        int recoveredIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+            testNode, NodeEdge::Right, pos, gridSize);
+        
+        // Should get the same index back
+        EXPECT_EQ(recoveredIndex, i) 
+            << "Round-trip failed for index " << i 
+            << ": position=(" << pos.x << "," << pos.y << ") recovered index=" << recoveredIndex;
+    }
+}
+
+TEST_F(GridSnapCalculatorTest, AllCandidateIndices_AreUnique) {
+    // All candidate indices should be unique for all positions
+    
+    NodeLayout testNode;
+    testNode.id = 1;
+    testNode.position = {300.0f, 600.0f};
+    testNode.size = {200.0f, 100.0f};
+    float gridSize = 20.0f;
+    
+    int candidateCount = GridSnapCalculator::getCandidateCount(testNode, NodeEdge::Right, gridSize);
+    ASSERT_GT(candidateCount, 1) << "Need at least 2 candidates for uniqueness test";
+    
+    std::set<int> seenIndices;
+    for (int i = 0; i < candidateCount; ++i) {
+        Point pos = GridSnapCalculator::getPositionFromCandidateIndex(
+            testNode, NodeEdge::Right, i, gridSize);
+        int index = GridSnapCalculator::getCandidateIndexFromPosition(
+            testNode, NodeEdge::Right, pos, gridSize);
+        
+        EXPECT_EQ(seenIndices.count(index), 0u) 
+            << "Duplicate index " << index << " found for candidate " << i;
+        seenIndices.insert(index);
+    }
 }

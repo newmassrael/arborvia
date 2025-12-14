@@ -64,10 +64,18 @@ void RoutingOptimizer::optimize(
     // Merge optimized layouts
     // IMPORTANT: Preserve snap indices (optimizer sets them to -1, we keep grid-based values)
     // BUT: Only if NodeEdge hasn't changed (indices are specific to NodeEdge)
+    // EXCEPTION: Self-loops use position-based snap indices (calculated by SelfLoopRouter)
     for (auto& [edgeId, layout] : optimizedLayouts) {
         auto& existing = result.edgeLayouts[edgeId];
 
-        // Save original values
+        // Self-loops: always trust optimizer's snap indices (position-based from SelfLoopRouter)
+        bool isSelfLoop = (layout.from == layout.to);
+        if (isSelfLoop) {
+            existing = std::move(layout);
+            continue;
+        }
+
+        // Regular edges: preserve distributor's snap indices if NodeEdge unchanged
         NodeEdge origSourceEdge = existing.sourceEdge;
         NodeEdge origTargetEdge = existing.targetEdge;
         int preservedSourceSnapIndex = existing.sourceSnapIndex;

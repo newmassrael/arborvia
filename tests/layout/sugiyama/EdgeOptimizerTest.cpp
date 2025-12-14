@@ -345,3 +345,67 @@ TEST_F(AStarEdgeOptimizerTest, SetPenaltySystem_ConfiguresPenalties) {
 
     EXPECT_EQ(customSystem, optimizer.penaltySystem());
 }
+
+// =============================================================================
+// SelfLoopRouter Snap Index Tests
+// =============================================================================
+
+#include "../../../src/layout/sugiyama/routing/SelfLoopRouter.h"
+#include "../../../src/layout/snap/GridSnapCalculator.h"
+
+TEST(SelfLoopRouterTest, Route_SetsCorrectSnapIndices) {
+    // SelfLoopRouter::route() must set sourceSnapIndex and targetSnapIndex
+    // that correctly correspond to the calculated positions
+    
+    NodeLayout node;
+    node.id = 4;
+    node.position = {300.0f, 600.0f};
+    node.size = {200.0f, 100.0f};
+    
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    
+    EdgeLayout layout = SelfLoopRouter::route(7, 4, node, 0, options);
+    
+    // Verify snap indices match positions
+    int expectedSourceIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, layout.sourceEdge, layout.sourcePoint, options.gridConfig.cellSize);
+    int expectedTargetIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, layout.targetEdge, layout.targetPoint, options.gridConfig.cellSize);
+    
+    EXPECT_EQ(layout.sourceSnapIndex, expectedSourceIdx) 
+        << "sourceSnapIndex should match position (" << layout.sourcePoint.x << "," << layout.sourcePoint.y << ")";
+    EXPECT_EQ(layout.targetSnapIndex, expectedTargetIdx)
+        << "targetSnapIndex should match position (" << layout.targetPoint.x << "," << layout.targetPoint.y << ")";
+}
+
+TEST(SelfLoopRouterTest, MultipleSelfLoops_HaveUniqueSnapIndices) {
+    // Multiple self-loops on the same node should have different snap indices
+    
+    NodeLayout node;
+    node.id = 4;
+    node.position = {300.0f, 600.0f};
+    node.size = {200.0f, 100.0f};
+    
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    
+    // Create two self-loops with different loop indices
+    EdgeLayout layout1 = SelfLoopRouter::route(7, 4, node, 0, options);
+    EdgeLayout layout2 = SelfLoopRouter::route(8, 4, node, 1, options);
+    
+    // They should have different source positions (and thus different indices) if on same edge
+    if (layout1.sourceEdge == layout2.sourceEdge) {
+        EXPECT_NE(layout1.sourceSnapIndex, layout2.sourceSnapIndex)
+            << "Different self-loops on same edge should have different source snap indices";
+    }
+    
+    // Verify each layout's indices match its positions
+    int idx1 = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, layout1.sourceEdge, layout1.sourcePoint, options.gridConfig.cellSize);
+    int idx2 = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, layout2.sourceEdge, layout2.sourcePoint, options.gridConfig.cellSize);
+    
+    EXPECT_EQ(layout1.sourceSnapIndex, idx1);
+    EXPECT_EQ(layout2.sourceSnapIndex, idx2);
+}

@@ -1870,6 +1870,77 @@ private:
                 commandServer_.sendResponse("ERROR edge not found");
             }
         }
+        else if (cmd.name == "test_snap_preview" && cmd.args.size() >= 4) {
+            // test_snap_preview <edge_id> <is_source:0|1> <dx> <dy>
+            // Test snap point drag PREVIEW (not final drop)
+            EdgeId edgeId = std::stoi(cmd.args[0]);
+            bool isSource = std::stoi(cmd.args[1]) != 0;
+            float dx = std::stof(cmd.args[2]);
+            float dy = std::stof(cmd.args[3]);
+
+            if (edgeLayouts_.count(edgeId)) {
+                std::cout << "\n========== TEST_SNAP_PREVIEW START ==========" << std::endl;
+                std::cout << "[test_snap_preview] Edge " << edgeId << " isSource=" << isSource
+                          << " delta=(" << dx << "," << dy << ")" << std::endl;
+
+                EdgeLayout& layout = edgeLayouts_[edgeId];
+                Point currentPos = isSource ? layout.sourcePoint : layout.targetPoint;
+                std::cout << "[test_snap_preview] Current snap pos=(" << currentPos.x << "," << currentPos.y << ")" << std::endl;
+
+                // Start drag
+                auto startResult = snapController_.startDrag(
+                    edgeId, isSource, nodeLayouts_, edgeLayouts_, gridSize_);
+
+                if (startResult.success) {
+                    std::cout << "[test_snap_preview] startDrag SUCCESS, candidates=" << startResult.candidates.size() << std::endl;
+
+                    // Update drag to target position
+                    Point targetPos = {currentPos.x + dx, currentPos.y + dy};
+                    std::cout << "[test_snap_preview] Target pos=(" << targetPos.x << "," << targetPos.y << ")" << std::endl;
+
+                    auto updateResult = snapController_.updateDrag(targetPos, nodeLayouts_, gridSize_);
+                    std::cout << "[test_snap_preview] updateDrag: snappedIdx=" << updateResult.snappedCandidateIndex
+                              << " hasValidPreview=" << updateResult.hasValidPreview << std::endl;
+
+                    // Log preview layout
+                    const auto& preview = snapController_.getPreviewLayout();
+                    std::cout << "[test_snap_preview] Preview layout:" << std::endl;
+                    std::cout << "  src=(" << preview.sourcePoint.x << "," << preview.sourcePoint.y << ")" << std::endl;
+                    std::cout << "  tgt=(" << preview.targetPoint.x << "," << preview.targetPoint.y << ")" << std::endl;
+                    std::cout << "  bends=" << preview.bendPoints.size() << std::endl;
+
+                    // Check orthogonality
+                    auto points = preview.allPoints();
+                    std::cout << "[test_snap_preview] All points:" << std::endl;
+                    for (size_t i = 0; i < points.size(); ++i) {
+                        std::cout << "  [" << i << "]: (" << points[i].x << "," << points[i].y << ")" << std::endl;
+                    }
+                    std::cout << "[test_snap_preview] Orthogonality check:" << std::endl;
+                    bool allOrthogonal = true;
+                    for (size_t i = 1; i < points.size(); ++i) {
+                        float segDx = points[i].x - points[i-1].x;
+                        float segDy = points[i].y - points[i-1].y;
+                        bool isOrtho = (std::abs(segDx) < 0.1f || std::abs(segDy) < 0.1f);
+                        std::cout << "  [" << (i-1) << "->" << i << "]: dx=" << segDx << " dy=" << segDy
+                                  << " orthogonal=" << (isOrtho ? "YES" : "NO") << std::endl;
+                        if (!isOrtho) allOrthogonal = false;
+                    }
+
+                    // Cancel drag (don't complete)
+                    snapController_.cancelDrag();
+                    std::cout << "[test_snap_preview] Drag cancelled" << std::endl;
+
+                    std::cout << "========== TEST_SNAP_PREVIEW END ==========\n" << std::endl;
+                    commandServer_.sendResponse(allOrthogonal ? "OK all_orthogonal" : "FAILED diagonal_detected");
+                } else {
+                    std::cout << "[test_snap_preview] startDrag FAILED: " << startResult.reason << std::endl;
+                    std::cout << "========== TEST_SNAP_PREVIEW END ==========\n" << std::endl;
+                    commandServer_.sendResponse("FAILED " + startResult.reason);
+                }
+            } else {
+                commandServer_.sendResponse("ERROR edge not found");
+            }
+        }
         else if (cmd.name == "test_coop_reroute" && cmd.args.size() >= 1) {
             // test_coop_reroute <edge_id> - Test cooperative rerouting for single edge
             // New algorithm: find my path, identify blocking edges that overlap (not cross),

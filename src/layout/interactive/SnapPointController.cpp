@@ -5,6 +5,7 @@
 #include "../pathfinding/ObstacleMap.h"
 #include "../pathfinding/AStarPathFinder.h"
 #include "../sugiyama/routing/EdgeRouting.h"
+#include "../sugiyama/routing/SelfLoopRouter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -93,27 +94,86 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
 
     GridPoint goalGrid = obstacles.pixelToGrid(otherEndpoint);
 
-    for (auto& candidate : candidates_) {
-        GridPoint startGrid = obstacles.pixelToGrid(candidate.position);
-        
-        // Try A* with direction constraint
-        NodeEdge srcEdge = isSource ? candidate.edge : otherEdge;
-        NodeEdge tgtEdge = isSource ? otherEdge : candidate.edge;
-        NodeId srcNode = isSource ? nodeId : otherNodeId;
-        NodeId tgtNode = isSource ? otherNodeId : nodeId;
-        GridPoint pathStart = isSource ? startGrid : goalGrid;
-        GridPoint pathGoal = isSource ? goalGrid : startGrid;
-
-        LOG_DEBUG("[CALLER:SnapPointController.cpp:evaluateCandidate] A* findPath called");
-        auto pathResult = pathFinder_->findPath(
-            pathStart, pathGoal, obstacles,
-            srcNode, tgtNode,
-            srcEdge, tgtEdge,
-            {}, {});
-
-        if (!pathResult.found || pathResult.path.size() < 2) {
-            candidate.blocked = true;
+    // First pass: identify which candidates are occupied by other edges (swap targets)
+    // Also block candidates occupied by self-loop endpoints (can't swap with self-loops)
+    std::unordered_set<int> swapCandidates;
+    std::unordered_set<int> selfLoopOccupied;  // Candidates occupied by self-loop endpoints
+    for (size_t i = 0; i < candidates_.size(); ++i) {
+        const auto& candidate = candidates_[i];
+        for (const auto& [eid, elayout] : edgeLayouts) {
+            if (eid == edgeId) continue;
+            // Check if this candidate position matches another edge's snap point on this node
+            bool matchSource = (elayout.from == nodeId && 
+                               elayout.sourceEdge == candidate.edge &&
+                               elayout.sourceSnapIndex == candidate.candidateIndex);
+            bool matchTarget = (elayout.to == nodeId &&
+                               elayout.targetEdge == candidate.edge &&
+                               elayout.targetSnapIndex == candidate.candidateIndex);
+            if (matchSource || matchTarget) {
+                // Check if occupying edge is a self-loop
+                if (elayout.from == elayout.to) {
+                    // Self-loop endpoint: cannot swap (moving one endpoint breaks self-loop)
+                    selfLoopOccupied.insert(static_cast<int>(i));
+                    LOG_DEBUG("[SnapPointController] Candidate {} blocked (occupied by self-loop edge {})",
+                              i, eid);
+                } else {
+                    swapCandidates.insert(static_cast<int>(i));
+                    LOG_DEBUG("[SnapPointController] Candidate {} is swap target (occupied by edge {})",
+                              i, eid);
+                }
+                break;
+            }
         }
+    }
+
+    // Self-loop detection: from == to means both endpoints are on the same node
+    bool isSelfLoop = (edge.from == edge.to);
+
+    for (auto& candidate : candidates_) {
+        if (isSelfLoop) {
+            // Self-loop: validate using SelfLoopRouter constraint
+            // Only adjacent edges are valid (not same or opposite edges)
+            if (!SelfLoopRouter::isValidSelfLoopCombination(candidate.edge, otherEdge)) {
+                candidate.blocked = true;
+                LOG_DEBUG("[SnapPointController] Self-loop candidate edge={} blocked (not adjacent to otherEdge={})",
+                          static_cast<int>(candidate.edge), static_cast<int>(otherEdge));
+            }
+        } else {
+            // Regular edge: use A* pathfinding validation
+            GridPoint startGrid = obstacles.pixelToGrid(candidate.position);
+
+            // Try A* with direction constraint
+            NodeEdge srcEdge = isSource ? candidate.edge : otherEdge;
+            NodeEdge tgtEdge = isSource ? otherEdge : candidate.edge;
+            NodeId srcNode = isSource ? nodeId : otherNodeId;
+            NodeId tgtNode = isSource ? otherNodeId : nodeId;
+            GridPoint pathStart = isSource ? startGrid : goalGrid;
+            GridPoint pathGoal = isSource ? goalGrid : startGrid;
+
+            LOG_DEBUG("[CALLER:SnapPointController.cpp:evaluateCandidate] A* findPath called");
+            auto pathResult = pathFinder_->findPath(
+                pathStart, pathGoal, obstacles,
+                srcNode, tgtNode,
+                srcEdge, tgtEdge,
+                {}, {});
+
+            if (!pathResult.found || pathResult.path.size() < 2) {
+                candidate.blocked = true;
+            }
+        }
+    }
+    
+    // Mark swap candidates as NOT blocked (they can be selected for swap)
+    for (int idx : swapCandidates) {
+        if (candidates_[idx].blocked) {
+            LOG_DEBUG("[SnapPointController] Unblocking swap candidate {}", idx);
+            candidates_[idx].blocked = false;
+        }
+    }
+    
+    // Block candidates occupied by self-loop endpoints (cannot swap with self-loops)
+    for (int idx : selfLoopOccupied) {
+        candidates_[idx].blocked = true;
     }
 
     // Build result
@@ -167,6 +227,7 @@ SnapPointController::DragUpdateResult SnapPointController::updateDrag(
 
         // Update preview layout
         previewLayout_ = originalLayout_;
+
         if (isDraggingSource_) {
             previewLayout_.sourcePoint = candidate.position;
             previewLayout_.sourceEdge = candidate.edge;
@@ -363,15 +424,68 @@ bool SnapPointController::calculatePreviewPath(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize) {
 
+    float gridSizeToUse = constants::effectiveGridSize(gridSize);
+
+    // Self-loop: use geometric path calculation (no A* needed)
+    if (layout.from == layout.to) {
+        auto nodeIt = nodeLayouts.find(layout.from);
+        if (nodeIt == nodeLayouts.end()) {
+            return false;
+        }
+
+        // Validate: only adjacent edges are valid for self-loops
+        if (!SelfLoopRouter::isValidSelfLoopCombination(layout.sourceEdge, layout.targetEdge)) {
+            return false;
+        }
+
+        // Use geometric path for self-loop preview
+        // Calculate extension points perpendicular to each edge
+        constexpr float BASE_OFFSET = 30.0f;
+
+        Point srcExt = layout.sourcePoint;
+        Point tgtExt = layout.targetPoint;
+
+        // Extend source point outward from node
+        switch (layout.sourceEdge) {
+            case NodeEdge::Top:    srcExt.y -= BASE_OFFSET; break;
+            case NodeEdge::Bottom: srcExt.y += BASE_OFFSET; break;
+            case NodeEdge::Left:   srcExt.x -= BASE_OFFSET; break;
+            case NodeEdge::Right:  srcExt.x += BASE_OFFSET; break;
+        }
+
+        // Extend target point outward from node
+        switch (layout.targetEdge) {
+            case NodeEdge::Top:    tgtExt.y -= BASE_OFFSET; break;
+            case NodeEdge::Bottom: tgtExt.y += BASE_OFFSET; break;
+            case NodeEdge::Left:   tgtExt.x -= BASE_OFFSET; break;
+            case NodeEdge::Right:  tgtExt.x += BASE_OFFSET; break;
+        }
+
+        // Corner point where the two extensions meet
+        Point corner;
+        if (layout.sourceEdge == NodeEdge::Left || layout.sourceEdge == NodeEdge::Right) {
+            corner = {srcExt.x, tgtExt.y};
+        } else {
+            corner = {tgtExt.x, srcExt.y};
+        }
+
+        // Set bend points: src -> srcExt -> corner -> tgtExt -> tgt
+        layout.bendPoints.clear();
+        layout.bendPoints.push_back(BendPoint{srcExt});
+        layout.bendPoints.push_back(BendPoint{corner});
+        layout.bendPoints.push_back(BendPoint{tgtExt});
+
+        return true;
+    }
+
+    // Regular edge: use A* pathfinding
     if (!pathFinder_) {
         return false;
     }
 
-    float gridSizeToUse = constants::effectiveGridSize(gridSize);
-
-    // Build obstacle map
+    // Build obstacle map (margin=0 to match startDrag validation)
     ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 1);
+    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
 
     // Convert to grid coordinates
     GridPoint startGrid = GridPoint::fromPixel(layout.sourcePoint, gridSizeToUse);

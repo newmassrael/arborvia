@@ -5,6 +5,7 @@
 #include "../sugiyama/routing/PathCleanup.h"
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
+#include "arborvia/common/Logger.h"
 #include <map>
 
 namespace arborvia {
@@ -66,9 +67,13 @@ void SnapDistributor::distribute(
             if (isSource) {
                 layout.sourcePoint = snapPoint;
                 layout.sourceSnapIndex = candidateIndex;
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} pos=({},{}) snapIdx={}",
+                          edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
             } else {
                 layout.targetPoint = snapPoint;
                 layout.targetSnapIndex = candidateIndex;
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} pos=({},{}) snapIdx={}",
+                          edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
             }
         }
     }
