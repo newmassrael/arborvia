@@ -31,6 +31,9 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/pathfinding/AStarPathFinder.cpp
     src/layout/pathfinding/LShapedPathFinder.cpp
     src/layout/pathfinding/ObstacleMap.cpp
+    src/layout/pathfinding/SelfLoopPathCalculator.cpp
+    src/layout/pathfinding/AStarPathCalculator.cpp
+    src/layout/pathfinding/CompositePathCalculator.cpp
 
     # Optimization
     src/layout/optimization/EdgePenaltySystem.cpp
@@ -93,6 +96,7 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/api/IEdgeOptimizerFactory.h
     include/arborvia/layout/api/IEdgePenalty.h
     include/arborvia/layout/api/IObstacleProvider.h
+    include/arborvia/layout/api/IEdgePathCalculator.h
     include/arborvia/layout/api/IDragConstraint.h
     include/arborvia/layout/api/ICycleRemoval.h
     include/arborvia/layout/api/ILayerAssignment.h

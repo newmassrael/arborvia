@@ -1,6 +1,8 @@
 #include "AStarEdgeOptimizer.h"
+#include "AStarEdgeOptimizer.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
+#include "../../pathfinding/SelfLoopPathCalculator.h"
 #include "../../snap/GridSnapCalculator.h"
 #include "../../routing/CooperativeRerouter.h"
 #include "../../routing/UnifiedRetryChain.h"
@@ -974,6 +976,13 @@ void AStarEdgeOptimizer::regenerateBendPoints(
     ObstacleMap baseObstacles;
     baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0, &edgeLayouts);
 
+    // Pre-create self-loop calculator and config (avoid allocation in loop)
+    SelfLoopPathCalculator selfLoopCalc;
+    PathConfig selfLoopConfig;
+    selfLoopConfig.gridSize = gridSize;
+    selfLoopConfig.extensionCells = 2;  // 2 grid cells from node edge
+    selfLoopConfig.snapToGrid = true;
+
     // Phase 1: Route edges sequentially, each sees previously-routed edges as blocking
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);
@@ -983,85 +992,15 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
         EdgeLayout& layout = it->second;
 
-        // Handle self-loops: use geometric routing for valid adjacent edge combinations,
-        // fall through to A* for invalid combinations (opposite edges, same edge)
-        if (layout.from == layout.to && 
-            SelfLoopRouter::isValidSelfLoopCombination(layout.sourceEdge, layout.targetEdge)) {
-            auto nodeIt = nodeLayouts.find(layout.from);
-            if (nodeIt == nodeLayouts.end()) {
+        // Handle self-loops: use SelfLoopPathCalculator for geometric routing
+        if (layout.from == layout.to) {
+            auto result = selfLoopCalc.calculatePath(layout, nodeLayouts, selfLoopConfig);
+            if (result.success) {
+                layout.bendPoints = std::move(result.bendPoints);
+                routedEdges[edgeId] = layout;
                 continue;
             }
-            const NodeLayout& selfNode = nodeIt->second;
-            
-            constexpr float BASE_OFFSET = 30.0f;
-            
-            // Calculate extension points perpendicular to each edge
-            Point srcExt, tgtExt;
-            switch (layout.sourceEdge) {
-                case NodeEdge::Top:
-                    srcExt = {layout.sourcePoint.x, layout.sourcePoint.y - BASE_OFFSET};
-                    break;
-                case NodeEdge::Bottom:
-                    srcExt = {layout.sourcePoint.x, layout.sourcePoint.y + BASE_OFFSET};
-                    break;
-                case NodeEdge::Left:
-                    srcExt = {layout.sourcePoint.x - BASE_OFFSET, layout.sourcePoint.y};
-                    break;
-                case NodeEdge::Right:
-                    srcExt = {layout.sourcePoint.x + BASE_OFFSET, layout.sourcePoint.y};
-                    break;
-            }
-            switch (layout.targetEdge) {
-                case NodeEdge::Top:
-                    tgtExt = {layout.targetPoint.x, layout.targetPoint.y - BASE_OFFSET};
-                    break;
-                case NodeEdge::Bottom:
-                    tgtExt = {layout.targetPoint.x, layout.targetPoint.y + BASE_OFFSET};
-                    break;
-                case NodeEdge::Left:
-                    tgtExt = {layout.targetPoint.x - BASE_OFFSET, layout.targetPoint.y};
-                    break;
-                case NodeEdge::Right:
-                    tgtExt = {layout.targetPoint.x + BASE_OFFSET, layout.targetPoint.y};
-                    break;
-            }
-            
-            // Snap to grid
-            srcExt.x = std::round(srcExt.x / gridSize) * gridSize;
-            srcExt.y = std::round(srcExt.y / gridSize) * gridSize;
-            tgtExt.x = std::round(tgtExt.x / gridSize) * gridSize;
-            tgtExt.y = std::round(tgtExt.y / gridSize) * gridSize;
-            
-            layout.bendPoints.clear();
-            
-            // Check if corner point is needed (srcExt and tgtExt not aligned)
-            constexpr float EPSILON = 1.0f;
-            if (std::abs(srcExt.x - tgtExt.x) > EPSILON && std::abs(srcExt.y - tgtExt.y) > EPSILON) {
-                // Need corner - pick the one outside the node
-                Point cornerA = {srcExt.x, tgtExt.y};
-                Point cornerB = {tgtExt.x, srcExt.y};
-                
-                float nodeLeft = selfNode.position.x;
-                float nodeRight = selfNode.position.x + selfNode.size.width;
-                float nodeTop = selfNode.position.y;
-                float nodeBottom = selfNode.position.y + selfNode.size.height;
-                
-                bool cornerAInside = (cornerA.x >= nodeLeft && cornerA.x <= nodeRight &&
-                                      cornerA.y >= nodeTop && cornerA.y <= nodeBottom);
-                
-                Point corner = cornerAInside ? cornerB : cornerA;
-                
-                layout.bendPoints.push_back({srcExt});
-                layout.bendPoints.push_back({corner});
-                layout.bendPoints.push_back({tgtExt});
-            } else {
-                layout.bendPoints.push_back({srcExt});
-                layout.bendPoints.push_back({tgtExt});
-            }
-            
-            // Add to routed edges and continue
-            routedEdges[edgeId] = layout;
-            continue;
+            // If self-loop calculation fails (invalid edge combination), fall through to A*
         }
 
         // Copy base obstacles and add edge segments - PERFORMANCE OPTIMIZATION

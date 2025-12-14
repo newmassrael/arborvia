@@ -1,9 +1,11 @@
 #include "arborvia/layout/interactive/SnapPointController.h"
+#include "arborvia/layout/interactive/SnapPointController.h"
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
 #include "../pathfinding/ObstacleMap.h"
 #include "../pathfinding/AStarPathFinder.h"
+#include "../pathfinding/CompositePathCalculator.h"
 #include "../sugiyama/routing/EdgeRouting.h"
 #include "../sugiyama/routing/SelfLoopRouter.h"
 
@@ -15,11 +17,13 @@
 namespace arborvia {
 
 SnapPointController::SnapPointController()
-    : pathFinder_(std::make_shared<AStarPathFinder>()) {
+    : pathFinder_(std::make_shared<AStarPathFinder>())
+    , pathCalculator_(CompositePathCalculator::createDefault(pathFinder_)) {
 }
 
 SnapPointController::SnapPointController(std::shared_ptr<IPathFinder> pathFinder)
-    : pathFinder_(pathFinder ? pathFinder : std::make_shared<AStarPathFinder>()) {
+    : pathFinder_(pathFinder ? pathFinder : std::make_shared<AStarPathFinder>())
+    , pathCalculator_(CompositePathCalculator::createDefault(pathFinder_)) {
 }
 
 SnapPointController::~SnapPointController() = default;
@@ -139,13 +143,50 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
 
     for (auto& candidate : candidates_) {
         if (isSelfLoop) {
-            // Self-loop: validate using SelfLoopRouter constraint
-            // Only adjacent edges are valid (not same or opposite edges)
-            if (!SelfLoopRouter::isValidSelfLoopCombination(candidate.edge, otherEdge)) {
+            // Self-loop validation with auto-adjustment
+            if (candidate.edge == otherEdge) {
+                // Same edge as other endpoint - blocked (can't have both on same edge)
                 candidate.blocked = true;
-                LOG_DEBUG("[SnapPointController] Self-loop candidate edge={} blocked (not adjacent to otherEdge={})",
-                          static_cast<int>(candidate.edge), static_cast<int>(otherEdge));
+                LOG_DEBUG("[SnapPointController] Self-loop candidate edge={} blocked (same as otherEdge)",
+                          static_cast<int>(candidate.edge));
+            } else if (!SelfLoopRouter::isValidSelfLoopCombination(candidate.edge, otherEdge)) {
+                // Opposite edges - auto-move other endpoint to create valid corner
+                candidate.requiresOtherEndpointMove = true;
+
+                // Find adjacent edge for the other endpoint based on candidate position
+                // Pick the corner closest to the candidate position
+                bool isHorizontalCandidate = (candidate.edge == NodeEdge::Top || candidate.edge == NodeEdge::Bottom);
+
+                if (isHorizontalCandidate) {
+                    // Candidate on Top/Bottom → other endpoint should be on Left or Right
+                    // Choose based on candidate X position relative to node center
+                    float nodeCenterX = node.position.x + node.size.width / 2.0f;
+                    candidate.suggestedOtherEdge = (candidate.position.x < nodeCenterX)
+                        ? NodeEdge::Left : NodeEdge::Right;
+                } else {
+                    // Candidate on Left/Right → other endpoint should be on Top or Bottom
+                    // Choose based on candidate Y position relative to node center
+                    float nodeCenterY = node.position.y + node.size.height / 2.0f;
+                    candidate.suggestedOtherEdge = (candidate.position.y < nodeCenterY)
+                        ? NodeEdge::Top : NodeEdge::Bottom;
+                }
+
+                // Calculate corner snap index and position for the suggested edge
+                // Self-loops should be at corners, so use first or last snap index
+                bool useLastIndex = SelfLoopRouter::shouldBeAtLastIndex(
+                    candidate.suggestedOtherEdge, candidate.edge);
+                int candidateCount = GridSnapCalculator::getCandidateCount(
+                    node, candidate.suggestedOtherEdge, gridSizeToUse);
+                candidate.suggestedOtherIndex = useLastIndex ? (candidateCount - 1) : 0;
+                candidate.suggestedOtherPosition = GridSnapCalculator::getPositionFromCandidateIndex(
+                    node, candidate.suggestedOtherEdge, candidate.suggestedOtherIndex, gridSizeToUse);
+
+                LOG_DEBUG("[SnapPointController] Self-loop auto-adjust: candidate edge={} → other edge={} idx={}",
+                          static_cast<int>(candidate.edge),
+                          static_cast<int>(candidate.suggestedOtherEdge),
+                          candidate.suggestedOtherIndex);
             }
+            // If adjacent edges, candidate is valid as-is (requiresOtherEndpointMove = false)
         } else {
             // Regular edge: use A* pathfinding validation
             GridPoint startGrid = obstacles.pixelToGrid(candidate.position);
@@ -235,17 +276,34 @@ SnapPointController::DragUpdateResult SnapPointController::updateDrag(
 
         // Update preview layout
         previewLayout_ = originalLayout_;
+        previewLayout_.bendPoints.clear();  // Clear old bendPoints before recalculating
 
         if (isDraggingSource_) {
             previewLayout_.sourcePoint = candidate.position;
             previewLayout_.sourceEdge = candidate.edge;
+            // Auto-adjust target for self-loop if needed
+            if (candidate.requiresOtherEndpointMove) {
+                previewLayout_.targetPoint = candidate.suggestedOtherPosition;
+                previewLayout_.targetEdge = candidate.suggestedOtherEdge;
+            }
         } else {
             previewLayout_.targetPoint = candidate.position;
             previewLayout_.targetEdge = candidate.edge;
+            // Auto-adjust source for self-loop if needed
+            if (candidate.requiresOtherEndpointMove) {
+                previewLayout_.sourcePoint = candidate.suggestedOtherPosition;
+                previewLayout_.sourceEdge = candidate.suggestedOtherEdge;
+            }
         }
 
-        // Calculate A* path
+        // Calculate path for preview
         result.hasValidPreview = calculatePreviewPath(previewLayout_, nodeLayouts, gridSize);
+
+        // If preview calculation failed, create a simple direct path
+        // (better than leaving stale bendPoints that create diagonals)
+        if (!result.hasValidPreview) {
+            previewLayout_.bendPoints.clear();
+        }
     } else {
         // Same candidate, use cached preview
         // Direct path is valid if close enough (within kMinDirectPathGridCells grid cells)
@@ -284,6 +342,7 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     Point targetPosition;
     NodeEdge targetEdge;
     int targetSnapIndex;
+    int selectedCandidateIdx = -1;
 
     if (snappedCandidateIndex >= 0 && snappedCandidateIndex < static_cast<int>(candidates_.size())) {
         // Use snapped candidate
@@ -297,6 +356,7 @@ SnapPointController::DropResult SnapPointController::completeDrag(
         targetPosition = candidate.position;
         targetEdge = candidate.edge;
         targetSnapIndex = candidate.candidateIndex;
+        selectedCandidateIdx = snappedCandidateIndex;
     } else {
         // Fallback: find closest NON-BLOCKED candidate to mouse position
         int nearestIdx = -1;
@@ -315,6 +375,7 @@ SnapPointController::DropResult SnapPointController::completeDrag(
             targetPosition = candidate.position;
             targetEdge = candidate.edge;
             targetSnapIndex = candidate.candidateIndex;
+            selectedCandidateIdx = nearestIdx;
         } else {
             result.reason = "No valid candidate found";
             cancelDrag();
@@ -329,20 +390,40 @@ SnapPointController::DropResult SnapPointController::completeDrag(
 
     // Update dragged edge
     EdgeLayout& draggedEdge = edgeIt->second;
-    
+
+    // Get the selected candidate for self-loop auto-adjustment check
+    const SnapCandidate* selectedCandidate = nullptr;
+    if (selectedCandidateIdx >= 0 && selectedCandidateIdx < static_cast<int>(candidates_.size())) {
+        selectedCandidate = &candidates_[selectedCandidateIdx];
+    }
+
     LOG_DEBUG("[SnapPointController] completeDrag: edge={} isSource={} BEFORE=({},{}) AFTER=({},{})",
-              draggedEdgeId_, isDraggingSource_, 
+              draggedEdgeId_, isDraggingSource_,
               originalPosition_.x, originalPosition_.y,
               targetPosition.x, targetPosition.y);
-    
+
     if (isDraggingSource_) {
         draggedEdge.sourcePoint = targetPosition;
         draggedEdge.sourceEdge = targetEdge;
-        // NOTE: snapIndex is no longer stored - computed from position as needed
+        // Self-loop auto-adjustment: also move target if needed
+        if (selectedCandidate && selectedCandidate->requiresOtherEndpointMove) {
+            draggedEdge.targetPoint = selectedCandidate->suggestedOtherPosition;
+            draggedEdge.targetEdge = selectedCandidate->suggestedOtherEdge;
+            LOG_DEBUG("[SnapPointController] Self-loop auto-adjusted target to ({},{}) edge={}",
+                      draggedEdge.targetPoint.x, draggedEdge.targetPoint.y,
+                      static_cast<int>(draggedEdge.targetEdge));
+        }
     } else {
         draggedEdge.targetPoint = targetPosition;
         draggedEdge.targetEdge = targetEdge;
-        // NOTE: snapIndex is no longer stored - computed from position as needed
+        // Self-loop auto-adjustment: also move source if needed
+        if (selectedCandidate && selectedCandidate->requiresOtherEndpointMove) {
+            draggedEdge.sourcePoint = selectedCandidate->suggestedOtherPosition;
+            draggedEdge.sourceEdge = selectedCandidate->suggestedOtherEdge;
+            LOG_DEBUG("[SnapPointController] Self-loop auto-adjusted source to ({},{}) edge={}",
+                      draggedEdge.sourcePoint.x, draggedEdge.sourcePoint.y,
+                      static_cast<int>(draggedEdge.sourceEdge));
+        }
     }
 
     result.affectedEdges.push_back(draggedEdgeId_);
@@ -448,95 +529,28 @@ bool SnapPointController::calculatePreviewPath(
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     float gridSize) {
 
+    // Use unified path calculator for both self-loops and regular edges
+    if (!pathCalculator_) {
+        return false;
+    }
+
     float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
-    // Self-loop: use geometric path calculation (no A* needed)
-    if (layout.from == layout.to) {
-        auto nodeIt = nodeLayouts.find(layout.from);
-        if (nodeIt == nodeLayouts.end()) {
-            return false;
-        }
+    PathConfig config;
+    config.gridSize = gridSizeToUse;
+    config.extensionCells = 2;  // Extension points are 2 grid cells from node edge
+    config.snapToGrid = true;
 
-        // Validate: only adjacent edges are valid for self-loops
-        if (!SelfLoopRouter::isValidSelfLoopCombination(layout.sourceEdge, layout.targetEdge)) {
-            return false;
-        }
+    auto result = pathCalculator_->calculatePath(layout, nodeLayouts, config);
 
-        // Use geometric path for self-loop preview
-        // Calculate extension points perpendicular to each edge
-        constexpr float BASE_OFFSET = 30.0f;
-
-        Point srcExt = layout.sourcePoint;
-        Point tgtExt = layout.targetPoint;
-
-        // Extend source point outward from node
-        switch (layout.sourceEdge) {
-            case NodeEdge::Top:    srcExt.y -= BASE_OFFSET; break;
-            case NodeEdge::Bottom: srcExt.y += BASE_OFFSET; break;
-            case NodeEdge::Left:   srcExt.x -= BASE_OFFSET; break;
-            case NodeEdge::Right:  srcExt.x += BASE_OFFSET; break;
-        }
-
-        // Extend target point outward from node
-        switch (layout.targetEdge) {
-            case NodeEdge::Top:    tgtExt.y -= BASE_OFFSET; break;
-            case NodeEdge::Bottom: tgtExt.y += BASE_OFFSET; break;
-            case NodeEdge::Left:   tgtExt.x -= BASE_OFFSET; break;
-            case NodeEdge::Right:  tgtExt.x += BASE_OFFSET; break;
-        }
-
-        // Corner point where the two extensions meet
-        Point corner;
-        if (layout.sourceEdge == NodeEdge::Left || layout.sourceEdge == NodeEdge::Right) {
-            corner = {srcExt.x, tgtExt.y};
-        } else {
-            corner = {tgtExt.x, srcExt.y};
-        }
-
-        // Set bend points: src -> srcExt -> corner -> tgtExt -> tgt
-        layout.bendPoints.clear();
-        layout.bendPoints.push_back(BendPoint{srcExt});
-        layout.bendPoints.push_back(BendPoint{corner});
-        layout.bendPoints.push_back(BendPoint{tgtExt});
-
-        return true;
-    }
-
-    // Regular edge: use A* pathfinding
-    if (!pathFinder_) {
+    if (!result.success) {
+        LOG_DEBUG("[SnapPointController::calculatePreviewPath] Path calculation failed: {}", 
+                  result.failureReason);
         return false;
     }
 
-    // Build obstacle map (margin=0 to match startDrag validation)
-    ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
-
-    // Convert to grid coordinates
-    GridPoint startGrid = GridPoint::fromPixel(layout.sourcePoint, gridSizeToUse);
-    GridPoint goalGrid = GridPoint::fromPixel(layout.targetPoint, gridSizeToUse);
-
-    // Find path
-    LOG_DEBUG("[CALLER:SnapPointController.cpp:findPathForEdge] A* findPath called");
-    auto pathResult = pathFinder_->findPath(
-        startGrid, goalGrid, obstacles,
-        layout.from, layout.to,
-        layout.sourceEdge, layout.targetEdge);
-
-    if (!pathResult.found || pathResult.path.size() < 2) {
-        return false;
-    }
-
-    // Convert grid path to pixel bend points
-    layout.bendPoints.clear();
-    for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-        Point pixelPos = pathResult.path[i].toPixel(gridSizeToUse);
-        layout.bendPoints.push_back(BendPoint{pixelPos});
-    }
-
-    // Update endpoints from path
-    layout.sourcePoint = pathResult.path.front().toPixel(gridSizeToUse);
-    layout.targetPoint = pathResult.path.back().toPixel(gridSizeToUse);
-
+    // Update layout with calculated bend points
+    layout.bendPoints = std::move(result.bendPoints);
     return true;
 }
 

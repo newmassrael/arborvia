@@ -5,6 +5,7 @@
 #include "arborvia/layout/config/LayoutEnums.h"
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include "arborvia/layout/api/IEdgePathCalculator.h"
 
 #include <vector>
 #include <unordered_map>
@@ -19,6 +20,12 @@ struct SnapCandidate {
     int candidateIndex;
     Point position;
     bool blocked = false;  ///< True if A* can't find path from this position
+
+    // Self-loop auto-adjustment: if moving here requires moving the other endpoint
+    bool requiresOtherEndpointMove = false;
+    NodeEdge suggestedOtherEdge = NodeEdge::Top;
+    int suggestedOtherIndex = -1;
+    Point suggestedOtherPosition{0, 0};
 };
 
 /// Controller for snap point drag operations
@@ -163,6 +170,9 @@ private:
 
     // Pathfinder for preview
     std::shared_ptr<IPathFinder> pathFinder_;
+    
+    // Path calculator for unified path computation
+    std::shared_ptr<IEdgePathCalculator> pathCalculator_;
 };
 
 }  // namespace arborvia

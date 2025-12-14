@@ -1,7 +1,9 @@
 #include "GeometricEdgeOptimizer.h"
+#include "GeometricEdgeOptimizer.h"
 #include "../../sugiyama/routing/EdgeRoutingUtils.h"
 #include "../../sugiyama/routing/EdgeValidator.h"
 #include "../../sugiyama/routing/SelfLoopRouter.h"
+#include "../../pathfinding/SelfLoopPathCalculator.h"
 #include "../../snap/SnapPointCalculator.h"
 #include "../../snap/GridSnapCalculator.h"
 #include "arborvia/core/GeometryUtils.h"
@@ -1096,9 +1098,13 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createSelfLoopPath(
     const NodeLayout& selfNode,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
 
-    constexpr float BASE_OFFSET = 30.0f;
+    // Use grid cells for consistent extension point calculation
+    constexpr int BASE_OFFSET_CELLS = 2;      // 2 grid cells from node edge
     constexpr int MAX_OFFSET_TRIES = 4;
-    constexpr float OFFSET_INCREMENT = 20.0f;
+    constexpr int OFFSET_INCREMENT_CELLS = 1; // Increment by 1 grid cell each try
+    
+    float baseOffset = BASE_OFFSET_CELLS * gridSize_;
+    float offsetIncrement = OFFSET_INCREMENT_CELLS * gridSize_;
 
     auto generatePath = [&](float offset) -> std::vector<BendPoint> {
         std::vector<BendPoint> bends;
@@ -1163,7 +1169,7 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createSelfLoopPath(
 
     // Try increasing offsets until no collision
     for (int i = 0; i < MAX_OFFSET_TRIES; ++i) {
-        float currentOffset = BASE_OFFSET + i * OFFSET_INCREMENT;
+        float currentOffset = baseOffset + i * offsetIncrement;
         auto bends = generatePath(currentOffset);
 
         if (!selfLoopHasCollision(bends, layout.sourcePoint, layout.targetPoint, layout.from, nodeLayouts)) {
@@ -1172,7 +1178,7 @@ std::vector<BendPoint> GeometricEdgeOptimizer::createSelfLoopPath(
     }
 
     // Return best effort (largest offset)
-    return generatePath(BASE_OFFSET + (MAX_OFFSET_TRIES - 1) * OFFSET_INCREMENT);
+    return generatePath(baseOffset + (MAX_OFFSET_TRIES - 1) * offsetIncrement);
 }
 
 std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
