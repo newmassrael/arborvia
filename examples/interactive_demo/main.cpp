@@ -336,15 +336,42 @@ public:
 
         ImGuiIO& io = ImGui::GetIO();
 
-        // Skip graph interaction if ImGui wants mouse
-        if (io.WantCaptureMouse) {
+        // Handle zoom (mouse wheel) - works even when ImGui wants mouse for scroll
+        if (!io.WantCaptureMouse && io.MouseWheel != 0) {
+            // Zoom centered on mouse position
+            ImVec2 mousePos = io.MousePos;
+            Point worldBeforeZoom = screenToWorld(mousePos);
+
+            float zoomDelta = io.MouseWheel * 0.1f;
+            float oldZoom = zoom_;
+            zoom_ = std::clamp(zoom_ + zoomDelta, 0.1f, 5.0f);
+
+            // Adjust pan to keep mouse position fixed in world coordinates
+            if (zoom_ != oldZoom) {
+                Point worldAfterZoom = screenToWorld(mousePos);
+                panOffset_.x += worldAfterZoom.x - worldBeforeZoom.x;
+                panOffset_.y += worldAfterZoom.y - worldBeforeZoom.y;
+            }
+        }
+
+        // Handle pan (middle mouse drag - works anywhere)
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) && !io.WantCaptureMouse) {
+            panOffset_.x += io.MouseDelta.x / zoom_;
+            panOffset_.y += io.MouseDelta.y / zoom_;
+            isPanning_ = true;
+        } else if (!emptyAreaPanStarted_) {
+            isPanning_ = false;
+        }
+
+        // Skip other graph interaction if ImGui wants mouse or middle-mouse panning
+        if (io.WantCaptureMouse || (isPanning_ && !emptyAreaPanStarted_)) {
             return;
         }
 
         ImVec2 mousePos = io.MousePos;
 
-        // Convert to graph coordinates
-        Point graphMouse = {mousePos.x - offset_.x, mousePos.y - offset_.y};
+        // Convert to graph coordinates (using pan/zoom transform)
+        Point graphMouse = screenToWorld(mousePos);
 
         // Find hovered node
         hoveredNode_ = INVALID_NODE;
@@ -540,10 +567,16 @@ public:
             selectedEdge_ = hoveredEdge_;
             selectedNode_ = INVALID_NODE;
             selectedBendPoint_.clear();
-        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE && !hoveredBendPoint_.isValid()) {
-            selectedNode_ = INVALID_NODE;
-            selectedEdge_ = INVALID_EDGE;
-            selectedBendPoint_.clear();
+        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE && !hoveredBendPoint_.isValid() && !hoveredSnapPoint_.isValid()) {
+            // Left click on empty area - start potential pan
+            emptyAreaPanStarted_ = true;
+        }
+
+        // Handle empty area pan (left-drag on empty)
+        if (emptyAreaPanStarted_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            panOffset_.x += io.MouseDelta.x / zoom_;
+            panOffset_.y += io.MouseDelta.y / zoom_;
+            isPanning_ = true;
         }
 
         if (ImGui::IsMouseReleased(0)) {
@@ -619,6 +652,18 @@ public:
             }
             isInvalidDragPosition_ = false;
             lastRoutedPosition_ = {-9999, -9999};  // Reset for next drag
+
+            // Handle empty area pan release
+            if (emptyAreaPanStarted_) {
+                if (!isPanning_) {
+                    // Was just a click (no drag) - deselect everything
+                    selectedNode_ = INVALID_NODE;
+                    selectedEdge_ = INVALID_EDGE;
+                    selectedBendPoint_.clear();
+                }
+                emptyAreaPanStarted_ = false;
+                isPanning_ = false;
+            }
         }
 
         // Handle snap point dragging - use SnapPointController for preview
@@ -784,23 +829,35 @@ public:
         ImU32 gridColor = IM_COL32(200, 200, 200, 80);  // Light gray, semi-transparent
         ImU32 gridColorMajor = IM_COL32(180, 180, 180, 120);  // Slightly darker for major lines
 
-        // Calculate grid bounds
-        float startX = std::fmod(offset_.x, gridSize_);
-        float startY = std::fmod(offset_.y, gridSize_);
+        // Calculate zoomed grid spacing
+        float zoomedGridSize = gridSize_ * zoom_;
+
+        // Calculate grid bounds with pan/zoom
+        // Find the world coordinate of the screen origin
+        Point worldOrigin = screenToWorld({0, 0});
+        // Find where the first grid line should be in world coordinates
+        float worldStartX = std::floor(worldOrigin.x / gridSize_) * gridSize_;
+        float worldStartY = std::floor(worldOrigin.y / gridSize_) * gridSize_;
+        // Convert back to screen coordinates
+        ImVec2 screenStart = worldToScreen({worldStartX, worldStartY});
 
         // Draw vertical lines
-        int lineCount = 0;
-        for (float x = startX; x < width; x += gridSize_) {
-            ImU32 color = (lineCount % 5 == 0) ? gridColorMajor : gridColor;
-            drawList->AddLine({x, 0}, {x, height}, color, 1.0f);
+        int lineCount = static_cast<int>(std::floor(worldOrigin.x / gridSize_));
+        for (float x = screenStart.x; x < width; x += zoomedGridSize) {
+            if (x >= 0) {
+                ImU32 color = (std::abs(lineCount) % 5 == 0) ? gridColorMajor : gridColor;
+                drawList->AddLine({x, 0}, {x, height}, color, 1.0f);
+            }
             lineCount++;
         }
 
         // Draw horizontal lines
-        lineCount = 0;
-        for (float y = startY; y < height; y += gridSize_) {
-            ImU32 color = (lineCount % 5 == 0) ? gridColorMajor : gridColor;
-            drawList->AddLine({0, y}, {width, y}, color, 1.0f);
+        lineCount = static_cast<int>(std::floor(worldOrigin.y / gridSize_));
+        for (float y = screenStart.y; y < height; y += zoomedGridSize) {
+            if (y >= 0) {
+                ImU32 color = (std::abs(lineCount) % 5 == 0) ? gridColorMajor : gridColor;
+                drawList->AddLine({0, y}, {width, y}, color, 1.0f);
+            }
             lineCount++;
         }
     }
@@ -823,12 +880,10 @@ public:
             // Draw blocked cells
             for (int gx = leftCell; gx < rightCell; ++gx) {
                 for (int gy = topCell; gy < bottomCell; ++gy) {
-                    float x1 = gx * gridSize_ + offset_.x;
-                    float y1 = gy * gridSize_ + offset_.y;
-                    float x2 = x1 + gridSize_;
-                    float y2 = y1 + gridSize_;
+                    ImVec2 p1 = worldToScreen({gx * gridSize_, gy * gridSize_});
+                    ImVec2 p2 = worldToScreen({(gx + 1) * gridSize_, (gy + 1) * gridSize_});
 
-                    drawList->AddRectFilled({x1, y1}, {x2, y2}, COLOR_BLOCKED_CELL);
+                    drawList->AddRectFilled(p1, p2, COLOR_BLOCKED_CELL);
                 }
             }
         }
@@ -862,6 +917,7 @@ public:
         float cellSize = debugObstacles_->gridSize();
         int obsOffsetX = debugObstacles_->offsetX();
         int obsOffsetY = debugObstacles_->offsetY();
+        float zoomedCellSize = cellSize * zoom_;
 
         // Draw all grid cells with obstacles
         for (int gy = 0; gy < debugObstacles_->height(); ++gy) {
@@ -870,40 +926,38 @@ public:
                 int gridY = gy + obsOffsetY;
                 auto info = debugObstacles_->getCellVisInfo(gridX, gridY);
 
-                float x1 = gridX * cellSize + offset_.x;
-                float y1 = gridY * cellSize + offset_.y;
-                float x2 = x1 + cellSize;
-                float y2 = y1 + cellSize;
+                ImVec2 p1 = worldToScreen({gridX * cellSize, gridY * cellSize});
+                ImVec2 p2 = worldToScreen({(gridX + 1) * cellSize, (gridY + 1) * cellSize});
 
                 // Node obstacles (yellow fill)
                 if (info.isNodeBlocked) {
-                    drawList->AddRectFilled({x1, y1}, {x2, y2}, nodeBlockColor);
+                    drawList->AddRectFilled(p1, p2, nodeBlockColor);
                 }
                 // Horizontal edge segments (blue horizontal bar)
                 if (info.hasHorizontalSegment) {
-                    drawList->AddRectFilled({x1, y1 + cellSize*0.35f},
-                                           {x2, y2 - cellSize*0.35f}, hSegmentColor);
+                    drawList->AddRectFilled({p1.x, p1.y + zoomedCellSize*0.35f},
+                                           {p2.x, p2.y - zoomedCellSize*0.35f}, hSegmentColor);
                 }
                 // Vertical edge segments (green vertical bar)
                 if (info.hasVerticalSegment) {
-                    drawList->AddRectFilled({x1 + cellSize*0.35f, y1},
-                                           {x2 - cellSize*0.35f, y2}, vSegmentColor);
+                    drawList->AddRectFilled({p1.x + zoomedCellSize*0.35f, p1.y},
+                                           {p2.x - zoomedCellSize*0.35f, p2.y}, vSegmentColor);
                 }
             }
         }
 
         // Highlight start/goal points
         if (astarStart_.x >= 0) {
-            float x = astarStart_.x + offset_.x;
-            float y = astarStart_.y + offset_.y;
-            drawList->AddCircleFilled({x, y}, 8, startColor);
-            drawList->AddText({x + 10, y - 5}, IM_COL32_WHITE, "START");
+            ImVec2 p = worldToScreen(astarStart_);
+            float radius = 8 * zoom_;
+            drawList->AddCircleFilled(p, radius, startColor);
+            drawList->AddText({p.x + 10, p.y - 5}, IM_COL32_WHITE, "START");
         }
         if (astarGoal_.x >= 0) {
-            float x = astarGoal_.x + offset_.x;
-            float y = astarGoal_.y + offset_.y;
-            drawList->AddCircleFilled({x, y}, 8, goalColor);
-            drawList->AddText({x + 10, y - 5}, IM_COL32_WHITE, "GOAL");
+            ImVec2 p = worldToScreen(astarGoal_);
+            float radius = 8 * zoom_;
+            drawList->AddCircleFilled(p, radius, goalColor);
+            drawList->AddText({p.x + 10, p.y - 5}, IM_COL32_WHITE, "GOAL");
         }
     }
 
@@ -956,10 +1010,11 @@ public:
             }
 
             auto points = layout.allPoints();
+            float scaledThickness = thickness * zoom_;
             for (size_t i = 1; i < points.size(); ++i) {
-                ImVec2 p1 = {points[i-1].x + offset_.x, points[i-1].y + offset_.y};
-                ImVec2 p2 = {points[i].x + offset_.x, points[i].y + offset_.y};
-                drawList->AddLine(p1, p2, color, thickness);
+                ImVec2 p1 = worldToScreen(points[i-1]);
+                ImVec2 p2 = worldToScreen(points[i]);
+                drawList->AddLine(p1, p2, color, scaledThickness);
             }
 
             // Draw arrowhead
@@ -972,17 +1027,16 @@ public:
             // Draw edge label (using pre-computed labelPosition)
             const EdgeData& edge = graph_.getEdge(id);
             if (!edge.label.empty()) {
-                ImVec2 textPos = {layout.labelPosition.x + offset_.x - 20,
-                                  layout.labelPosition.y + offset_.y - 15};
+                ImVec2 labelPos = worldToScreen(layout.labelPosition);
+                ImVec2 textPos = {labelPos.x - 20, labelPos.y - 15};
                 drawList->AddText(textPos, COLOR_TEXT, edge.label.c_str());
             }
         }
 
         // Draw bend point insertion preview
         if (bendPointPreview_.active) {
-            ImVec2 screenPos = {bendPointPreview_.position.x + offset_.x,
-                               bendPointPreview_.position.y + offset_.y};
-            float size = 5.0f;
+            ImVec2 screenPos = worldToScreen(bendPointPreview_.position);
+            float size = 5.0f * zoom_;
             ImVec2 pts[4] = {
                 {screenPos.x, screenPos.y - size},
                 {screenPos.x + size, screenPos.y},
@@ -993,7 +1047,7 @@ public:
             drawList->AddPolyline(pts, 4, IM_COL32(100, 200, 255, 200), ImDrawFlags_Closed, 1.0f);
 
             // Draw "+" indicator
-            float plusSize = 3.0f;
+            float plusSize = 3.0f * zoom_;
             drawList->AddLine(
                 {screenPos.x - plusSize, screenPos.y},
                 {screenPos.x + plusSize, screenPos.y},
@@ -1019,18 +1073,22 @@ public:
                 fillColor = COLOR_NODE_HOVER;
             }
 
-            ImVec2 p1 = {layout.position.x + offset_.x, layout.position.y + offset_.y};
-            ImVec2 p2 = {p1.x + layout.size.width, p1.y + layout.size.height};
+            ImVec2 p1 = worldToScreen(layout.position);
+            ImVec2 p2 = worldToScreen({layout.position.x + layout.size.width,
+                                       layout.position.y + layout.size.height});
+            float scaledRounding = 5.0f * zoom_;
 
-            drawList->AddRectFilled(p1, p2, fillColor, 5.0f);
-            drawList->AddRect(p1, p2, COLOR_NODE_BORDER, 5.0f, 0, 2.0f);
+            drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
+            drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
 
             // Draw label
             const NodeData& node = graph_.getNode(id);
             if (!node.label.empty()) {
                 ImVec2 textSize = ImGui::CalcTextSize(node.label.c_str());
-                ImVec2 textPos = {p1.x + (layout.size.width - textSize.x) / 2,
-                                 p1.y + (layout.size.height - textSize.y) / 2};
+                float scaledWidth = layout.size.width * zoom_;
+                float scaledHeight = layout.size.height * zoom_;
+                ImVec2 textPos = {p1.x + (scaledWidth - textSize.x) / 2,
+                                 p1.y + (scaledHeight - textSize.y) / 2};
                 drawList->AddText(textPos, COLOR_TEXT, node.label.c_str());
             }
 
@@ -1055,19 +1113,20 @@ public:
         const auto& candidates = snapController_.getCandidates();
         for (size_t i = 0; i < candidates.size(); ++i) {
             const auto& candidate = candidates[i];
-            ImVec2 screenPos = {candidate.position.x + offset_.x,
-                                candidate.position.y + offset_.y};
+            ImVec2 screenPos = worldToScreen(candidate.position);
 
             bool isSnapped = (static_cast<int>(i) == snappedCandidateIndex_);
 
             if (isSnapped) {
                 // Highlight the snapped candidate
-                drawList->AddCircleFilled(screenPos, 8.0f, IM_COL32(255, 100, 100, 255));
-                drawList->AddCircle(screenPos, 8.0f, IM_COL32(255, 255, 255, 255), 0, 2.0f);
+                float radius = 8.0f * zoom_;
+                drawList->AddCircleFilled(screenPos, radius, IM_COL32(255, 100, 100, 255));
+                drawList->AddCircle(screenPos, radius, IM_COL32(255, 255, 255, 255), 0, 2.0f);
             } else {
                 // Draw other candidates as smaller circles
-                drawList->AddCircleFilled(screenPos, 4.0f, IM_COL32(150, 150, 255, 150));
-                drawList->AddCircle(screenPos, 4.0f, IM_COL32(100, 100, 200, 200), 0, 1.0f);
+                float radius = 4.0f * zoom_;
+                drawList->AddCircleFilled(screenPos, radius, IM_COL32(150, 150, 255, 150));
+                drawList->AddCircle(screenPos, radius, IM_COL32(100, 100, 200, 200), 0, 1.0f);
             }
         }
     }
@@ -1075,19 +1134,19 @@ public:
     void drawSnapPreviewPath(ImDrawList* drawList) {
         // Draw preview path in a distinct color (cyan, semi-transparent)
         ImU32 previewColor = IM_COL32(0, 200, 255, 180);
-        float thickness = 3.0f;
+        float thickness = 3.0f * zoom_;
 
         auto points = snapController_.getPreviewLayout().allPoints();
         for (size_t i = 1; i < points.size(); ++i) {
-            ImVec2 p1 = {points[i-1].x + offset_.x, points[i-1].y + offset_.y};
-            ImVec2 p2 = {points[i].x + offset_.x, points[i].y + offset_.y};
+            ImVec2 p1 = worldToScreen(points[i-1]);
+            ImVec2 p2 = worldToScreen(points[i]);
             drawList->AddLine(p1, p2, previewColor, thickness);
         }
 
         // Draw arrow at the target
         if (points.size() >= 2) {
-            ImVec2 p1 = {points[points.size()-2].x + offset_.x, points[points.size()-2].y + offset_.y};
-            ImVec2 p2 = {points.back().x + offset_.x, points.back().y + offset_.y};
+            ImVec2 p1 = worldToScreen(points[points.size()-2]);
+            ImVec2 p2 = worldToScreen(points.back());
 
             float dx = p2.x - p1.x;
             float dy = p2.y - p1.y;
@@ -1095,7 +1154,7 @@ public:
             if (len > 0.01f) {
                 dx /= len;
                 dy /= len;
-                float arrowSize = 8.0f;
+                float arrowSize = 8.0f * zoom_;
                 ImVec2 arrow1 = {p2.x - arrowSize * (dx + dy * 0.5f),
                                  p2.y - arrowSize * (dy - dx * 0.5f)};
                 ImVec2 arrow2 = {p2.x - arrowSize * (dx - dy * 0.5f),
@@ -1126,22 +1185,21 @@ public:
 
             // Source point on this node (outgoing - green)
             if (edgeLayout.from == nodeLayout.id) {
-                ImVec2 screenPos = {edgeLayout.sourcePoint.x + offset_.x,
-                                    edgeLayout.sourcePoint.y + offset_.y};
+                ImVec2 screenPos = worldToScreen(edgeLayout.sourcePoint);
 
                 // Determine colors based on hover/drag state
                 bool isSourceHovered = (hoveredSnapPoint_.edgeId == edgeId && hoveredSnapPoint_.isSource);
                 bool isSourceDragging = (draggingSnapPoint_.edgeId == edgeId && draggingSnapPoint_.isSource);
-                float radius = 5.0f;
+                float radius = 5.0f * zoom_;
                 ImU32 fillColor = IM_COL32(100, 200, 100, 255);
                 ImU32 borderColor = IM_COL32(50, 150, 50, 255);
 
                 if (isSourceDragging) {
-                    radius = 8.0f;
+                    radius = 8.0f * zoom_;
                     fillColor = IM_COL32(255, 180, 80, 255);  // Orange for dragging
                     borderColor = IM_COL32(200, 130, 50, 255);
                 } else if (isSourceHovered) {
-                    radius = 7.0f;
+                    radius = 7.0f * zoom_;
                     fillColor = IM_COL32(255, 220, 100, 255);  // Yellow for hover
                     borderColor = IM_COL32(200, 170, 50, 255);
                 }
@@ -1167,23 +1225,24 @@ public:
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
+                    float labelOffset = 8.0f * zoom_;
 
                     // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.sourceEdge) {
                         case NodeEdge::Top:
                             textPos.x -= textSize.x / 2.0f;
-                            textPos.y += 8;  // Move down into node
+                            textPos.y += labelOffset;  // Move down into node
                             break;
                         case NodeEdge::Bottom:
                             textPos.x -= textSize.x / 2.0f;
-                            textPos.y -= textSize.y + 8;  // Move up into node
+                            textPos.y -= textSize.y + labelOffset;  // Move up into node
                             break;
                         case NodeEdge::Left:
-                            textPos.x += 8;  // Move right into node
+                            textPos.x += labelOffset;  // Move right into node
                             textPos.y -= textSize.y / 2.0f;
                             break;
                         case NodeEdge::Right:
-                            textPos.x -= textSize.x + 8;  // Move left into node
+                            textPos.x -= textSize.x + labelOffset;  // Move left into node
                             textPos.y -= textSize.y / 2.0f;
                             break;
                     }
@@ -1200,22 +1259,21 @@ public:
             }
             // Target point on this node (incoming - red)
             if (edgeLayout.to == nodeLayout.id) {
-                ImVec2 screenPos = {edgeLayout.targetPoint.x + offset_.x,
-                                    edgeLayout.targetPoint.y + offset_.y};
+                ImVec2 screenPos = worldToScreen(edgeLayout.targetPoint);
 
                 // Determine colors based on hover/drag state
                 bool isTargetHovered = (hoveredSnapPoint_.edgeId == edgeId && !hoveredSnapPoint_.isSource);
                 bool isTargetDragging = (draggingSnapPoint_.edgeId == edgeId && !draggingSnapPoint_.isSource);
-                float radius = 5.0f;
+                float radius = 5.0f * zoom_;
                 ImU32 fillColor = IM_COL32(200, 100, 100, 255);
                 ImU32 borderColor = IM_COL32(150, 50, 50, 255);
 
                 if (isTargetDragging) {
-                    radius = 8.0f;
+                    radius = 8.0f * zoom_;
                     fillColor = IM_COL32(255, 180, 80, 255);  // Orange for dragging
                     borderColor = IM_COL32(200, 130, 50, 255);
                 } else if (isTargetHovered) {
-                    radius = 7.0f;
+                    radius = 7.0f * zoom_;
                     fillColor = IM_COL32(255, 220, 100, 255);  // Yellow for hover
                     borderColor = IM_COL32(200, 170, 50, 255);
                 }
@@ -1245,23 +1303,24 @@ public:
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
                     ImVec2 textPos = screenPos;
+                    float labelOffset = 8.0f * zoom_;
 
                     // Center text horizontally/vertically and move inside node
                     switch (edgeLayout.targetEdge) {
                         case NodeEdge::Top:
                             textPos.x -= textSize.x / 2.0f;
-                            textPos.y += 8;  // Move down into node
+                            textPos.y += labelOffset;  // Move down into node
                             break;
                         case NodeEdge::Bottom:
                             textPos.x -= textSize.x / 2.0f;
-                            textPos.y -= textSize.y + 8;  // Move up into node
+                            textPos.y -= textSize.y + labelOffset;  // Move up into node
                             break;
                         case NodeEdge::Left:
-                            textPos.x += 8;  // Move right into node
+                            textPos.x += labelOffset;  // Move right into node
                             textPos.y -= textSize.y / 2.0f;
                             break;
                         case NodeEdge::Right:
-                            textPos.x -= textSize.x + 8;  // Move left into node
+                            textPos.x -= textSize.x + labelOffset;  // Move left into node
                             textPos.y -= textSize.y / 2.0f;
                             break;
                     }
@@ -1280,16 +1339,20 @@ public:
     }
 
     void drawArrowhead(ImDrawList* drawList, const Point& from, const Point& to, ImU32 color) {
-        float dx = to.x - from.x;
-        float dy = to.y - from.y;
+        // Convert to screen coordinates first
+        ImVec2 screenFrom = worldToScreen(from);
+        ImVec2 screenTo = worldToScreen(to);
+
+        float dx = screenTo.x - screenFrom.x;
+        float dy = screenTo.y - screenFrom.y;
         float len = std::sqrt(dx * dx + dy * dy);
         if (len < 0.001f) return;
 
         dx /= len;
         dy /= len;
 
-        float arrowSize = 10.0f;
-        ImVec2 tip = {to.x + offset_.x, to.y + offset_.y};
+        float arrowSize = 10.0f * zoom_;
+        ImVec2 tip = screenTo;
         ImVec2 left = {tip.x - arrowSize * dx + arrowSize * 0.5f * dy,
                        tip.y - arrowSize * dy - arrowSize * 0.5f * dx};
         ImVec2 right = {tip.x - arrowSize * dx - arrowSize * 0.5f * dy,
@@ -1397,6 +1460,19 @@ public:
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Show A* pathfinding grid\nYellow=Node, Blue=H-Edge, Green=V-Edge");
         }
+
+        // Pan/Zoom controls
+        ImGui::Separator();
+        ImGui::Text("View: %.0f%% zoom", zoom_ * 100);
+        ImGui::SameLine();
+        if (ImGui::Button("Reset View")) {
+            panOffset_ = {0, 0};
+            zoom_ = 1.0f;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pan: Drag empty area or Middle mouse\nZoom: Mouse wheel");
+        }
+        ImGui::SliderFloat("Zoom", &zoom_, 0.1f, 5.0f, "%.1f");
 
         // Snap point configuration for selected node (manual mode feature - disabled)
         if (false && selectedNode_ != INVALID_NODE) {
@@ -1561,6 +1637,31 @@ private:
 
     Point offset_ = {0, 0};
     float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
+
+    // Pan/Zoom state
+    Point panOffset_ = {0, 0};  // Pan offset in world coordinates
+    float zoom_ = 1.0f;         // Zoom level (1.0 = 100%)
+    bool isPanning_ = false;           // Currently panning
+    bool emptyAreaPanStarted_ = false; // Left-click started on empty area (potential pan)
+
+    // Coordinate transformation helpers
+    ImVec2 worldToScreen(const Point& world) const {
+        return {
+            (world.x + panOffset_.x) * zoom_ + offset_.x,
+            (world.y + panOffset_.y) * zoom_ + offset_.y
+        };
+    }
+
+    Point screenToWorld(const ImVec2& screen) const {
+        return {
+            (screen.x - offset_.x) / zoom_ - panOffset_.x,
+            (screen.y - offset_.y) / zoom_ - panOffset_.y
+        };
+    }
+
+    float worldToScreenScale(float worldSize) const {
+        return worldSize * zoom_;
+    }
 
     NodeId hoveredNode_ = INVALID_NODE;
     NodeId draggedNode_ = INVALID_NODE;
