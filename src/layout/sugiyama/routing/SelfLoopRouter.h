@@ -17,9 +17,6 @@ public:
     /// Default self-loop spacing when grid is disabled
     static constexpr float DEFAULT_SPACING = 10.0f;
 
-    /// Default offset for self-loop routing (distance from node edge)
-    static constexpr float DEFAULT_OFFSET = 20.0f;
-
     /// Adjacent edges for a given source edge
     struct AdjacentEdges {
         NodeEdge primary;    ///< Primary adjacent edge (used by default)
