@@ -1212,3 +1212,145 @@ TEST(SugiyamaLayoutTest, GridAlignment_NodePosition_MustBeOnGrid) {
     EXPECT_FLOAT_EQ(nl->position.x, expectedX);
     EXPECT_FLOAT_EQ(nl->position.y, expectedY);
 }
+
+// =============================================================================
+// =============================================================================
+// TDD: Edge Overlap After applyFinalCleanup
+// =============================================================================
+// BUG: When two edges target the same node's top edge, AStarEdgeOptimizer
+// resolves the overlap. But applyFinalCleanup uses GeometricEdgeOptimizer
+// which doesn't consider other edges as obstacles, causing overlap to reappear.
+
+namespace {
+// Helper: Check if two horizontal segments overlap
+bool horizontalSegmentsOverlap(
+    float y1, float x1Start, float x1End,
+    float y2, float x2Start, float x2End,
+    float tolerance = 1.0f) {
+    
+    // Must be on same Y (within tolerance)
+    if (std::abs(y1 - y2) > tolerance) return false;
+    
+    // Check X range overlap
+    float min1 = std::min(x1Start, x1End);
+    float max1 = std::max(x1Start, x1End);
+    float min2 = std::min(x2Start, x2End);
+    float max2 = std::max(x2Start, x2End);
+    
+    // Overlap if ranges intersect (excluding single point touches)
+    float overlapStart = std::max(min1, min2);
+    float overlapEnd = std::min(max1, max2);
+    
+    return overlapEnd - overlapStart > tolerance;
+}
+
+// Helper: Get all horizontal segments from edge layout
+std::vector<std::tuple<float, float, float>> getHorizontalSegments(const EdgeLayout& layout) {
+    std::vector<std::tuple<float, float, float>> segments;  // (y, xStart, xEnd)
+    
+    std::vector<Point> points;
+    points.push_back(layout.sourcePoint);
+    for (const auto& bp : layout.bendPoints) {
+        points.push_back(bp.position);
+    }
+    points.push_back(layout.targetPoint);
+    
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const Point& p1 = points[i];
+        const Point& p2 = points[i + 1];
+        
+        // Horizontal segment: same Y
+        if (std::abs(p1.y - p2.y) < 1.0f) {
+            segments.emplace_back(p1.y, p1.x, p2.x);
+        }
+    }
+    
+    return segments;
+}
+
+// Helper: Check if two edges have overlapping horizontal segments
+bool edgesHaveHorizontalOverlap(const EdgeLayout& e1, const EdgeLayout& e2) {
+    auto segs1 = getHorizontalSegments(e1);
+    auto segs2 = getHorizontalSegments(e2);
+    
+    for (const auto& [y1, x1Start, x1End] : segs1) {
+        for (const auto& [y2, x2Start, x2End] : segs2) {
+            if (horizontalSegmentsOverlap(y1, x1Start, x1End, y2, x2Start, x2End)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+}  // namespace
+
+TEST(SugiyamaLayoutTest, ApplyFinalCleanup_MustNotCreateOverlap) {
+    // Reproduce EXACT interactive demo graph structure:
+    // idle -> running -> paused -> running (cycle)
+    // running -> stopped
+    // paused -> stopped  
+    // running -> error -> idle (cycle)
+    // error -> error (self-loop)
+    
+    Graph graph;
+    
+    // Create nodes in same order as interactive demo
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+    
+    // Create edges in same order as interactive demo
+    graph.addEdge(idle, running, "start");       // e0
+    graph.addEdge(running, paused, "pause");     // e1
+    graph.addEdge(paused, running, "resume");    // e2 - back edge
+    EdgeId e_run_stop = graph.addEdge(running, stopped, "stop");  // e3 - PROBLEM EDGE
+    EdgeId e_pause_stop = graph.addEdge(paused, stopped, "stop"); // e4 - PROBLEM EDGE
+    graph.addEdge(running, error, "fail");       // e5
+    graph.addEdge(error, idle, "reset");         // e6 - back edge
+    graph.addEdge(error, error, "retry");        // e7 - self-loop
+    
+    // Configure with AStar post-drag algorithm (enables AStarEdgeOptimizer)
+    LayoutOptions options;
+    options.gridConfig.cellSize = 20.0f;
+    options.optimizationOptions.postDragAlgorithm = PostDragAlgorithm::AStar;
+    
+    SugiyamaLayout layout;
+    layout.setOptions(options);
+    
+    // Perform layout (includes edge routing and applyFinalCleanup)
+    LayoutResult result = layout.layout(graph);
+    
+    // Get edge layouts for the two edges targeting "stopped"
+    const EdgeLayout* el_run_stop = result.getEdgeLayout(e_run_stop);
+    const EdgeLayout* el_pause_stop = result.getEdgeLayout(e_pause_stop);
+    
+    ASSERT_NE(el_run_stop, nullptr) << "Edge running->stopped layout must exist";
+    ASSERT_NE(el_pause_stop, nullptr) << "Edge paused->stopped layout must exist";
+    
+    // THE ASSERTION: No horizontal segment overlap allowed!
+    // BUG: applyFinalCleanup uses GeometricEdgeOptimizer which doesn't consider
+    // other edges as obstacles, so overlap can reappear after AStarEdgeOptimizer
+    // already resolved it.
+    bool hasOverlap = edgesHaveHorizontalOverlap(*el_run_stop, *el_pause_stop);
+    
+    // Debug output
+    if (hasOverlap) {
+        auto segs1 = getHorizontalSegments(*el_run_stop);
+        auto segs2 = getHorizontalSegments(*el_pause_stop);
+        
+        std::cerr << "Edge running->stopped horizontal segments:\n";
+        for (const auto& [y, xs, xe] : segs1) {
+            std::cerr << "  y=" << y << " x=[" << xs << ", " << xe << "]\n";
+        }
+        std::cerr << "Edge paused->stopped horizontal segments:\n";
+        for (const auto& [y, xs, xe] : segs2) {
+            std::cerr << "  y=" << y << " x=[" << xs << ", " << xe << "]\n";
+        }
+    }
+    
+    EXPECT_FALSE(hasOverlap)
+        << "Edges targeting same node must not have overlapping horizontal segments!\n"
+        << "applyFinalCleanup should use A* (which considers other edges) not Geometric.";
+}

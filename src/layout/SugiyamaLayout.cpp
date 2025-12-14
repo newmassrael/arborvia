@@ -13,6 +13,7 @@
 #include "sugiyama/routing/EdgeRouting.h"
 #include "sugiyama/routing/PathCleanup.h"
 #include "optimization/geometric/GeometricEdgeOptimizer.h"
+#include "optimization/astar/AStarEdgeOptimizer.h"
 
 #include <unordered_set>
 
@@ -188,14 +189,12 @@ LayoutResult SugiyamaLayout::layout(const CompoundGraph& graph) {
 }
 
 void SugiyamaLayout::applyFinalCleanup() {
-    const float margin = std::max(options_.gridConfig.cellSize, PathCleanup::DEFAULT_MARGIN);
-
     // Helper: apply cleanup operations to an edge layout
-    auto applyCleanup = [this, margin](EdgeLayout& layout) {
-        const NodeLayout* targetNode = state_->result.getNodeLayout(layout.to);
-        if (targetNode) {
-            PathCleanup::moveBendsOutsideNode(layout, *targetNode, margin);
-        }
+    // NOTE: moveBendsOutsideNode was removed because it's a post-processing step
+    // that can break constraints (e.g., overlap resolution) that the optimizer
+    // carefully satisfied. A* pathfinding already avoids nodes as obstacles,
+    // so bends will never be INSIDE nodes. Being ON the boundary is acceptable.
+    auto applyCleanup = [this](EdgeLayout& layout) {
         PathCleanup::removeConsecutiveDuplicates(layout);
     };
 
@@ -214,20 +213,27 @@ void SugiyamaLayout::applyFinalCleanup() {
 
     // Second pass: regenerate invalid paths via optimizer
     if (!needsRegeneration.empty()) {
-        std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-        for (EdgeId edgeId : needsRegeneration) {
+        // Pass ALL edge layouts so A* can see them as obstacles
+        // (not just the edges being regenerated)
+        std::unordered_map<EdgeId, EdgeLayout> allEdgeLayouts;
+        for (const auto& [edgeId, _] : state_->result.edgeLayouts()) {
             if (const EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
-                edgeLayouts[edgeId] = *layout;
+                allEdgeLayouts[edgeId] = *layout;
             }
         }
 
-        GeometricEdgeOptimizer optimizer;
-        optimizer.setPreserveDirections(true);
+        // Use AStarEdgeOptimizer to consider other edges as obstacles
+        // (GeometricEdgeOptimizer would ignore already-routed edges, causing overlaps)
+        AStarEdgeOptimizer optimizer;
         float gridSize = constants::effectiveGridSize(options_.gridConfig.cellSize);
-        optimizer.regenerateBendPoints(needsRegeneration, edgeLayouts, state_->result.nodeLayouts(), gridSize);
+        optimizer.regenerateBendPoints(needsRegeneration, allEdgeLayouts, state_->result.nodeLayouts(), gridSize);
 
-        for (const auto& [edgeId, layout] : edgeLayouts) {
-            state_->result.setEdgeLayout(edgeId, layout);
+        // Only update edges that were regenerated
+        for (EdgeId edgeId : needsRegeneration) {
+            auto it = allEdgeLayouts.find(edgeId);
+            if (it != allEdgeLayouts.end()) {
+                state_->result.setEdgeLayout(edgeId, it->second);
+            }
         }
 
         for (EdgeId edgeId : needsRegeneration) {

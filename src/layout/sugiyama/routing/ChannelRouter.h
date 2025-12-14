@@ -118,6 +118,7 @@ public:
      * - Channel-based intermediate points
      * - Node intersection avoidance
      * - Grid alignment
+     * - Avoidance of already-routed edges (prevents overlaps)
      *
      * @param edge The edge data
      * @param fromLayout Source node layout
@@ -126,6 +127,7 @@ public:
      * @param channel Channel assignment info
      * @param options Layout options
      * @param allNodeLayouts All node layouts for intersection checking
+     * @param alreadyRoutedEdges Previously routed edges to treat as obstacles
      * @return Complete EdgeLayout with bend points
      */
     EdgeLayout routeChannelOrthogonal(
@@ -135,7 +137,8 @@ public:
         bool isReversed,
         const ChannelAssignment& channel,
         const LayoutOptions& options,
-        const std::unordered_map<NodeId, NodeLayout>* allNodeLayouts = nullptr);
+        const std::unordered_map<NodeId, NodeLayout>* allNodeLayouts = nullptr,
+        const std::unordered_map<EdgeId, EdgeLayout>* alreadyRoutedEdges = nullptr);
 
     /**
      * @brief Route a self-loop edge.
@@ -163,16 +166,19 @@ private:
      * @brief Calculate bend points for an edge using pathfinding.
      *
      * Uses A* pathfinding if pathfinder is available, otherwise
-     * creates a simple orthogonal path.
+     * creates a simple orthogonal path. Already-routed edges are
+     * added to the obstacle map to prevent overlapping paths.
      *
      * @param layout Edge layout with source/target set
      * @param nodeLayouts All node layouts for obstacle detection
      * @param gridSize Grid size for alignment
+     * @param alreadyRoutedEdges Previously routed edges to treat as obstacles
      */
     void calculateBendPoints(
         EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float gridSize);
+        float gridSize,
+        const std::unordered_map<EdgeId, EdgeLayout>* alreadyRoutedEdges = nullptr);
 
     /**
      * @brief Create bypass path around blocking nodes.

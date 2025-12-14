@@ -186,14 +186,17 @@ EdgeRouting::Result EdgeRouting::route(
             layout = channelRouter_->routeSelfLoop(edge, fromIt->second, loopIndex, options);
         } else {
             // Regular edge with channel assignment (delegated to ChannelRouter)
+            // Pass already-routed edges so A* can avoid overlaps during initial routing
             auto channelIt = channelAssignments.find(edgeId);
             if (channelIt != channelAssignments.end()) {
                 layout = channelRouter_->routeChannelOrthogonal(edge, fromIt->second, toIt->second,
-                                               isReversed, channelIt->second, options, &nodeLayouts);
+                                               isReversed, channelIt->second, options, &nodeLayouts,
+                                               &result.edgeLayouts);
             } else {
                 // Fallback: create simple orthogonal routing without channel
                 layout = channelRouter_->routeChannelOrthogonal(edge, fromIt->second, toIt->second,
-                                               isReversed, ChannelAssignment{}, options, &nodeLayouts);
+                                               isReversed, ChannelAssignment{}, options, &nodeLayouts,
+                                               &result.edgeLayouts);
             }
         }
 

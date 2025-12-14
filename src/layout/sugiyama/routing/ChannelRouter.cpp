@@ -324,7 +324,8 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     bool isReversed,
     const ChannelAssignment& channel,
     const LayoutOptions& options,
-    const std::unordered_map<NodeId, NodeLayout>* allNodeLayouts) {
+    const std::unordered_map<NodeId, NodeLayout>* allNodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>* alreadyRoutedEdges) {
 
     EdgeLayout layout;
     layout.id = edge.id;
@@ -414,10 +415,10 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     // Calculate bend points
     // gridSize already declared above
     if (allNodeLayouts) {
-        calculateBendPoints(layout, *allNodeLayouts, gridSize);
+        calculateBendPoints(layout, *allNodeLayouts, gridSize, alreadyRoutedEdges);
     } else {
         std::unordered_map<NodeId, NodeLayout> emptyMap;
-        calculateBendPoints(layout, emptyMap, gridSize);
+        calculateBendPoints(layout, emptyMap, gridSize, alreadyRoutedEdges);
     }
 
     // Mark as reversed if needed (for arrow rendering)
@@ -501,7 +502,8 @@ EdgeLayout ChannelRouter::routeSelfLoop(
 void ChannelRouter::calculateBendPoints(
     EdgeLayout& layout,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float gridSize) {
+    float gridSize,
+    const std::unordered_map<EdgeId, EdgeLayout>* alreadyRoutedEdges) {
 
     float gridSizeToUse = constants::effectiveGridSize(gridSize);
 
@@ -509,6 +511,11 @@ void ChannelRouter::calculateBendPoints(
     if (pathFinder_ && !nodeLayouts.empty()) {
         ObstacleMap obstacles;
         obstacles.buildFromNodes(nodeLayouts, gridSizeToUse, 0);
+
+        // Add already-routed edges as obstacles to prevent overlaps
+        if (alreadyRoutedEdges && !alreadyRoutedEdges->empty()) {
+            obstacles.addEdgeSegments(*alreadyRoutedEdges, layout.id);
+        }
 
         GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
         GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);
@@ -519,6 +526,14 @@ void ChannelRouter::calculateBendPoints(
             layout.from, layout.to,
             layout.sourceEdge, layout.targetEdge,
             {}, {});
+
+        if (!pathResult.found) {
+            LOG_WARN("[calculateBendPoints] Edge {} A* FAILED: start=({},{}) goal=({},{}) - no path found",
+                     layout.id, startGrid.x, startGrid.y, goalGrid.x, goalGrid.y);
+        } else if (pathResult.path.size() < 2) {
+            LOG_WARN("[calculateBendPoints] Edge {} A* FAILED: start=({},{}) goal=({},{}) - path too short (size={})",
+                     layout.id, startGrid.x, startGrid.y, goalGrid.x, goalGrid.y, pathResult.path.size());
+        }
 
         if (pathResult.found && pathResult.path.size() >= 2) {
             layout.bendPoints.clear();
@@ -537,6 +552,7 @@ void ChannelRouter::calculateBendPoints(
     }
 
     // Fallback: Create simple orthogonal path using channel
+    // NOTE: If A* failed, CooperativeRerouter should handle overlap resolution later
     layout.bendPoints.clear();
 
     // Snap source and target to grid

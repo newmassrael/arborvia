@@ -204,6 +204,81 @@ float midY = (src.y + tgt.y) * 0.5f;
 newBends.push_back({{src.x, midY}});
 ```
 
+### No Coordinate Shift Rule
+**When A* fails, do NOT shift coordinates. All fallbacks must be A*-based.**
+
+When A* pathfinding fails:
+- Do NOT shift channelY, bendY, or any coordinates to "find available space"
+- Do NOT use simple geometric fallback paths (L-shaped, channel-based)
+- ALWAYS delegate to A*-based retry systems:
+  1. `UnifiedRetryChain` - tries alternative snap positions with A*
+  2. `CooperativeRerouter` - reroutes blocking edges with A*
+  3. `resolveAllOverlaps` - resolves overlapping pairs with A*
+
+Example (wrong - do NOT do this):
+```cpp
+// Fallback with coordinate shift (WRONG)
+while (occupiedYs.count(channelY) > 0) {
+    channelY += gridSize;  // DO NOT shift coordinates
+}
+```
+
+Example (correct):
+```cpp
+// A* fails -> delegate to retry system
+if (!pathResult.found) {
+    // Let UnifiedRetryChain or CooperativeRerouter handle it with A*
+    // They will try alternative snap positions, reroute blocking edges, etc.
+}
+```
+
+This ensures:
+1. All paths are properly validated by A* pathfinding
+2. Obstacle avoidance is always respected
+3. No overlapping segments from simple geometric fallbacks
+
+### Centralized A* Management Rule
+**All A* pathfinding and retry logic MUST be managed in ONE place.**
+
+All edge routing scenarios must use the SAME A* and retry code:
+- Initial layout (first-time edge routing)
+- Node drag (edge recalculation after node move)
+- Snap point drag (edge recalculation after snap point move)
+- Optimization phase (overlap resolution, constraint satisfaction)
+
+Single entry points:
+- `UnifiedRetryChain::calculatePath()` - for all A* pathfinding with retry
+- `AStarEdgeOptimizer::optimize()` - for batch optimization with overlap resolution
+
+Example (wrong - do NOT do this):
+```cpp
+// ChannelRouter.cpp - separate A* call with own fallback (WRONG)
+PathResult result = pathFinder_->findPath(...);
+if (!result.found) {
+    // Custom fallback logic here - WRONG!
+    createSimplePath();
+}
+
+// EdgeRouting.cpp - another separate A* call (WRONG)
+PathResult result = pathFinder_->findPath(...);
+if (!result.found) {
+    // Different fallback logic - WRONG!
+}
+```
+
+Example (correct):
+```cpp
+// All routing goes through UnifiedRetryChain or AStarEdgeOptimizer
+UnifiedRetryChain retryChain(pathFinder, gridSize);
+auto result = retryChain.calculatePath(edgeId, layout, otherLayouts, nodeLayouts);
+// Retry logic is handled internally - same for all scenarios
+```
+
+This ensures:
+1. Consistent behavior across all routing scenarios
+2. Single place to fix bugs or improve retry logic
+3. No duplicate/divergent fallback implementations
+
 ## Current Work: A* Retry System
 
 ### Problem

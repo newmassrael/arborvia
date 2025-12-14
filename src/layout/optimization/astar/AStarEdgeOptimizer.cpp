@@ -1702,6 +1702,16 @@ bool AStarEdgeOptimizer::resolveAllOverlaps(
         LOG_DEBUG("[AStarOpt]   resolveOverlappingPair: valid={}", pairResult.valid);
 
         if (pairResult.valid) {
+            // Debug: log the resolved paths
+            LOG_DEBUG("[AStarOpt]   RESOLVED Edge {} bends:", idA);
+            for (const auto& bp : pairResult.layoutA.bendPoints) {
+                LOG_DEBUG("[AStarOpt]     ({}, {})", bp.position.x, bp.position.y);
+            }
+            LOG_DEBUG("[AStarOpt]   RESOLVED Edge {} bends:", idB);
+            for (const auto& bp : pairResult.layoutB.bendPoints) {
+                LOG_DEBUG("[AStarOpt]     ({}, {})", bp.position.x, bp.position.y);
+            }
+            
             result[idA] = pairResult.layoutA;
             result[idB] = pairResult.layoutB;
             assignedLayouts[idA] = pairResult.layoutA;
