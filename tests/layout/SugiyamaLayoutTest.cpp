@@ -782,11 +782,11 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
         const EdgeData& edge = graph.getEdge(eid);
         if (edge.from == n2) {
             std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y
-                      << ") snapIdx=" << el.sourceSnapIndex << " edge=" << static_cast<int>(el.sourceEdge) << std::endl;
+                      << ") edge=" << static_cast<int>(el.sourceEdge) << std::endl;
         }
         if (edge.to == n2) {
             std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y
-                      << ") snapIdx=" << el.targetSnapIndex << " edge=" << static_cast<int>(el.targetEdge) << std::endl;
+                      << ") edge=" << static_cast<int>(el.targetEdge) << std::endl;
         }
     }
 
@@ -796,18 +796,18 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
         edgeLayouts, nodeLayouts, affectedEdges,
         movedNodes);
 
-    // Debug: Print after snap indices and positions
+    // Debug: Print after positions (snapIndex computed from position as needed)
     std::cout << "\n=== After updateEdgePositions ===" << std::endl;
     for (EdgeId eid : affectedEdges) {
         const EdgeLayout& el = edgeLayouts[eid];
         const EdgeData& edge = graph.getEdge(eid);
         if (edge.from == n2) {
             std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y
-                      << ") snapIdx=" << el.sourceSnapIndex << " edge=" << static_cast<int>(el.sourceEdge) << std::endl;
+                      << ") edge=" << static_cast<int>(el.sourceEdge) << std::endl;
         }
         if (edge.to == n2) {
             std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y
-                      << ") snapIdx=" << el.targetSnapIndex << " edge=" << static_cast<int>(el.targetEdge) << std::endl;
+                      << ") edge=" << static_cast<int>(el.targetEdge) << std::endl;
         }
     }
 
@@ -903,17 +903,15 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
     std::cout << "Running node position: (" << runningLayout.position.x
               << ", " << runningLayout.position.y << ")" << std::endl;
 
-    // Print edges connected to Running
+    // Print edges connected to Running (snapIndex computed from position as needed)
     for (EdgeId eid : {e0, e1, e2, e3, e5}) {
         const EdgeLayout& el = edgeLayouts[eid];
         const EdgeData& edge = graph.getEdge(eid);
         if (edge.from == running) {
-            std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y
-                      << ") snapIdx=" << el.sourceSnapIndex << std::endl;
+            std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y << ")" << std::endl;
         }
         if (edge.to == running) {
-            std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y
-                      << ") snapIdx=" << el.targetSnapIndex << std::endl;
+            std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y << ")" << std::endl;
         }
     }
 
@@ -933,7 +931,7 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
         edgeLayouts, nodeLayouts, affectedEdges,
         movedNodes);
 
-    // Print after state
+    // Print after state (snapIndex computed from position as needed)
     std::cout << "\n=== Demo Graph Test: After Drag ===" << std::endl;
     std::vector<Point> snapPointsOnRunning;
     std::vector<std::string> snapLabels;
@@ -942,14 +940,12 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
         const EdgeLayout& el = edgeLayouts[eid];
         const EdgeData& edge = graph.getEdge(eid);
         if (edge.from == running) {
-            std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y
-                      << ") snapIdx=" << el.sourceSnapIndex << std::endl;
+            std::cout << "Edge " << eid << " source: (" << el.sourcePoint.x << ", " << el.sourcePoint.y << ")" << std::endl;
             snapPointsOnRunning.push_back(el.sourcePoint);
             snapLabels.push_back("E" + std::to_string(eid) + " src");
         }
         if (edge.to == running) {
-            std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y
-                      << ") snapIdx=" << el.targetSnapIndex << std::endl;
+            std::cout << "Edge " << eid << " target: (" << el.targetPoint.x << ", " << el.targetPoint.y << ")" << std::endl;
             snapPointsOnRunning.push_back(el.targetPoint);
             snapLabels.push_back("E" + std::to_string(eid) + " tgt");
         }

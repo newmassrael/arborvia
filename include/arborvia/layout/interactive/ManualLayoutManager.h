@@ -63,12 +63,6 @@ public:
     // Capture current layout as manual state
     void captureFromResult(const LayoutResult& result);
 
-    /// Sync snap point configurations from edge layouts.
-    /// Updates snap counts to accommodate all edge connections.
-    /// @param edgeLayouts The edge layouts to sync from
-    void syncSnapConfigsFromEdgeLayouts(
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts);
-
     // JSON serialization
     std::string toJson() const;
     bool fromJson(const std::string& json);

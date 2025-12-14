@@ -77,42 +77,38 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
     const NodeLayout& node = nodeIt->second;
     int candidateCount = GridSnapCalculator::getCandidateCount(node, nodeEdge, effectiveGridSize);
 
-    // For unmoved nodes, fix invalid indices without full redistribution
+    // For unmoved nodes, verify positions are on valid grid points
+    // NOTE: snapIndex is computed from position, not stored
     if (!shouldUpdateNode(nodeId)) {
         for (const auto& [edgeId, isSource] : connections) {
             auto it = edgeLayouts.find(edgeId);
             if (it != edgeLayouts.end()) {
-                int& snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
                 Point& snapPoint = isSource ? it->second.sourcePoint : it->second.targetPoint;
                 
-                bool needsUpdate = false;
+                // Compute current index from position
+                int computedIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                    node, nodeEdge, snapPoint, effectiveGridSize);
                 
-                if (snapIdx < 0) {
-                    // UNASSIGNED: find nearest snap index from current position
-                    snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                        node, nodeEdge, snapPoint, effectiveGridSize);
-                    needsUpdate = true;
-                } else if (snapIdx >= candidateCount) {
-                    // Out of range: clamp to valid range
-                    snapIdx = candidateCount - 1;
-                    needsUpdate = true;
-                }
-                
-                if (needsUpdate) {
+                // Clamp to valid range if needed
+                if (computedIdx >= candidateCount) {
+                    computedIdx = candidateCount - 1;
                     snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-                        node, nodeEdge, snapIdx, effectiveGridSize);
+                        node, nodeEdge, computedIdx, effectiveGridSize);
                 }
             }
         }
         return;
     }
 
+    // Check if redistribution is needed by computing indices from positions
     bool needsRedistribution = false;
     std::set<int> usedIndices;
     for (const auto& [edgeId, isSource] : connections) {
         auto it = edgeLayouts.find(edgeId);
         if (it != edgeLayouts.end()) {
-            int snapIdx = isSource ? it->second.sourceSnapIndex : it->second.targetSnapIndex;
+            Point snapPoint = isSource ? it->second.sourcePoint : it->second.targetPoint;
+            int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, nodeEdge, snapPoint, effectiveGridSize);
             if (snapIdx < 0 || snapIdx >= candidateCount) {
                 needsRedistribution = true;
                 break;
@@ -147,7 +143,9 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
         std::map<int, EdgeId> indexToFirstEdge;
         for (const auto& [edgeId, isSource] : edgesToProcess) {
             const EdgeLayout& el = edgeLayouts[edgeId];
-            int idx = isSource ? el.sourceSnapIndex : el.targetSnapIndex;
+            Point snapPoint = isSource ? el.sourcePoint : el.targetPoint;
+            int idx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, nodeEdge, snapPoint, effectiveGridSize);
             if (idx < 0 || idx >= candidateCount) {
                 edgesNeedingNewIndex.insert(edgeId);
             } else {
@@ -166,7 +164,9 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
     for (const auto& [edgeId, isSource] : edgesToProcess) {
         if (edgesNeedingNewIndex.count(edgeId) > 0) continue;
         const EdgeLayout& el = edgeLayouts[edgeId];
-        int idx = isSource ? el.sourceSnapIndex : el.targetSnapIndex;
+        Point snapPoint = isSource ? el.sourcePoint : el.targetPoint;
+        int idx = GridSnapCalculator::getCandidateIndexFromPosition(
+            node, nodeEdge, snapPoint, effectiveGridSize);
         if (idx >= 0 && idx < candidateCount) {
             usedCandidateIndices.insert(idx);
         }
@@ -209,7 +209,10 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
             usedCandidateIndices.insert(candidateIndex);
             snapPoint = GridSnapCalculator::getPositionFromStoredIndex(node, nodeEdge, candidateIndex, effectiveGridSize);
         } else {
-            candidateIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+            // Compute current index from position
+            Point currentSnapPoint = isSource ? layout.sourcePoint : layout.targetPoint;
+            candidateIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, nodeEdge, currentSnapPoint, effectiveGridSize);
             if (candidateIndex < 0 || candidateIndex >= candidateCount) {
                 snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, static_cast<int>(connIdx), totalCount, effectiveGridSize, &candidateIndex);
             } else {
@@ -219,26 +222,26 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
 
         // [SNAP-SYNC-DEBUG] Log before update
         Point oldSnapPoint = isSource ? layout.sourcePoint : layout.targetPoint;
-        int oldSnapIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
+        int oldSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+            node, nodeEdge, oldSnapPoint, effectiveGridSize);
         LOG_DEBUG("[SNAP-SYNC-DEBUG] Edge {} {} nodeId={} nodeHasMoved={} thisEdgeNeedsNewIndex={} candidateCount={}",
                   edgeId, isSource ? "SOURCE" : "TARGET", nodeId, nodeHasMoved, thisEdgeNeedsNewIndex, candidateCount);
         LOG_DEBUG("[SNAP-SYNC-DEBUG]   node pos=({},{}) size=({},{})",
                   node.position.x, node.position.y, node.size.width, node.size.height);
-        LOG_DEBUG("[SNAP-SYNC-DEBUG]   BEFORE: snapPoint=({},{}) snapIndex={}",
+        LOG_DEBUG("[SNAP-SYNC-DEBUG]   BEFORE: snapPoint=({},{}) computedIndex={}",
                   oldSnapPoint.x, oldSnapPoint.y, oldSnapIndex);
         LOG_DEBUG("[SNAP-SYNC-DEBUG]   CALCULATED: snapPoint=({},{}) candidateIndex={}",
                   snapPoint.x, snapPoint.y, candidateIndex);
 
+        // NOTE: snapIndex is no longer stored - position is the source of truth
         if (!nodeHasMoved) {
             if (thisEdgeNeedsNewIndex) {
                 if (isSource) {
                     layout.sourcePoint = snapPoint;
-                    layout.sourceSnapIndex = candidateIndex;
                 } else {
                     layout.targetPoint = snapPoint;
-                    layout.targetSnapIndex = candidateIndex;
                 }
-                LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (needsNewIndex): snapPoint=({},{}) snapIndex={}",
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (needsNewIndex): snapPoint=({},{}) candidateIndex={}",
                           snapPoint.x, snapPoint.y, candidateIndex);
             } else {
                 LOG_DEBUG("[SNAP-SYNC-DEBUG]   SKIPPED: nodeHasMoved=false and !thisEdgeNeedsNewIndex");
@@ -246,12 +249,10 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
         } else {
             if (isSource) {
                 layout.sourcePoint = snapPoint;
-                layout.sourceSnapIndex = candidateIndex;
             } else {
                 layout.targetPoint = snapPoint;
-                layout.targetSnapIndex = candidateIndex;
             }
-            LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (nodeHasMoved): snapPoint=({},{}) snapIndex={}",
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (nodeHasMoved): snapPoint=({},{}) candidateIndex={}",
                       snapPoint.x, snapPoint.y, candidateIndex);
         }
 

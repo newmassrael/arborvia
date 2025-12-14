@@ -299,9 +299,6 @@ public:
             edgeLayouts_[id] = layout;
         }
 
-        // Sync snap configs from edge layouts (for Auto mode snap point visibility)
-        syncSnapConfigsFromEdges();
-
         // Initialize LayoutController with current state
         layoutController_ = std::make_unique<LayoutController>(graph_, layoutOptions_);
         layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
@@ -331,11 +328,6 @@ public:
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, allEdges,
             {}, layoutOptions_.gridConfig.cellSize);
-    }
-
-    void syncSnapConfigsFromEdges() {
-        // Use library API for snap config synchronization
-        manualManager_->syncSnapConfigsFromEdgeLayouts(edgeLayouts_);
     }
 
     void update() {
@@ -481,8 +473,19 @@ public:
                 EdgeRoutingConfig routing;
                 routing.sourceEdge = edgeLayout.sourceEdge;
                 routing.targetEdge = edgeLayout.targetEdge;
-                routing.sourceSnapIndex = edgeLayout.sourceSnapIndex;
-                routing.targetSnapIndex = edgeLayout.targetSnapIndex;
+                // Compute snap indices from positions
+                auto srcNodeIt = nodeLayouts_.find(edgeLayout.from);
+                auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
+                float gridSize = layoutOptions_.gridConfig.cellSize > 0 
+                    ? layoutOptions_.gridConfig.cellSize : 10.0f;
+                if (srcNodeIt != nodeLayouts_.end()) {
+                    routing.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                        srcNodeIt->second, edgeLayout.sourceEdge, edgeLayout.sourcePoint, gridSize);
+                }
+                if (tgtNodeIt != nodeLayouts_.end()) {
+                    routing.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                        tgtNodeIt->second, edgeLayout.targetEdge, edgeLayout.targetPoint, gridSize);
+                }
                 manualManager_->setEdgeRouting(edgeId, routing);
             }
 
@@ -1156,7 +1159,10 @@ public:
                         case NodeEdge::Left: edgeName = "L"; break;
                         case NodeEdge::Right: edgeName = "R"; break;
                     }
-                    snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.sourceSnapIndex);
+                    // Compute snap index from position
+                    int srcSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                        nodeLayout, edgeLayout.sourceEdge, edgeLayout.sourcePoint, gridSize_);
+                    snprintf(label, sizeof(label), "%s%d", edgeName, srcSnapIdx);
 
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -1227,7 +1233,14 @@ public:
                         case NodeEdge::Left: edgeName = "L"; break;
                         case NodeEdge::Right: edgeName = "R"; break;
                     }
-                    snprintf(label, sizeof(label), "%s%d", edgeName, edgeLayout.targetSnapIndex);
+                    // Compute snap index from position (use target node)
+                    auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
+                    int tgtSnapIdx = 0;
+                    if (tgtNodeIt != nodeLayouts_.end()) {
+                        tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                            tgtNodeIt->second, edgeLayout.targetEdge, edgeLayout.targetPoint, gridSize_);
+                    }
+                    snprintf(label, sizeof(label), "%s%d", edgeName, tgtSnapIdx);
 
                     // Position label: centered on snap point, inside node (away from arrow)
                     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -1812,19 +1825,25 @@ private:
 
                 EdgeLayout& layout = edgeLayouts_[edgeId];
                 Point currentPos = isSource ? layout.sourcePoint : layout.targetPoint;
-                int currentSnapIdx = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
                 NodeEdge currentEdge = isSource ? layout.sourceEdge : layout.targetEdge;
+                // Compute snap index from position
+                NodeId nodeId = isSource ? layout.from : layout.to;
+                int currentSnapIdx = 0;
+                auto nodeIt = nodeLayouts_.find(nodeId);
+                if (nodeIt != nodeLayouts_.end()) {
+                    currentSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                        nodeIt->second, currentEdge, currentPos, gridSize_);
+                }
 
                 std::cout << "[test_snap_drag] BEFORE:" << std::endl;
                 std::cout << "  snapPoint=(" << currentPos.x << "," << currentPos.y << ")"
                           << " snapIndex=" << currentSnapIdx
                           << " nodeEdge=" << static_cast<int>(currentEdge) << std::endl;
 
-                // Log all edge layouts BEFORE
+                // Log all edge layouts BEFORE (positions only, snapIdx computed from position)
                 std::cout << "[test_snap_drag] All edge layouts BEFORE:" << std::endl;
                 for (const auto& [eid, elayout] : edgeLayouts_) {
-                    std::cout << "  Edge " << eid << ": snapIdx=(" << elayout.sourceSnapIndex
-                              << "," << elayout.targetSnapIndex << ") src=(" << elayout.sourcePoint.x
+                    std::cout << "  Edge " << eid << ": src=(" << elayout.sourcePoint.x
                               << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
                               << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
                 }
@@ -1843,8 +1862,15 @@ private:
                 if (result.success) {
                     EdgeLayout& afterLayout = edgeLayouts_[edgeId];
                     Point afterPos = isSource ? afterLayout.sourcePoint : afterLayout.targetPoint;
-                    int afterSnapIdx = isSource ? afterLayout.sourceSnapIndex : afterLayout.targetSnapIndex;
                     NodeEdge afterEdge = isSource ? afterLayout.sourceEdge : afterLayout.targetEdge;
+                    // Compute snap index from position
+                    NodeId afterNodeId = isSource ? afterLayout.from : afterLayout.to;
+                    int afterSnapIdx = 0;
+                    auto afterNodeIt = nodeLayouts_.find(afterNodeId);
+                    if (afterNodeIt != nodeLayouts_.end()) {
+                        afterSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                            afterNodeIt->second, afterEdge, afterPos, gridSize_);
+                    }
 
                     std::cout << "[test_snap_drag] AFTER:" << std::endl;
                     std::cout << "  snapPoint=(" << afterPos.x << "," << afterPos.y << ")"
@@ -1855,11 +1881,10 @@ private:
                     std::cout << "  redistributedEdges=" << result.redistributedEdges.size() << std::endl;
                 }
 
-                // Log all edge layouts AFTER
+                // Log all edge layouts AFTER (positions only, snapIdx computed from position)
                 std::cout << "[test_snap_drag] All edge layouts AFTER:" << std::endl;
                 for (const auto& [eid, elayout] : edgeLayouts_) {
-                    std::cout << "  Edge " << eid << ": snapIdx=(" << elayout.sourceSnapIndex
-                              << "," << elayout.targetSnapIndex << ") src=(" << elayout.sourcePoint.x
+                    std::cout << "  Edge " << eid << ": src=(" << elayout.sourcePoint.x
                               << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
                               << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
                 }
@@ -2050,8 +2075,7 @@ private:
                           << nodeLayouts_[nodeId].position.y << ")" << std::endl;
                 std::cout << "[test_drag] BEFORE edge layouts:" << std::endl;
                 for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
-                              << "," << layout.targetSnapIndex << ") src=(" << layout.sourcePoint.x
+                    std::cout << "  Edge " << edgeId << ": src=(" << layout.sourcePoint.x
                               << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
                               << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
                 }
@@ -2095,11 +2119,10 @@ private:
                 // Force update() to trigger callback (debounceDelay=0)
                 routingCoordinator_->update(SDL_GetTicks());
 
-                // Log AFTER state
+                // Log AFTER state (positions only, snapIdx computed from position)
                 std::cout << "[test_drag] AFTER edge layouts:" << std::endl;
                 for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    std::cout << "  Edge " << edgeId << ": snapIdx=(" << layout.sourceSnapIndex
-                              << "," << layout.targetSnapIndex << ") src=(" << layout.sourcePoint.x
+                    std::cout << "  Edge " << edgeId << ": src=(" << layout.sourcePoint.x
                               << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
                               << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
                 }

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
+#include "../src/layout/snap/GridSnapCalculator.h"
 #include <iostream>
 #include <unordered_map>
 #include <random>
@@ -36,8 +37,9 @@ protected:
     struct EdgeRoutingInfo {
         NodeEdge sourceEdge;
         NodeEdge targetEdge;
-        int sourceSnapIndex;
-        int targetSnapIndex;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
+        Point sourcePoint;
+        Point targetPoint;
         NodeId from;
         NodeId to;
     };
@@ -71,8 +73,8 @@ protected:
             routing[edgeId] = {
                 layout.sourceEdge,
                 layout.targetEdge,
-                layout.sourceSnapIndex,
-                layout.targetSnapIndex,
+                layout.sourcePoint,
+                layout.targetPoint,
                 layout.from,
                 layout.to
             };
@@ -104,8 +106,8 @@ protected:
         };
 
         std::cout << label << " Edge[" << edgeName() << "]: "
-                  << "src=" << edgeSideName(info.sourceEdge) << "[" << info.sourceSnapIndex << "], "
-                  << "tgt=" << edgeSideName(info.targetEdge) << "[" << info.targetSnapIndex << "]"
+                  << "src=" << edgeSideName(info.sourceEdge) << " at (" << info.sourcePoint.x << "," << info.sourcePoint.y << "), "
+                  << "tgt=" << edgeSideName(info.targetEdge) << " at (" << info.targetPoint.x << "," << info.targetPoint.y << ")"
                   << std::endl;
     }
 
@@ -252,10 +254,14 @@ TEST_F(DragBehaviorTest, Drag_SingleNode_PreservesRouting) {
     bool anyChange = false;
     for (const auto& [edgeId, infoBefore] : routingBefore) {
         const auto& infoAfter = routingAfter[edgeId];
+        // Compare NodeEdge and positions (position determines snap index)
+        bool positionChanged = (std::abs(infoBefore.sourcePoint.x - infoAfter.sourcePoint.x) > 0.1f ||
+                               std::abs(infoBefore.sourcePoint.y - infoAfter.sourcePoint.y) > 0.1f ||
+                               std::abs(infoBefore.targetPoint.x - infoAfter.targetPoint.x) > 0.1f ||
+                               std::abs(infoBefore.targetPoint.y - infoAfter.targetPoint.y) > 0.1f);
         if (infoBefore.sourceEdge != infoAfter.sourceEdge ||
             infoBefore.targetEdge != infoAfter.targetEdge ||
-            infoBefore.sourceSnapIndex != infoAfter.sourceSnapIndex ||
-            infoBefore.targetSnapIndex != infoAfter.targetSnapIndex) {
+            positionChanged) {
 
             printEdgeRouting("BEFORE:", edgeId, infoBefore);
             printEdgeRouting("AFTER: ", edgeId, infoAfter);
@@ -409,10 +415,10 @@ TEST_F(DragBehaviorTest, SnapPoints_DistributeAllConnectionsEvenly) {
 
     for (const auto& [edgeId, edgeLayout] : result.edgeLayouts()) {
         if (edgeLayout.to == running_) {
-            std::cout << "Incoming to Running: snapIndex=" << edgeLayout.targetSnapIndex << std::endl;
+            std::cout << "Incoming to Running: targetPoint=(" << edgeLayout.targetPoint.x << "," << edgeLayout.targetPoint.y << ")" << std::endl;
         }
         if (edgeLayout.from == running_) {
-            std::cout << "Outgoing from Running: snapIndex=" << edgeLayout.sourceSnapIndex << std::endl;
+            std::cout << "Outgoing from Running: sourcePoint=(" << edgeLayout.sourcePoint.x << "," << edgeLayout.sourcePoint.y << ")" << std::endl;
         }
     }
 }
@@ -430,10 +436,10 @@ TEST_F(DragBehaviorTest, SnapPoints_DistributeCorrectly) {
 
     for (const auto& [edgeId, edgeLayout] : result.edgeLayouts()) {
         if (edgeLayout.to == running_) {
-            std::cout << "Incoming to Running: snapIndex=" << edgeLayout.targetSnapIndex << std::endl;
+            std::cout << "Incoming to Running: targetPoint=(" << edgeLayout.targetPoint.x << "," << edgeLayout.targetPoint.y << ")" << std::endl;
         }
         if (edgeLayout.from == running_) {
-            std::cout << "Outgoing from Running: snapIndex=" << edgeLayout.sourceSnapIndex << std::endl;
+            std::cout << "Outgoing from Running: sourcePoint=(" << edgeLayout.sourcePoint.x << "," << edgeLayout.sourcePoint.y << ")" << std::endl;
         }
     }
 }
@@ -490,8 +496,8 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
             };
 
             std::cout << "  " << nodeName(edgeLayout.from) << " -> " << nodeName(edgeLayout.to)
-                      << ": src=" << edgeSide(edgeLayout.sourceEdge) << "[" << edgeLayout.sourceSnapIndex << "]"
-                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << "[" << edgeLayout.targetSnapIndex << "]"
+                      << ": src=" << edgeSide(edgeLayout.sourceEdge) << " at (" << edgeLayout.sourcePoint.x << "," << edgeLayout.sourcePoint.y << ")"
+                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << " at (" << edgeLayout.targetPoint.x << "," << edgeLayout.targetPoint.y << ")"
                       << std::endl;
         }
     }
@@ -519,19 +525,20 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
     }
 
     // Step 2: Save ALL edge routing info
-    struct EdgeRoutingInfo {
+    // NOTE: snapIndex is no longer stored - use positions instead
+    struct LocalEdgeRoutingInfo {
         NodeEdge sourceEdge;
         NodeEdge targetEdge;
-        int sourceSnapIndex;
-        int targetSnapIndex;
+        Point sourcePoint;
+        Point targetPoint;
     };
-    std::unordered_map<EdgeId, EdgeRoutingInfo> savedEdgeRouting;
+    std::unordered_map<EdgeId, LocalEdgeRoutingInfo> savedEdgeRouting;
     for (const auto& [edgeId, edgeLayout] : edgeLayouts) {
         savedEdgeRouting[edgeId] = {
             edgeLayout.sourceEdge,
             edgeLayout.targetEdge,
-            edgeLayout.sourceSnapIndex,
-            edgeLayout.targetSnapIndex
+            edgeLayout.sourcePoint,
+            edgeLayout.targetPoint
         };
     }
 
@@ -560,8 +567,8 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
                 }
                 return "?";
             };
-            std::cout << "  src=" << edgeSide(edgeLayout.sourceEdge) << "[" << edgeLayout.sourceSnapIndex << "]"
-                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << "[" << edgeLayout.targetSnapIndex << "]"
+            std::cout << "  src=" << edgeSide(edgeLayout.sourceEdge) << " at (" << edgeLayout.sourcePoint.x << "," << edgeLayout.sourcePoint.y << ")"
+                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << " at (" << edgeLayout.targetPoint.x << "," << edgeLayout.targetPoint.y << ")"
                       << std::endl;
         }
     }
@@ -592,13 +599,13 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
                 }
                 return "?";
             };
-            std::cout << "  src=" << edgeSide(edgeLayout.sourceEdge) << "[" << edgeLayout.sourceSnapIndex << "]"
-                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << "[" << edgeLayout.targetSnapIndex << "]"
+            std::cout << "  src=" << edgeSide(edgeLayout.sourceEdge) << " at (" << edgeLayout.sourcePoint.x << "," << edgeLayout.sourcePoint.y << ")"
+                      << ", tgt=" << edgeSide(edgeLayout.targetEdge) << " at (" << edgeLayout.targetPoint.x << "," << edgeLayout.targetPoint.y << ")"
                       << std::endl;
         }
     }
 
-    // Verify edge routing: directions preserved, indices valid (fixed grid-based)
+    // Verify edge routing: directions preserved, positions valid (snap indices computed from positions)
     const float gridSize = 10.0f;
     for (const auto& [edgeId, edgeLayout] : edgeLayouts) {
         if (edgeLayout.from == error_ || edgeLayout.to == error_) {
@@ -606,21 +613,27 @@ TEST_F(DragBehaviorTest, Drag_DemoSimulation_WorksCorrectly) {
             EXPECT_EQ(edgeLayout.sourceEdge, savedEdgeRouting[edgeId].sourceEdge);
             EXPECT_EQ(edgeLayout.targetEdge, savedEdgeRouting[edgeId].targetEdge);
             
-            // Snap indices must be valid (>= 0 and < candidateCount based on fixed grid)
+            // Snap indices computed from positions must be valid (>= 0 and < candidateCount)
             const NodeLayout& srcNode = nodeLayouts[edgeLayout.from];
             const NodeLayout& tgtNode = nodeLayouts[edgeLayout.to];
             int srcCandidateCount = getFixedSnapPointCount(srcNode, edgeLayout.sourceEdge, gridSize);
             int tgtCandidateCount = getFixedSnapPointCount(tgtNode, edgeLayout.targetEdge, gridSize);
             
-            EXPECT_GE(edgeLayout.sourceSnapIndex, 0)
-                << "Edge " << edgeId << " sourceSnapIndex is negative";
-            EXPECT_LT(edgeLayout.sourceSnapIndex, srcCandidateCount)
-                << "Edge " << edgeId << " sourceSnapIndex=" << edgeLayout.sourceSnapIndex
+            // Compute snap indices from positions
+            int srcSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                srcNode, edgeLayout.sourceEdge, edgeLayout.sourcePoint, gridSize);
+            int tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                tgtNode, edgeLayout.targetEdge, edgeLayout.targetPoint, gridSize);
+            
+            EXPECT_GE(srcSnapIdx, 0)
+                << "Edge " << edgeId << " sourceSnapIndex (computed) is negative";
+            EXPECT_LT(srcSnapIdx, srcCandidateCount)
+                << "Edge " << edgeId << " sourceSnapIndex=" << srcSnapIdx
                 << " >= srcCandidateCount=" << srcCandidateCount;
-            EXPECT_GE(edgeLayout.targetSnapIndex, 0)
-                << "Edge " << edgeId << " targetSnapIndex is negative";
-            EXPECT_LT(edgeLayout.targetSnapIndex, tgtCandidateCount)
-                << "Edge " << edgeId << " targetSnapIndex=" << edgeLayout.targetSnapIndex
+            EXPECT_GE(tgtSnapIdx, 0)
+                << "Edge " << edgeId << " targetSnapIndex (computed) is negative";
+            EXPECT_LT(tgtSnapIdx, tgtCandidateCount)
+                << "Edge " << edgeId << " targetSnapIndex=" << tgtSnapIdx
                 << " >= tgtCandidateCount=" << tgtCandidateCount;
         }
     }
@@ -754,53 +767,11 @@ TEST_F(DragBehaviorTest, Snap_DuringDrag_PointsDontMerge) {
     }
 }
 
-// Test: Snap indices should not exceed count-1 (TDD - should fail first)
-TEST_F(DragBehaviorTest, Snap_Indices_AreNormalized) {
-    std::cout << "\n=== Snap Indices Normalization Test ===" << std::endl;
-
-    // Simulate the bug: an edge has snapIndex > count-1
-    // This can happen after multiple drags when indices get out of sync
-
-    NodeLayout idleNode;
-    idleNode.id = idle_;
-    idleNode.position = {50.0f, 0.0f};
-    idleNode.size = {100.0f, 50.0f};
-
-    // Simulate edge with stale index
-    EdgeLayout startEdge;
-    startEdge.id = e_start_;
-    startEdge.from = idle_;
-    startEdge.to = running_;
-    startEdge.sourceEdge = NodeEdge::Bottom;
-    startEdge.sourceSnapIndex = 1;  // BUG: index=1 but only 1 outgoing edge (should be 0)
-
-    // With count=1 and index=1, the calculation becomes:
-    // position = 0.5 + (1+1)/(1+1) * 0.5 = 1.0 (100% - off the edge!)
-
-    // Expected behavior: index should be clamped/normalized to valid range
-    int outCount = 1;
-    int idx = startEdge.sourceSnapIndex;
-
-    // Current buggy calculation
-    float buggyPosition = 0.5f + static_cast<float>(idx + 1) / static_cast<float>(outCount + 1) * 0.5f;
-    std::cout << "Buggy calculation: idx=" << idx << ", count=" << outCount
-              << ", position=" << buggyPosition << std::endl;
-
-    // Fixed calculation: normalize index to valid range
-    int normalizedIdx = std::min(idx, outCount - 1);
-    float fixedPosition = 0.5f + static_cast<float>(normalizedIdx + 1) / static_cast<float>(outCount + 1) * 0.5f;
-    std::cout << "Fixed calculation: normalizedIdx=" << normalizedIdx
-              << ", position=" << fixedPosition << std::endl;
-
-    // The position should be within valid range (0.0 to 1.0 for edges)
-    EXPECT_LE(buggyPosition, 1.0f) << "Buggy position exceeds edge boundary!";
-    EXPECT_GE(fixedPosition, 0.0f);
-    EXPECT_LE(fixedPosition, 1.0f);
-
-    // For a single outgoing edge, it should be at 75% (center of 50-100% range)
-    float expectedPosition = 0.75f;  // 0.5 + (0+1)/(1+1) * 0.5 = 0.75
-    EXPECT_NEAR(fixedPosition, expectedPosition, 0.01f);
-}
+// NOTE: Test `Snap_Indices_AreNormalized` was removed.
+// It tested the old bug where stored snapIndex could diverge from position.
+// After removing the snapIndex field from EdgeLayout, this bug class is eliminated
+// by architecture - there is no stored index that can become stale or invalid.
+// The position is now the Single Source of Truth, and snapIndex is computed when needed.
 
 // Test: Multiple drags should maintain valid snap indices
 TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
@@ -818,36 +789,39 @@ TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
     // Initial layout
     LayoutResult result = layout.layout(graph_);
 
-    // Store initial indices
-    std::unordered_map<EdgeId, std::pair<int, int>> initialIndices;
-    for (const auto& [edgeId, el] : result.edgeLayouts()) {
-        initialIndices[edgeId] = {el.sourceSnapIndex, el.targetSnapIndex};
-    }
+    // Helper to compute snap index from position
+    auto computeSnapIdx = [](const NodeLayout& node, NodeEdge edge, const Point& point, float gs) {
+        return GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gs);
+    };
 
-    // Verify all initial indices are within valid range
-    // snapIndex must be < candidateCount (fixed grid positions on node edge)
+    // Verify all initial positions yield valid snap indices
+    // computed snapIndex must be >= 0 (on a valid grid point)
     const float gridSize = 10.0f;  // Default PATHFINDING_GRID_SIZE
-    std::cout << "Checking initial indices (candidateCount basis)..." << std::endl;
+    std::cout << "Checking initial positions (computed indices)..." << std::endl;
     for (const auto& [edgeId, el] : result.edgeLayouts()) {
-        // Get node layouts to calculate candidate count
+        // Get node layouts to calculate candidate count and snap index
         const NodeLayout* srcNode = result.getNodeLayout(el.from);
         const NodeLayout* tgtNode = result.getNodeLayout(el.to);
         ASSERT_NE(srcNode, nullptr);
         ASSERT_NE(tgtNode, nullptr);
 
+        // Compute snap indices from positions
+        int srcSnapIdx = computeSnapIdx(*srcNode, el.sourceEdge, el.sourcePoint, gridSize);
+        int tgtSnapIdx = computeSnapIdx(*tgtNode, el.targetEdge, el.targetPoint, gridSize);
+
         // Calculate fixed candidate count for each node edge
         int srcCandidateCount = getFixedSnapPointCount(*srcNode, el.sourceEdge, gridSize);
         int tgtCandidateCount = getFixedSnapPointCount(*tgtNode, el.targetEdge, gridSize);
 
-        EXPECT_GE(el.sourceSnapIndex, 0)
-            << "Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex << " is negative";
-        EXPECT_LT(el.sourceSnapIndex, srcCandidateCount)
-            << "Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex
+        EXPECT_GE(srcSnapIdx, 0)
+            << "Edge " << edgeId << " sourceSnapIndex (computed)=" << srcSnapIdx << " is negative";
+        EXPECT_LT(srcSnapIdx, srcCandidateCount)
+            << "Edge " << edgeId << " sourceSnapIndex (computed)=" << srcSnapIdx
             << " >= srcCandidateCount=" << srcCandidateCount;
-        EXPECT_GE(el.targetSnapIndex, 0)
-            << "Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex << " is negative";
-        EXPECT_LT(el.targetSnapIndex, tgtCandidateCount)
-            << "Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex
+        EXPECT_GE(tgtSnapIdx, 0)
+            << "Edge " << edgeId << " targetSnapIndex (computed)=" << tgtSnapIdx << " is negative";
+        EXPECT_LT(tgtSnapIdx, tgtCandidateCount)
+            << "Edge " << edgeId << " targetSnapIndex (computed)=" << tgtSnapIdx
             << " >= tgtCandidateCount=" << tgtCandidateCount;
     }
 
@@ -862,31 +836,35 @@ TEST_F(DragBehaviorTest, Snap_MultiDrag_MaintainsValidIndices) {
 
         result = layout.layout(graph_);
 
-        // After each drag, verify indices are still valid (candidateCount basis)
+        // After each drag, verify computed indices are still valid
         for (const auto& [edgeId, el] : result.edgeLayouts()) {
-            // Get node layouts to calculate candidate count
+            // Get node layouts to calculate candidate count and snap index
             const NodeLayout* srcNode = result.getNodeLayout(el.from);
             const NodeLayout* tgtNode = result.getNodeLayout(el.to);
             ASSERT_NE(srcNode, nullptr);
             ASSERT_NE(tgtNode, nullptr);
 
+            // Compute snap indices from positions
+            int srcSnapIdx = computeSnapIdx(*srcNode, el.sourceEdge, el.sourcePoint, gridSize);
+            int tgtSnapIdx = computeSnapIdx(*tgtNode, el.targetEdge, el.targetPoint, gridSize);
+
             // Calculate fixed candidate count for each node edge
             int srcCandidateCount = getFixedSnapPointCount(*srcNode, el.sourceEdge, gridSize);
             int tgtCandidateCount = getFixedSnapPointCount(*tgtNode, el.targetEdge, gridSize);
 
-            EXPECT_GE(el.sourceSnapIndex, 0)
+            EXPECT_GE(srcSnapIdx, 0)
                 << "After dragging node " << dragNode
-                << ", Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex << " is negative";
-            EXPECT_LT(el.sourceSnapIndex, srcCandidateCount)
+                << ", Edge " << edgeId << " sourceSnapIndex (computed)=" << srcSnapIdx << " is negative";
+            EXPECT_LT(srcSnapIdx, srcCandidateCount)
                 << "After dragging node " << dragNode
-                << ", Edge " << edgeId << " sourceSnapIndex=" << el.sourceSnapIndex
+                << ", Edge " << edgeId << " sourceSnapIndex (computed)=" << srcSnapIdx
                 << " >= srcCandidateCount=" << srcCandidateCount;
-            EXPECT_GE(el.targetSnapIndex, 0)
+            EXPECT_GE(tgtSnapIdx, 0)
                 << "After dragging node " << dragNode
-                << ", Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex << " is negative";
-            EXPECT_LT(el.targetSnapIndex, tgtCandidateCount)
+                << ", Edge " << edgeId << " targetSnapIndex (computed)=" << tgtSnapIdx << " is negative";
+            EXPECT_LT(tgtSnapIdx, tgtCandidateCount)
                 << "After dragging node " << dragNode
-                << ", Edge " << edgeId << " targetSnapIndex=" << el.targetSnapIndex
+                << ", Edge " << edgeId << " targetSnapIndex (computed)=" << tgtSnapIdx
                 << " >= tgtCandidateCount=" << tgtCandidateCount;
         }
     }
@@ -980,8 +958,17 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
     struct SnapInfo {
         EdgeId edgeId;
         bool isSource;  // true = outgoing from Running, false = incoming to Running
-        int snapIndex;
+        int snapIndex;  // Computed from position
         float xPosition;
+    };
+
+    const float gridSize = 10.0f;  // Default grid size
+
+    // Helper to compute snap index from position
+    auto getSnapIdx = [&](NodeId nodeId, NodeEdge edge, const Point& point) {
+        auto it = nodeLayouts.find(nodeId);
+        if (it == nodeLayouts.end()) return -1;
+        return GridSnapCalculator::getCandidateIndexFromPosition(it->second, edge, point, gridSize);
     };
 
     std::vector<SnapInfo> initialOrder;
@@ -989,13 +976,15 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
 
     for (const auto& [edgeId, el] : edgeLayouts) {
         if (el.from == running_ && el.sourceEdge == NodeEdge::Bottom) {
-            initialOrder.push_back({edgeId, true, el.sourceSnapIndex, el.sourcePoint.x});
-            std::cout << "  Outgoing edge " << edgeId << ": snapIdx=" << el.sourceSnapIndex
+            int snapIdx = getSnapIdx(running_, el.sourceEdge, el.sourcePoint);
+            initialOrder.push_back({edgeId, true, snapIdx, el.sourcePoint.x});
+            std::cout << "  Outgoing edge " << edgeId << ": snapIdx=" << snapIdx
                       << ", x=" << el.sourcePoint.x << std::endl;
         }
         if (el.to == running_ && el.targetEdge == NodeEdge::Bottom) {
-            initialOrder.push_back({edgeId, false, el.targetSnapIndex, el.targetPoint.x});
-            std::cout << "  Incoming edge " << edgeId << ": snapIdx=" << el.targetSnapIndex
+            int snapIdx = getSnapIdx(running_, el.targetEdge, el.targetPoint);
+            initialOrder.push_back({edgeId, false, snapIdx, el.targetPoint.x});
+            std::cout << "  Incoming edge " << edgeId << ": snapIdx=" << snapIdx
                       << ", x=" << el.targetPoint.x << std::endl;
         }
     }
@@ -1037,13 +1026,15 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
 
     for (const auto& [edgeId, el] : edgeLayouts) {
         if (el.from == running_ && el.sourceEdge == NodeEdge::Bottom) {
-            afterOrder.push_back({edgeId, true, el.sourceSnapIndex, el.sourcePoint.x});
-            std::cout << "  Outgoing edge " << edgeId << ": snapIdx=" << el.sourceSnapIndex
+            int snapIdx = getSnapIdx(running_, el.sourceEdge, el.sourcePoint);
+            afterOrder.push_back({edgeId, true, snapIdx, el.sourcePoint.x});
+            std::cout << "  Outgoing edge " << edgeId << ": snapIdx=" << snapIdx
                       << ", x=" << el.sourcePoint.x << std::endl;
         }
         if (el.to == running_ && el.targetEdge == NodeEdge::Bottom) {
-            afterOrder.push_back({edgeId, false, el.targetSnapIndex, el.targetPoint.x});
-            std::cout << "  Incoming edge " << edgeId << ": snapIdx=" << el.targetSnapIndex
+            int snapIdx = getSnapIdx(running_, el.targetEdge, el.targetPoint);
+            afterOrder.push_back({edgeId, false, snapIdx, el.targetPoint.x});
+            std::cout << "  Incoming edge " << edgeId << ": snapIdx=" << snapIdx
                       << ", x=" << el.targetPoint.x << std::endl;
         }
     }
@@ -1067,7 +1058,7 @@ TEST_F(DragBehaviorTest, Mode_Unified_SnapOrderPreserved) {
     // 1. All indices are now valid (>= 0)
     // 2. Edges that had valid initial indices preserve their relative order
     
-    const float gridSize = 10.0f;
+    // gridSize already declared above
     const NodeLayout& runningNode = nodeLayouts[running_];
     int candidateCount = getFixedSnapPointCount(runningNode, NodeEdge::Bottom, gridSize);
 

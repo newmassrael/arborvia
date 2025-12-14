@@ -91,12 +91,11 @@ std::vector<int> GridSnapCalculator::selectCandidateIndices(
             indices.push_back(idx);
         }
     } else {
-        // Fewer connections than candidates: distribute evenly among candidates
-        // Use formula that spreads connections evenly across the available candidates
-        int divisor = connectionCount + 1;
+        // Fewer connections than candidates: consecutive allocation, center-aligned
+        // This ensures visual position matches index number (no gaps like [2,3,5,6])
+        int start = (candidateCount - connectionCount) / 2;
         for (int i = 0; i < connectionCount; ++i) {
-            int idx = ((candidateCount - 1) * (i + 1) * 2 + divisor) / (2 * divisor);
-            indices.push_back(idx);
+            indices.push_back(start + i);
         }
     }
     return indices;

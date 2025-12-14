@@ -2,8 +2,10 @@
 #include <arborvia/arborvia.h>
 #include <arborvia/layout/api/LayoutController.h>
 #include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
+#include "../../../src/layout/snap/GridSnapCalculator.h"
 #include <sstream>
 #include <iomanip>
+#include <cmath>
 
 using namespace arborvia;
 using namespace arborvia;
@@ -180,7 +182,9 @@ TEST(EdgeRoutingTransitionTest, IdleToRunning_FirstBendPointOutsideNodes) {
     // Focus on edge 0: idle → running
     const EdgeLayout* edgeLayout = result.getEdgeLayout(e0);
     ASSERT_NE(edgeLayout, nullptr);
-    ASSERT_GE(edgeLayout->bendPoints.size(), 1) << "Edge should have at least one bend point";
+    
+    // Edge may have bend points OR be a direct vertical/horizontal connection
+    // A direct connection (no bends) is valid and actually preferred when possible
 
     // Get node positions
     const NodeLayout* idleNode = result.getNodeLayout(idle);
@@ -213,38 +217,51 @@ TEST(EdgeRoutingTransitionTest, IdleToRunning_FirstBendPointOutsideNodes) {
     float runningTop = runningNode->position.y;
     float runningBottom = runningNode->position.y + runningNode->size.height;
 
-    // Check FIRST bend point: must be outside BOTH idle and running nodes
-    const Point& firstBend = edgeLayout->bendPoints[0].position;
+    // Check bend points if they exist
+    if (edgeLayout->bendPoints.empty()) {
+        // Direct connection (no bends) - verify it's a valid orthogonal connection
+        float dx = std::abs(edgeLayout->sourcePoint.x - edgeLayout->targetPoint.x);
+        float dy = std::abs(edgeLayout->sourcePoint.y - edgeLayout->targetPoint.y);
+        bool isVertical = (dx < 0.1f);
+        bool isHorizontal = (dy < 0.1f);
+        EXPECT_TRUE(isVertical || isHorizontal)
+            << "Direct connection (no bends) must be orthogonal! "
+            << "Source: (" << edgeLayout->sourcePoint.x << ", " << edgeLayout->sourcePoint.y << ") "
+            << "Target: (" << edgeLayout->targetPoint.x << ", " << edgeLayout->targetPoint.y << ")";
+    } else {
+        // Check FIRST bend point: must be outside BOTH idle and running nodes
+        const Point& firstBend = edgeLayout->bendPoints[0].position;
 
-    bool firstBendInsideIdle = (firstBend.x >= idleLeft && firstBend.x <= idleRight &&
-                                firstBend.y >= idleTop && firstBend.y <= idleBottom);
-    bool firstBendInsideRunning = (firstBend.x >= runningLeft && firstBend.x <= runningRight &&
-                                   firstBend.y >= runningTop && firstBend.y <= runningBottom);
+        bool firstBendInsideIdle = (firstBend.x >= idleLeft && firstBend.x <= idleRight &&
+                                    firstBend.y >= idleTop && firstBend.y <= idleBottom);
+        bool firstBendInsideRunning = (firstBend.x >= runningLeft && firstBend.x <= runningRight &&
+                                       firstBend.y >= runningTop && firstBend.y <= runningBottom);
 
-    // First bend point must be OUTSIDE idle (source node)
-    EXPECT_FALSE(firstBendInsideIdle)
-        << "First bend point (" << firstBend.x << ", " << firstBend.y << ") is INSIDE idle node! "
-        << "Idle bounds: x[" << idleLeft << "," << idleRight << "] y[" << idleTop << "," << idleBottom << "]";
+        // First bend point must be OUTSIDE idle (source node)
+        EXPECT_FALSE(firstBendInsideIdle)
+            << "First bend point (" << firstBend.x << ", " << firstBend.y << ") is INSIDE idle node! "
+            << "Idle bounds: x[" << idleLeft << "," << idleRight << "] y[" << idleTop << "," << idleBottom << "]";
 
-    // First bend point must be OUTSIDE running too
-    EXPECT_FALSE(firstBendInsideRunning)
-        << "First bend point (" << firstBend.x << ", " << firstBend.y << ") is INSIDE running node! "
-        << "Running bounds: x[" << runningLeft << "," << runningRight << "] y[" << runningTop << "," << runningBottom << "]";
+        // First bend point must be OUTSIDE running too
+        EXPECT_FALSE(firstBendInsideRunning)
+            << "First bend point (" << firstBend.x << ", " << firstBend.y << ") is INSIDE running node! "
+            << "Running bounds: x[" << runningLeft << "," << runningRight << "] y[" << runningTop << "," << runningBottom << "]";
 
-    // Check SECOND bend point
-    if (edgeLayout->bendPoints.size() >= 2) {
-        const Point& secondBend = edgeLayout->bendPoints[1].position;
+        // Check SECOND bend point
+        if (edgeLayout->bendPoints.size() >= 2) {
+            const Point& secondBend = edgeLayout->bendPoints[1].position;
 
-        bool secondBendInsideIdle = (secondBend.x >= idleLeft && secondBend.x <= idleRight &&
-                                    secondBend.y >= idleTop && secondBend.y <= idleBottom);
-        bool secondBendInsideRunning = (secondBend.x >= runningLeft && secondBend.x <= runningRight &&
-                                       secondBend.y >= runningTop && secondBend.y <= runningBottom);
+            bool secondBendInsideIdle = (secondBend.x >= idleLeft && secondBend.x <= idleRight &&
+                                        secondBend.y >= idleTop && secondBend.y <= idleBottom);
+            bool secondBendInsideRunning = (secondBend.x >= runningLeft && secondBend.x <= runningRight &&
+                                           secondBend.y >= runningTop && secondBend.y <= runningBottom);
 
-        EXPECT_FALSE(secondBendInsideIdle)
-            << "Second bend point (" << secondBend.x << ", " << secondBend.y << ") is INSIDE idle node!";
+            EXPECT_FALSE(secondBendInsideIdle)
+                << "Second bend point (" << secondBend.x << ", " << secondBend.y << ") is INSIDE idle node!";
 
-        EXPECT_FALSE(secondBendInsideRunning)
-            << "Second bend point (" << secondBend.x << ", " << secondBend.y << ") is INSIDE running node!";
+            EXPECT_FALSE(secondBendInsideRunning)
+                << "Second bend point (" << secondBend.x << ", " << secondBend.y << ") is INSIDE running node!";
+        }
     }
 }
 
@@ -3732,8 +3749,7 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0RightEdge_TwoTransitions) {
     e0.to = NodeId{1};
     e0.sourceEdge = NodeEdge::Right;  // Node 0's RIGHT edge
     e0.targetEdge = NodeEdge::Left;
-    e0.sourceSnapIndex = 0;  // Bug: same as Edge 6
-    e0.targetSnapIndex = 1;
+    // NOTE: snapIndex is no longer stored - computed from position
     e0.sourcePoint = {180, 100};
     e0.targetPoint = {280, 620};
     edgeLayouts[EdgeId{0}] = e0;
@@ -3745,16 +3761,22 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0RightEdge_TwoTransitions) {
     e6.to = NodeId{0};
     e6.sourceEdge = NodeEdge::Left;
     e6.targetEdge = NodeEdge::Right;  // Node 0's RIGHT edge
-    e6.sourceSnapIndex = 0;
-    e6.targetSnapIndex = 0;  // Bug: same as Edge 0
+    // NOTE: snapIndex is no longer stored - computed from position
     e6.sourcePoint = {360, 240};
     e6.targetPoint = {180, 100};  // Same as e0.sourcePoint!
     edgeLayouts[EdgeId{6}] = e6;
 
+    // Helper to compute snap index from position
+    auto computeSnapIdx = [&](NodeId nodeId, NodeEdge edge, const Point& point) {
+        auto it = nodeLayouts.find(nodeId);
+        if (it == nodeLayouts.end()) return -1;
+        return GridSnapCalculator::getCandidateIndexFromPosition(it->second, edge, point, 20.0f);
+    };
+
     std::cout << "\n===== NODE 0 RIGHT EDGE BUG TEST =====\n";
-    std::cout << "Initial state (both have snapIndex=0 - this is the bug!):\n";
-    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
-    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "Initial state (both at same position - this is the bug!):\n";
+    std::cout << "  Edge 0 sourceSnapIndex (computed): " << computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{0}].sourceEdge, edgeLayouts[EdgeId{0}].sourcePoint) << "\n";
+    std::cout << "  Edge 6 targetSnapIndex (computed): " << computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{6}].targetEdge, edgeLayouts[EdgeId{6}].targetPoint) << "\n";
     std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
               << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
     std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
@@ -3769,15 +3791,17 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0RightEdge_TwoTransitions) {
     LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
 
     std::cout << "After redistribution:\n";
-    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
-    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    int e0SnapIdx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{0}].sourceEdge, edgeLayouts[EdgeId{0}].sourcePoint);
+    int e6SnapIdx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{6}].targetEdge, edgeLayouts[EdgeId{6}].targetPoint);
+    std::cout << "  Edge 0 sourceSnapIndex (computed): " << e0SnapIdx << "\n";
+    std::cout << "  Edge 6 targetSnapIndex (computed): " << e6SnapIdx << "\n";
     std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
               << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
     std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
               << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
     std::cout << "======================================\n";
 
-    EXPECT_NE(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
+    EXPECT_NE(e0SnapIdx, e6SnapIdx)
         << "Edge 0 and Edge 6 should have different snap indices on node 0's right edge!";
 
     // Also verify the points are different
@@ -3810,8 +3834,7 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge_UserScenario
     e2.to = NodeId{1};
     e2.sourceEdge = NodeEdge::Left;
     e2.targetEdge = NodeEdge::Right;  // Node 1's RIGHT edge
-    e2.sourceSnapIndex = 0;
-    e2.targetSnapIndex = 0;  // This is the problematic duplicate!
+    // NOTE: snapIndex is no longer stored - computed from position
     e2.sourcePoint = {580, 620};
     e2.targetPoint = {120, 520};
     edgeLayouts[EdgeId{2}] = e2;
@@ -3823,8 +3846,7 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge_UserScenario
     e5.to = NodeId{4};
     e5.sourceEdge = NodeEdge::Right;  // Node 1's RIGHT edge
     e5.targetEdge = NodeEdge::Bottom;
-    e5.sourceSnapIndex = 0;  // This is the problematic duplicate!
-    e5.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     e5.sourcePoint = {120, 520};  // Same position as e2.targetPoint!
     e5.targetPoint = {580, 380};
     edgeLayouts[EdgeId{5}] = e5;
@@ -3839,16 +3861,19 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge_UserScenario
     std::vector<EdgeId> allEdges = {EdgeId{2}, EdgeId{5}};
     std::unordered_set<NodeId> movedNodes;  // All nodes
 
-    // Force redistribution by setting snap indices to -1
-    edgeLayouts[EdgeId{2}].targetSnapIndex = -1;
-    edgeLayouts[EdgeId{5}].sourceSnapIndex = -1;
+    // NOTE: snapIndex is no longer stored - computed from position as needed
 
     float gridSize = 20.0f;
     LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, gridSize);
 
-    // After update, snap indices should be different
-    int e2TargetIdx = edgeLayouts[EdgeId{2}].targetSnapIndex;
-    int e5SourceIdx = edgeLayouts[EdgeId{5}].sourceSnapIndex;
+    // After update, compute snap indices from positions - they should be different
+    auto computeIdx = [&](NodeId nodeId, NodeEdge edge, const Point& point) {
+        auto it = nodeLayouts.find(nodeId);
+        if (it == nodeLayouts.end()) return -1;
+        return GridSnapCalculator::getCandidateIndexFromPosition(it->second, edge, point, gridSize);
+    };
+    int e2TargetIdx = computeIdx(NodeId{1}, edgeLayouts[EdgeId{2}].targetEdge, edgeLayouts[EdgeId{2}].targetPoint);
+    int e5SourceIdx = computeIdx(NodeId{1}, edgeLayouts[EdgeId{5}].sourceEdge, edgeLayouts[EdgeId{5}].sourcePoint);
 
     std::cout << "\n===== AFTER UPDATE =====\n";
     std::cout << "Edge 2 targetSnapIndex: " << e2TargetIdx << "\n";
@@ -3934,20 +3959,29 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_MustBeUniquePerNodeEdge) {
     LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
 
     // === Validate snap index uniqueness ===
-    // Build map: (nodeId, nodeEdge) -> list of snap indices
+    // Build map: (nodeId, nodeEdge) -> list of snap indices (computed from positions)
     std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, int>>> snapIndexMap;
+
+    // Helper to compute snap index from position
+    auto computeSnapIndex = [&](NodeId nodeId, NodeEdge edge, const Point& point) {
+        auto it = nodeLayouts.find(nodeId);
+        if (it == nodeLayouts.end()) return -1;
+        return GridSnapCalculator::getCandidateIndexFromPosition(it->second, edge, point, 20.0f);
+    };
 
     for (const auto& [edgeId, layout] : edgeLayouts) {
         // Skip self-loops for this validation
         if (layout.from == layout.to) continue;
 
-        // Source side
+        // Source side - compute snap index from position
         auto sourceKey = std::make_pair(layout.from, layout.sourceEdge);
-        snapIndexMap[sourceKey].push_back({edgeId, layout.sourceSnapIndex});
+        int srcIdx = computeSnapIndex(layout.from, layout.sourceEdge, layout.sourcePoint);
+        snapIndexMap[sourceKey].push_back({edgeId, srcIdx});
 
-        // Target side
+        // Target side - compute snap index from position
         auto targetKey = std::make_pair(layout.to, layout.targetEdge);
-        snapIndexMap[targetKey].push_back({edgeId, layout.targetSnapIndex});
+        int tgtIdx = computeSnapIndex(layout.to, layout.targetEdge, layout.targetPoint);
+        snapIndexMap[targetKey].push_back({edgeId, tgtIdx});
     }
 
     // Check for duplicates
@@ -4007,8 +4041,7 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0LeftEdge_TwoTransitions) {
     e0.to = NodeId{1};
     e0.sourceEdge = NodeEdge::Left;  // Node 0's LEFT edge
     e0.targetEdge = NodeEdge::Right;
-    e0.sourceSnapIndex = 0;  // Bug: same as Edge 6
-    e0.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     e0.sourcePoint = {540, 400};
     e0.targetPoint = {120, 520};
     edgeLayouts[EdgeId{0}] = e0;
@@ -4020,24 +4053,31 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0LeftEdge_TwoTransitions) {
     e6.to = NodeId{0};
     e6.sourceEdge = NodeEdge::Top;
     e6.targetEdge = NodeEdge::Left;  // Node 0's LEFT edge
-    e6.sourceSnapIndex = 0;
-    e6.targetSnapIndex = 0;  // Bug: same as Edge 0
+    // NOTE: snapIndex is no longer stored - computed from position
     e6.sourcePoint = {460, 620};
     e6.targetPoint = {540, 380};  // Same edge as e0.sourcePoint!
     edgeLayouts[EdgeId{6}] = e6;
 
+    // Helper to compute snap index from position
+    auto computeSnapIdx = [&](NodeId nodeId, NodeEdge edge, const Point& point) {
+        auto it = nodeLayouts.find(nodeId);
+        if (it == nodeLayouts.end()) return -1;
+        return GridSnapCalculator::getCandidateIndexFromPosition(it->second, edge, point, 20.0f);
+    };
+
     std::cout << "\n===== NODE 0 LEFT EDGE BUG TEST =====\n";
-    std::cout << "Initial state (both have snapIndex=0 - this is the bug!):\n";
-    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
-    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    std::cout << "Initial state (both at same position - this is the bug!):\n";
+    int initE0Idx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{0}].sourceEdge, edgeLayouts[EdgeId{0}].sourcePoint);
+    int initE6Idx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{6}].targetEdge, edgeLayouts[EdgeId{6}].targetPoint);
+    std::cout << "  Edge 0 sourceSnapIndex (computed): " << initE0Idx << "\n";
+    std::cout << "  Edge 6 targetSnapIndex (computed): " << initE6Idx << "\n";
     std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
               << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
     std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
               << edgeLayouts[EdgeId{6}].targetPoint.y << ")\n";
 
-    // Verify the bug exists before fix
-    EXPECT_EQ(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
-        << "Bug verification: both should initially have same snapIndex=0";
+    // NOTE: Since positions are set explicitly in test, they may or may not have same computed index
+    // The real test is whether updateEdgePositions redistributes them correctly
 
     // To trigger redistribution, the affected node must be in movedNodes
     std::vector<EdgeId> allEdges = {EdgeId{0}, EdgeId{6}};
@@ -4046,8 +4086,10 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0LeftEdge_TwoTransitions) {
     LayoutUtils::updateEdgePositions(edgeLayouts, nodeLayouts, allEdges, movedNodes, 20.0f);
 
     std::cout << "After redistribution:\n";
-    std::cout << "  Edge 0 sourceSnapIndex: " << edgeLayouts[EdgeId{0}].sourceSnapIndex << "\n";
-    std::cout << "  Edge 6 targetSnapIndex: " << edgeLayouts[EdgeId{6}].targetSnapIndex << "\n";
+    int afterE0Idx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{0}].sourceEdge, edgeLayouts[EdgeId{0}].sourcePoint);
+    int afterE6Idx = computeSnapIdx(NodeId{0}, edgeLayouts[EdgeId{6}].targetEdge, edgeLayouts[EdgeId{6}].targetPoint);
+    std::cout << "  Edge 0 sourceSnapIndex (computed): " << afterE0Idx << "\n";
+    std::cout << "  Edge 6 targetSnapIndex (computed): " << afterE6Idx << "\n";
     std::cout << "  Edge 0 sourcePoint: (" << edgeLayouts[EdgeId{0}].sourcePoint.x << ", "
               << edgeLayouts[EdgeId{0}].sourcePoint.y << ")\n";
     std::cout << "  Edge 6 targetPoint: (" << edgeLayouts[EdgeId{6}].targetPoint.x << ", "
@@ -4055,7 +4097,7 @@ TEST(EdgeRoutingTransitionTest, SnapIndices_Node0LeftEdge_TwoTransitions) {
     std::cout << "======================================\n";
 
     // The core assertion: snap indices must be different
-    EXPECT_NE(edgeLayouts[EdgeId{0}].sourceSnapIndex, edgeLayouts[EdgeId{6}].targetSnapIndex)
+    EXPECT_NE(afterE0Idx, afterE6Idx)
         << "Edge 0 and Edge 6 should have different snap indices on node 0's LEFT edge!";
 
     // Also verify the points are different
@@ -4096,8 +4138,7 @@ TEST(EdgeRoutingTransitionTest, OrthogonalRouting_BottomToTop_AllSegmentsOrthogo
     edge.to = NodeId{1};
     edge.sourceEdge = NodeEdge::Bottom;
     edge.targetEdge = NodeEdge::Top;
-    edge.sourceSnapIndex = 0;
-    edge.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     
     // Source: bottom center of idle = (80+20, 80+20) = (100, 100)
     edge.sourcePoint = {100.0f, 100.0f};
@@ -4221,8 +4262,7 @@ TEST(EdgeRoutingTransitionTest, OrthogonalRouting_EmptyBendPoints_DirectDiagonal
     edge.to = NodeId{3};
     edge.sourceEdge = NodeEdge::Bottom;
     edge.targetEdge = NodeEdge::Top;
-    edge.sourceSnapIndex = 0;
-    edge.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     
     // From JSON: sourcePoint (100, 500), targetPoint (60, 600)
     edge.sourcePoint = {100.0f, 500.0f};
@@ -4305,8 +4345,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge4_PausedToStopped_Diagonal) 
     edge4.to = NodeId{3};    // stopped
     edge4.sourceEdge = NodeEdge::Bottom;
     edge4.targetEdge = NodeEdge::Top;
-    edge4.sourceSnapIndex = 0;
-    edge4.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     edge4.sourcePoint = {100.0f, 500.0f};  // bottom center of paused
     edge4.targetPoint = {60.0f, 600.0f};   // WRONG: should be aligned or have bends
     // bendPoints is empty - THIS IS THE BUG
@@ -4758,8 +4797,7 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_StartAndPause_NoOverlap) {
     e0.to = NodeId{1};
     e0.sourceEdge = NodeEdge::Bottom;
     e0.targetEdge = NodeEdge::Top;
-    e0.sourceSnapIndex = -1;  // Force recalculation
-    e0.targetSnapIndex = -1;
+    // NOTE: snapIndex is no longer stored - computed from position
     e0.channelY = -1;
     edgeLayouts[EdgeId{0}] = e0;
     
@@ -4770,8 +4808,7 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_StartAndPause_NoOverlap) {
     e1.to = NodeId{2};
     e1.sourceEdge = NodeEdge::Top;  // Going UP first then around
     e1.targetEdge = NodeEdge::Right;
-    e1.sourceSnapIndex = -1;
-    e1.targetSnapIndex = -1;
+    // NOTE: snapIndex is no longer stored - computed from position
     e1.channelY = -1;
     edgeLayouts[EdgeId{1}] = e1;
     
@@ -4782,8 +4819,7 @@ TEST(EdgeRoutingTransitionTest, AfterDrag_StartAndPause_NoOverlap) {
     e2.to = NodeId{1};
     e2.sourceEdge = NodeEdge::Top;
     e2.targetEdge = NodeEdge::Bottom;
-    e2.sourceSnapIndex = -1;
-    e2.targetSnapIndex = -1;
+    // NOTE: snapIndex is no longer stored - computed from position
     edgeLayouts[EdgeId{2}] = e2;
     
     std::vector<EdgeId> allEdges = {EdgeId{0}, EdgeId{1}, EdgeId{2}};
@@ -4890,8 +4926,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge0_NoIdleNodePenetration) {
     e0Layout.to = running;
     e0Layout.sourceEdge = NodeEdge::Right;  // Exit from right side of idle
     e0Layout.targetEdge = NodeEdge::Left;   // Enter left side of running
-    e0Layout.sourceSnapIndex = 0;
-    e0Layout.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
 
     // Calculate source/target points
     // idle right edge at X=200, center Y=150
@@ -5174,4 +5209,101 @@ TEST(EdgeRoutingTransitionTest, DragNode_EdgeMustRemainOrthogonal) {
     EXPECT_TRUE(allOrthogonal)
         << "All edge segments must be orthogonal after drag!\n"
         << errorMsg.str();
+}
+
+// TDD Test: No duplicate snap positions on same NodeEdge
+// Two edges connecting to the same node edge must have different positions.
+// This prevents visual overlap where edges appear to share the same connection point.
+TEST(EdgeRoutingTransitionTest, SnapPosition_NoDuplicatesOnSameNodeEdge) {
+    // Create interactive demo graph (same as real usage)
+    Graph graph;
+    NodeId idle = graph.addNode(Size{200, 100}, "Idle");
+    NodeId running = graph.addNode(Size{200, 100}, "Running");
+    NodeId paused = graph.addNode(Size{200, 100}, "Paused");
+    NodeId stopped = graph.addNode(Size{200, 100}, "Stopped");
+    NodeId error = graph.addNode(Size{200, 100}, "Error");
+
+    EdgeId e0 = graph.addEdge(idle, running, "start");
+    EdgeId e1 = graph.addEdge(running, paused, "pause");
+    EdgeId e2 = graph.addEdge(paused, running, "resume");
+    EdgeId e3 = graph.addEdge(running, stopped, "stop");
+    EdgeId e4 = graph.addEdge(paused, stopped, "stop");
+    EdgeId e5 = graph.addEdge(running, error, "fail");
+    EdgeId e6 = graph.addEdge(error, idle, "reset");
+    EdgeId e7 = graph.addEdge(error, error, "retry");  // Self-loop
+
+    (void)e0; (void)e1; (void)e2; (void)e3; (void)e4; (void)e5; (void)e6; (void)e7;
+
+    // Run layout
+    SugiyamaLayout layoutAlgo;
+    LayoutOptions options;
+    options.gridConfig.cellSize = 30.0f;
+    layoutAlgo.setOptions(options);
+    LayoutResult result = layoutAlgo.layout(graph);
+
+    // Collect edge layouts
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    for (EdgeId eid : {e0, e1, e2, e3, e4, e5, e6, e7}) {
+        const EdgeLayout* el = result.getEdgeLayout(eid);
+        if (el) edgeLayouts[eid] = *el;
+    }
+
+    // Build map: (nodeId, nodeEdge) -> list of (edgeId, position)
+    // Each entry represents an edge endpoint connecting to that node edge
+    std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, Point>>> endpointsPerNodeEdge;
+
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        // Skip self-loops (they intentionally use adjacent edges, not same edge)
+        if (layout.from == layout.to) continue;
+
+        // Source endpoint
+        auto srcKey = std::make_pair(layout.from, layout.sourceEdge);
+        endpointsPerNodeEdge[srcKey].push_back({edgeId, layout.sourcePoint});
+
+        // Target endpoint
+        auto tgtKey = std::make_pair(layout.to, layout.targetEdge);
+        endpointsPerNodeEdge[tgtKey].push_back({edgeId, layout.targetPoint});
+    }
+
+    // Check for duplicates on each node edge
+    int duplicateCount = 0;
+    std::ostringstream errors;
+    const float tolerance = 0.5f;  // Position comparison tolerance
+
+    std::cout << "\n===== SNAP POSITION UNIQUENESS TEST =====\n";
+
+    for (const auto& [key, endpoints] : endpointsPerNodeEdge) {
+        if (endpoints.size() <= 1) continue;
+
+        auto [nodeId, nodeEdge] = key;
+        const char* edgeName = nodeEdge == NodeEdge::Top ? "Top" :
+                              nodeEdge == NodeEdge::Bottom ? "Bottom" :
+                              nodeEdge == NodeEdge::Left ? "Left" : "Right";
+
+        // Compare all pairs of endpoints on this node edge
+        for (size_t i = 0; i < endpoints.size(); ++i) {
+            for (size_t j = i + 1; j < endpoints.size(); ++j) {
+                const auto& [edgeIdA, posA] = endpoints[i];
+                const auto& [edgeIdB, posB] = endpoints[j];
+
+                bool samePosition = (std::abs(posA.x - posB.x) < tolerance &&
+                                    std::abs(posA.y - posB.y) < tolerance);
+
+                if (samePosition) {
+                    duplicateCount++;
+                    errors << "DUPLICATE: Node " << nodeId << " " << edgeName << " edge\n"
+                           << "  Edge " << edgeIdA << " at (" << posA.x << "," << posA.y << ")\n"
+                           << "  Edge " << edgeIdB << " at (" << posB.x << "," << posB.y << ")\n";
+                }
+            }
+        }
+    }
+
+    std::cout << errors.str();
+    std::cout << "Duplicate positions found: " << duplicateCount << "\n";
+    std::cout << "==========================================\n";
+
+    EXPECT_EQ(duplicateCount, 0)
+        << "No two edges should share the same snap position on a node edge!\n"
+        << errors.str();
 }

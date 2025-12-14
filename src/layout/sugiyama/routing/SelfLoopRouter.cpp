@@ -275,16 +275,12 @@ EdgeLayout SelfLoopRouter::route(
     layout.sourcePoint = {toPixel(gSrcX), toPixel(gSrcY)};
     layout.targetPoint = {toPixel(gTgtX), toPixel(gTgtY)};
     
-    // Calculate snap indices from positions to ensure consistency
-    // This is critical: snap indices must match the actual positions
-    layout.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-        nodeLayout, layout.sourceEdge, layout.sourcePoint, gridSize);
-    layout.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-        nodeLayout, layout.targetEdge, layout.targetPoint, gridSize);
+    // NOTE: snapIndex is no longer stored - computed from position as needed
+    // using GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gridSize)
     
-    LOG_DEBUG("[SNAP-TRACE] SelfLoopRouter::route edge={} SOURCE pos=({},{}) snapIdx={} TARGET pos=({},{}) snapIdx={}",
-              edgeId, layout.sourcePoint.x, layout.sourcePoint.y, layout.sourceSnapIndex,
-              layout.targetPoint.x, layout.targetPoint.y, layout.targetSnapIndex);
+    LOG_DEBUG("[SNAP-TRACE] SelfLoopRouter::route edge={} SOURCE pos=({},{}) TARGET pos=({},{})",
+              edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
+              layout.targetPoint.x, layout.targetPoint.y);
     
     layout.bendPoints.push_back({{toPixel(gBend1X), toPixel(gBend1Y)}});
     layout.bendPoints.push_back({{toPixel(gBend2X), toPixel(gBend2Y)}});

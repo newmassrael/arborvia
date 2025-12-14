@@ -127,10 +127,9 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     result[presult.edgeId] = presult.best.layout;
                     assignedLayouts[presult.edgeId] = presult.best.layout;
                     if (presult.isSelfLoop) {
-                        LOG_DEBUG("[SNAP-TRACE] PARALLEL SELFLOOP SAVED edge={} srcPos=({},{}) srcSnapIdx={} tgtPos=({},{}) tgtSnapIdx={}",
+                        LOG_DEBUG("[SNAP-TRACE] PARALLEL SELFLOOP SAVED edge={} srcPos=({},{}) tgtPos=({},{})",
                                   presult.edgeId, presult.best.layout.sourcePoint.x, presult.best.layout.sourcePoint.y, 
-                                  presult.best.layout.sourceSnapIndex, presult.best.layout.targetPoint.x, 
-                                  presult.best.layout.targetPoint.y, presult.best.layout.targetSnapIndex);
+                                  presult.best.layout.targetPoint.x, presult.best.layout.targetPoint.y);
                     }
                 } else {
                     // Mark as failed - will be processed in Phase 1.5
@@ -247,13 +246,13 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                         if (best.score > 0) anyOverlapFound = true;
                         result[edgeId] = best.layout;
                         assignedLayouts[edgeId] = best.layout;
-                        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer SELFLOOP SAVED edge={} srcPos=({},{}) srcSnapIdx={} tgtPos=({},{}) tgtSnapIdx={}",
-                                  edgeId, best.layout.sourcePoint.x, best.layout.sourcePoint.y, best.layout.sourceSnapIndex,
-                                  best.layout.targetPoint.x, best.layout.targetPoint.y, best.layout.targetSnapIndex);
+                        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer SELFLOOP SAVED edge={} srcPos=({},{}) tgtPos=({},{})",
+                                  edgeId, best.layout.sourcePoint.x, best.layout.sourcePoint.y,
+                                  best.layout.targetPoint.x, best.layout.targetPoint.y);
                     } else {
                         result[edgeId] = baseLayout;
                         assignedLayouts[edgeId] = baseLayout;
-                        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer SELFLOOP FALLBACK edge={} srcSnapIdx={}", edgeId, baseLayout.sourceSnapIndex);
+                        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer SELFLOOP FALLBACK edge={}", edgeId);
                     }
                     continue;
                 }
@@ -754,13 +753,7 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     candidate.targetEdge = targetEdge;
     candidate.bendPoints.clear();
 
-    // When edge routing changes, mark snap indices for redistribution
-    if (sourceEdge != base.sourceEdge) {
-        candidate.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-    }
-    if (targetEdge != base.targetEdge) {
-        candidate.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-    }
+    // NOTE: snapIndex is no longer stored - computed from position as needed
 
     // Get node layouts
     auto srcIt = nodeLayouts.find(base.from);
@@ -789,53 +782,33 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     if (srcFixed && sourceEdge == base.sourceEdge) {
         // Source is fixed - preserve existing position
         candidate.sourcePoint = base.sourcePoint;
-        candidate.sourceSnapIndex = base.sourceSnapIndex;  // Preserve snap index
         startGrid = {
             static_cast<int>(std::round(base.sourcePoint.x / gridSize)),
             static_cast<int>(std::round(base.sourcePoint.y / gridSize))
         };
-        // Verify preserved index matches position
-        int expectedIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-            srcIt->second, sourceEdge, base.sourcePoint, gridSize);
-        if (expectedIdx != base.sourceSnapIndex) {
-            LOG_DEBUG("[SNAP-TRACE] AStarOptimizer MISMATCH edge={} SOURCE preserved snapIdx={} but position ({},{}) should be idx={}",
-                      base.id, base.sourceSnapIndex, base.sourcePoint.x, base.sourcePoint.y, expectedIdx);
-        }
     } else {
         // Use canonical computation - perpendicular coordinate is exact node edge
         candidate.sourcePoint = GridSnapCalculator::computeSnapPointFromRatio(
             srcIt->second, sourceEdge, 0.5f, gridSize);
         startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
-        candidate.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-            srcIt->second, sourceEdge, candidate.sourcePoint, gridSize);
-        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} SOURCE recalculated pos=({},{}) snapIdx={}",
-                  base.id, candidate.sourcePoint.x, candidate.sourcePoint.y, candidate.sourceSnapIndex);
+        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} SOURCE recalculated pos=({},{})",
+                  base.id, candidate.sourcePoint.x, candidate.sourcePoint.y);
     }
     
     if (tgtFixed && targetEdge == base.targetEdge) {
         // Target is fixed - preserve existing position
         candidate.targetPoint = base.targetPoint;
-        candidate.targetSnapIndex = base.targetSnapIndex;  // Preserve snap index
         goalGrid = {
             static_cast<int>(std::round(base.targetPoint.x / gridSize)),
             static_cast<int>(std::round(base.targetPoint.y / gridSize))
         };
-        // Verify preserved index matches position
-        int expectedIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-            tgtIt->second, targetEdge, base.targetPoint, gridSize);
-        if (expectedIdx != base.targetSnapIndex) {
-            LOG_DEBUG("[SNAP-TRACE] AStarOptimizer MISMATCH edge={} TARGET preserved snapIdx={} but position ({},{}) should be idx={}",
-                      base.id, base.targetSnapIndex, base.targetPoint.x, base.targetPoint.y, expectedIdx);
-        }
     } else {
         // Use canonical computation - perpendicular coordinate is exact node edge
         candidate.targetPoint = GridSnapCalculator::computeSnapPointFromRatio(
             tgtIt->second, targetEdge, 0.5f, gridSize);
         goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
-        candidate.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-            tgtIt->second, targetEdge, candidate.targetPoint, gridSize);
-        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} TARGET recalculated pos=({},{}) snapIdx={}",
-                  base.id, candidate.targetPoint.x, candidate.targetPoint.y, candidate.targetSnapIndex);
+        LOG_DEBUG("[SNAP-TRACE] AStarOptimizer edge={} TARGET recalculated pos=({},{})",
+                  base.id, candidate.targetPoint.x, candidate.targetPoint.y);
     }
 
     // Use provided pathfinder (thread-safe)
@@ -1120,8 +1093,11 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         }
 
         if (result.success) {
-            // Only update bendPoints and usedGridSize, preserve everything else
+            // Update bendPoints and snap positions (may be changed by retry chain)
             layout.bendPoints = result.layout.bendPoints;
+            layout.sourcePoint = result.layout.sourcePoint;
+            layout.targetPoint = result.layout.targetPoint;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
             layout.usedGridSize = effectiveGridSize();  // Single Source of Truth
 
             // Update rerouted edges back to edgeLayouts (only bendPoints)
@@ -1155,24 +1131,34 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
     for (int iteration = 0; iteration < MAX_RIP_UP_ITERATIONS; ++iteration) {
         // Find edges that overlap with others
+        // IMPORTANT: Check ALL edges in edgeLayouts, not just input edges
+        // This catches overlaps when snap sync changes a path to overlap with
+        // an edge that wasn't in the original reroute list
         std::vector<EdgeId> dirtyEdges;
+        std::unordered_set<EdgeId> dirtySet;  // For deduplication
         
-        for (EdgeId edgeId : edges) {
-            auto it = edgeLayouts.find(edgeId);
-            if (it == edgeLayouts.end() || it->second.from == it->second.to) {
-                continue;
+        for (const auto& [edgeId, layout] : edgeLayouts) {
+            if (layout.from == layout.to) {
+                continue;  // Skip self-loops
             }
 
             // Check if this edge overlaps with any other assigned edge
-            if (PathIntersection::hasOverlapWithOthers(it->second, edgeLayouts, edgeId)) {
-                dirtyEdges.push_back(edgeId);
+            if (PathIntersection::hasOverlapWithOthers(layout, edgeLayouts, edgeId)) {
+                if (dirtySet.insert(edgeId).second) {
+                    dirtyEdges.push_back(edgeId);
+                }
             }
         }
 
         if (dirtyEdges.empty()) {
+            LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2 iteration {}: No overlaps found", iteration);
             break;  // No overlaps, we're done
         }
 
+        LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2 iteration {}: Found {} dirty edges", iteration, dirtyEdges.size());
+        for (EdgeId dId : dirtyEdges) {
+            LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2: dirty edge {}", dId);
+        }
 
         // Re-route dirty edges using UnifiedRetryChain
         for (EdgeId dirtyId : dirtyEdges) {
@@ -1490,8 +1476,8 @@ AStarEdgeOptimizer::evaluateSelfLoopCombinations(
         }
 
         int score = calculatePenalty(candidate, ctx);
-        LOG_DEBUG("[SNAP-TRACE] SelfLoop edge={} ACCEPTED srcPos=({},{}) snapIdx={} score={}",
-                  edgeId, candidate.sourcePoint.x, candidate.sourcePoint.y, candidate.sourceSnapIndex, score);
+        LOG_DEBUG("[SNAP-TRACE] SelfLoop edge={} ACCEPTED srcPos=({},{}) score={}",
+                  edgeId, candidate.sourcePoint.x, candidate.sourcePoint.y, score);
 
         // Map direction to source/target edges for CombinationResult
         NodeEdge srcEdge = candidate.sourceEdge;

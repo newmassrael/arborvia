@@ -186,12 +186,12 @@ std::string LayoutSerializer::toJson(const LayoutResult& result) {
         // Source snap point info
         edgeJson["sourcePoint"] = {{"x", layout.sourcePoint.x}, {"y", layout.sourcePoint.y}};
         edgeJson["sourceEdge"] = nodeEdgeToString(layout.sourceEdge);
-        edgeJson["sourceSnapIndex"] = layout.sourceSnapIndex;
+        // NOTE: sourceSnapIndex removed - compute from position using GridSnapCalculator
 
         // Target snap point info
         edgeJson["targetPoint"] = {{"x", layout.targetPoint.x}, {"y", layout.targetPoint.y}};
         edgeJson["targetEdge"] = nodeEdgeToString(layout.targetEdge);
-        edgeJson["targetSnapIndex"] = layout.targetSnapIndex;
+        // NOTE: targetSnapIndex removed - compute from position using GridSnapCalculator
 
         // Label position
         edgeJson["labelPosition"] = {{"x", layout.labelPosition.x}, {"y", layout.labelPosition.y}};

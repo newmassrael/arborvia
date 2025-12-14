@@ -358,7 +358,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
             }
 
             workingLayout.sourcePoint = newSnapPoint;
-            workingLayout.sourceSnapIndex = candidateIndex;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -384,7 +384,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
             }
 
             workingLayout.targetPoint = newSnapPoint;
-            workingLayout.targetSnapIndex = candidateIndex;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -456,8 +456,9 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             int tgtCandidateCount = GridSnapCalculator::getCandidateCount(tgtNode, tgtEdge, gridSize);
 
             // Calculate new positions only for modifiable endpoints
-            int srcCandidateIdx = originalLayout.sourceSnapIndex;
-            int tgtCandidateIdx = originalLayout.targetSnapIndex;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
+            int srcCandidateIdx = 0;
+            int tgtCandidateIdx = 0;
             Point newSrc = originalLayout.sourcePoint;
             Point newTgt = originalLayout.targetPoint;
 
@@ -475,8 +476,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             workingLayout.targetEdge = tgtEdge;
             workingLayout.sourcePoint = newSrc;
             workingLayout.targetPoint = newTgt;
-            workingLayout.sourceSnapIndex = srcCandidateIdx;
-            workingLayout.targetSnapIndex = tgtCandidateIdx;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
 
             // Step 4a: Try A*
             result.astarAttempts++;

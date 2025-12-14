@@ -62,9 +62,10 @@ void RoutingOptimizer::optimize(
     auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts, gridSize);
 
     // Merge optimized layouts
-    // IMPORTANT: Preserve snap indices (optimizer sets them to -1, we keep grid-based values)
-    // BUT: Only if NodeEdge hasn't changed (indices are specific to NodeEdge)
-    // EXCEPTION: Self-loops use position-based snap indices (calculated by SelfLoopRouter)
+    // IMPORTANT: Always recalculate snap indices from final positions
+    // The optimizer may change positions while keeping the same NodeEdge,
+    // so preserving old indices would cause position/index mismatch
+    float gridSizeForCalc = constants::effectiveGridSize(options.gridConfig.cellSize);
     for (auto& [edgeId, layout] : optimizedLayouts) {
         auto& existing = result.edgeLayouts[edgeId];
 
@@ -75,26 +76,12 @@ void RoutingOptimizer::optimize(
             continue;
         }
 
-        // Regular edges: preserve distributor's snap indices if NodeEdge unchanged
-        NodeEdge origSourceEdge = existing.sourceEdge;
-        NodeEdge origTargetEdge = existing.targetEdge;
-        int preservedSourceSnapIndex = existing.sourceSnapIndex;
-        int preservedTargetSnapIndex = existing.targetSnapIndex;
-
+        // Copy the optimized layout
+        // NOTE: snapIndex is no longer stored - computed from position as needed
         existing = std::move(layout);
-
-        // Only restore snap indices if NodeEdge didn't change
-        if (existing.sourceEdge == origSourceEdge) {
-            existing.sourceSnapIndex = preservedSourceSnapIndex;
-        }
-        if (existing.targetEdge == origTargetEdge) {
-            existing.targetSnapIndex = preservedTargetSnapIndex;
-        }
     }
 
-    // Fix any -1 indices that weren't restored (NodeEdge changed during optimization)
-    float gridSizeToUse = constants::effectiveGridSize(options.gridConfig.cellSize);
-    fixInvalidSnapIndices(result, nodeLayouts, gridSizeToUse);
+    // NOTE: fixInvalidSnapIndices removed - snap indices are no longer stored
 
     // Update label positions after optimization
     for (auto& [edgeId, layout] : result.edgeLayouts) {
@@ -102,44 +89,7 @@ void RoutingOptimizer::optimize(
     }
 }
 
-void RoutingOptimizer::fixInvalidSnapIndices(
-    EdgeRouting::Result& result,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    float effectiveGridSize) {
-
-    // Group edges by (node, nodeEdge) to properly calculate snap indices
-    std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> connectionsByNodeEdge;
-    for (auto& [edgeId, layout] : result.edgeLayouts) {
-        connectionsByNodeEdge[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
-        connectionsByNodeEdge[{layout.to, layout.targetEdge}].push_back({edgeId, false});
-    }
-
-    for (auto& [key, connections] : connectionsByNodeEdge) {
-        auto [nodeId, nodeEdge] = key;
-        auto nodeIt = nodeLayouts.find(nodeId);
-        if (nodeIt == nodeLayouts.end()) continue;
-        const NodeLayout& node = nodeIt->second;
-
-        int totalConnections = static_cast<int>(connections.size());
-        for (int i = 0; i < totalConnections; ++i) {
-            auto [edgeId, isSource] = connections[i];
-            EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-            int existingIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
-            if (existingIndex < 0) {  // -1 means needs fixing
-                int candidateIndex = 0;
-                Point snapPoint = GridSnapCalculator::calculateSnapPosition(
-                    node, nodeEdge, i, totalConnections, effectiveGridSize, &candidateIndex);
-                if (isSource) {
-                    layout.sourceSnapIndex = candidateIndex;
-                    layout.sourcePoint = snapPoint;
-                } else {
-                    layout.targetSnapIndex = candidateIndex;
-                    layout.targetPoint = snapPoint;
-                }
-            }
-        }
-    }
-}
+// NOTE: fixInvalidSnapIndices removed - snap indices are no longer stored
+// They are computed from positions as needed using GridSnapCalculator::getCandidateIndexFromPosition
 
 } // namespace arborvia

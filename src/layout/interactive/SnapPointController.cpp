@@ -61,7 +61,10 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
     // Store original state
     originalPosition_ = isSource ? edge.sourcePoint : edge.targetPoint;
     originalEdge_ = isSource ? edge.sourceEdge : edge.targetEdge;
-    originalSnapIndex_ = isSource ? edge.sourceSnapIndex : edge.targetSnapIndex;
+    // Compute original snap index from position (position is source of truth)
+    float gridSizeForCalc = constants::effectiveGridSize(gridSize);
+    originalSnapIndex_ = GridSnapCalculator::getCandidateIndexFromPosition(
+        node, originalEdge_, originalPosition_, gridSizeForCalc);
     originalLayout_ = edge;
 
     LOG_DEBUG("[SnapPointController] startDrag: edge={} isSource={} originalPos=({},{})",
@@ -103,12 +106,17 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
         for (const auto& [eid, elayout] : edgeLayouts) {
             if (eid == edgeId) continue;
             // Check if this candidate position matches another edge's snap point on this node
+            // Compute snap indices from positions (position is source of truth)
+            int elayoutSourceSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, elayout.sourceEdge, elayout.sourcePoint, gridSizeToUse);
+            int elayoutTargetSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, elayout.targetEdge, elayout.targetPoint, gridSizeToUse);
             bool matchSource = (elayout.from == nodeId && 
                                elayout.sourceEdge == candidate.edge &&
-                               elayout.sourceSnapIndex == candidate.candidateIndex);
+                               elayoutSourceSnapIdx == candidate.candidateIndex);
             bool matchTarget = (elayout.to == nodeId &&
                                elayout.targetEdge == candidate.edge &&
-                               elayout.targetSnapIndex == candidate.candidateIndex);
+                               elayoutTargetSnapIdx == candidate.candidateIndex);
             if (matchSource || matchTarget) {
                 // Check if occupying edge is a self-loop
                 if (elayout.from == elayout.to) {
@@ -315,8 +323,9 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     }
 
     // Check for swap partner
+    float gridSizeForCheck = constants::effectiveGridSize(options.gridConfig.cellSize);
     auto occupying = findOccupyingEdge(dragNodeId_, targetEdge, targetSnapIndex,
-                                        draggedEdgeId_, edgeLayouts);
+                                        draggedEdgeId_, edgeLayouts, nodeLayouts, gridSizeForCheck);
 
     // Update dragged edge
     EdgeLayout& draggedEdge = edgeIt->second;
@@ -329,11 +338,11 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     if (isDraggingSource_) {
         draggedEdge.sourcePoint = targetPosition;
         draggedEdge.sourceEdge = targetEdge;
-        draggedEdge.sourceSnapIndex = targetSnapIndex;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
     } else {
         draggedEdge.targetPoint = targetPosition;
         draggedEdge.targetEdge = targetEdge;
-        draggedEdge.targetSnapIndex = targetSnapIndex;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
     }
 
     result.affectedEdges.push_back(draggedEdgeId_);
@@ -344,11 +353,11 @@ SnapPointController::DropResult SnapPointController::completeDrag(
         if (occupying.isSource) {
             swapEdge.sourcePoint = originalPosition_;
             swapEdge.sourceEdge = originalEdge_;
-            swapEdge.sourceSnapIndex = originalSnapIndex_;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
         } else {
             swapEdge.targetPoint = originalPosition_;
             swapEdge.targetEdge = originalEdge_;
-            swapEdge.targetSnapIndex = originalSnapIndex_;
+            // NOTE: snapIndex is no longer stored - computed from position as needed
         }
         result.swapEdgeId = occupying.edgeId;
         result.swapIsSource = occupying.isSource;
@@ -392,27 +401,42 @@ SnapPointController::OccupyingEdge SnapPointController::findOccupyingEdge(
     NodeEdge edge,
     int snapIndex,
     EdgeId excludeEdgeId,
-    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const {
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSize) const {
 
     OccupyingEdge result;
-
+    
+    // Get the node layout for computing snap indices
+    auto nodeIt = nodeLayouts.find(nodeId);
+    if (nodeIt == nodeLayouts.end()) {
+        return result;  // Node not found
+    }
+    const NodeLayout& node = nodeIt->second;
+    
     for (const auto& [eid, layout] : edgeLayouts) {
         if (eid == excludeEdgeId) continue;
 
-        // Check source snap point
-        if (layout.from == nodeId && layout.sourceEdge == edge &&
-            layout.sourceSnapIndex == snapIndex) {
-            result.edgeId = eid;
-            result.isSource = true;
-            return result;
+        // Check source snap point - compute index from position
+        if (layout.from == nodeId && layout.sourceEdge == edge) {
+            int computedSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, layout.sourceEdge, layout.sourcePoint, gridSize);
+            if (computedSnapIdx == snapIndex) {
+                result.edgeId = eid;
+                result.isSource = true;
+                return result;
+            }
         }
 
-        // Check target snap point
-        if (layout.to == nodeId && layout.targetEdge == edge &&
-            layout.targetSnapIndex == snapIndex) {
-            result.edgeId = eid;
-            result.isSource = false;
-            return result;
+        // Check target snap point - compute index from position
+        if (layout.to == nodeId && layout.targetEdge == edge) {
+            int computedSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, layout.targetEdge, layout.targetPoint, gridSize);
+            if (computedSnapIdx == snapIndex) {
+                result.edgeId = eid;
+                result.isSource = false;
+                return result;
+            }
         }
     }
 

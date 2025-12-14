@@ -308,8 +308,7 @@ TEST_F(SnapIndexManagerTest, BugRepro_TwoEdgesSameNodeEdge_ConnectionCounting) {
     e2.to = NodeId{1};
     e2.sourceEdge = NodeEdge::Left;
     e2.targetEdge = NodeEdge::Right;  // connects to node 1's RIGHT edge
-    e2.sourceSnapIndex = 0;
-    e2.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     edgeLayouts[EdgeId{2}] = e2;
 
     // Edge 5: from node 1 to node 4 (outgoing from node 1's right edge)
@@ -319,8 +318,7 @@ TEST_F(SnapIndexManagerTest, BugRepro_TwoEdgesSameNodeEdge_ConnectionCounting) {
     e5.to = NodeId{4};
     e5.sourceEdge = NodeEdge::Right;  // connects from node 1's RIGHT edge
     e5.targetEdge = NodeEdge::Bottom;
-    e5.sourceSnapIndex = 0;
-    e5.targetSnapIndex = 0;
+    // NOTE: snapIndex is no longer stored - computed from position
     edgeLayouts[EdgeId{5}] = e5;
 
     // Check connections on node 1's right edge

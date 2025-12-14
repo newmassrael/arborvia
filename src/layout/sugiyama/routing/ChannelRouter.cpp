@@ -7,6 +7,7 @@
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "../../snap/SnapPointCalculator.h"
+#include "../../snap/GridSnapCalculator.h"
 
 // Include full definitions of structs from EdgeRouting.h
 #include "EdgeRouting.h"
@@ -383,6 +384,9 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
         // Store channel X (stored in channelY field, already grid-aligned from computeChannelY)
         layout.channelY = channel.yPosition;
     }
+
+    // NOTE: snapIndex is no longer stored - computed from position as needed
+    // using GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gridSize)
 
     // ROOT CAUSE ANALYSIS: Check if snap points are on grid vertices
     // ARCHITECTURE PROBLEM: ChannelRouter uses center.x directly without grid quantization,

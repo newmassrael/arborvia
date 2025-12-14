@@ -30,8 +30,7 @@ protected:
         layoutAB.targetPoint = {50, 100};
         layoutAB.sourceEdge = NodeEdge::Bottom;
         layoutAB.targetEdge = NodeEdge::Top;
-        layoutAB.sourceSnapIndex = 4;
-        layoutAB.targetSnapIndex = 4;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
         edgeLayouts_[edgeAB_] = layoutAB;
 
         EdgeLayout layoutAC;
@@ -42,8 +41,7 @@ protected:
         layoutAC.targetPoint = {180, 100};
         layoutAC.sourceEdge = NodeEdge::Bottom;
         layoutAC.targetEdge = NodeEdge::Top;
-        layoutAC.sourceSnapIndex = 7;
-        layoutAC.targetSnapIndex = 2;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
         edgeLayouts_[edgeAC_] = layoutAC;
 
         gridSize_ = 10.0f;
@@ -214,9 +212,14 @@ TEST_F(SnapPointControllerTest, CompleteDrag_SwapDetection) {
     EXPECT_EQ(dropResult.swapEdgeId, edgeAC_);  // Should detect swap with edgeAC
     EXPECT_TRUE(dropResult.swapIsSource);  // edgeAC's source was swapped
 
-    // Verify the swap happened
-    EXPECT_EQ(edgeLayouts_[edgeAB_].sourceSnapIndex, 7);  // edgeAB moved to 7
-    EXPECT_EQ(edgeLayouts_[edgeAC_].sourceSnapIndex, 4);  // edgeAC moved to 4
+    // Verify the swap happened - compute snap indices from positions
+    const auto& nodeA = nodeLayouts_[nodeA_];
+    int edgeAB_srcIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA, edgeLayouts_[edgeAB_].sourceEdge, edgeLayouts_[edgeAB_].sourcePoint, gridSize_);
+    int edgeAC_srcIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA, edgeLayouts_[edgeAC_].sourceEdge, edgeLayouts_[edgeAC_].sourcePoint, gridSize_);
+    EXPECT_EQ(edgeAB_srcIdx, 7);  // edgeAB moved to 7
+    EXPECT_EQ(edgeAC_srcIdx, 4);  // edgeAC moved to 4
 }
 
 // ============== cancelDrag Tests ==============
@@ -794,8 +797,7 @@ TEST_F(SnapPointControllerTest, CompleteDrag_MustNotOverlapWithOtherEdgeSegments
     layoutCD.bendPoints.push_back({{70, 175}});  // Creates horizontal segment
     layoutCD.bendPoints.push_back({{70, 60}});   // Creates VERTICAL segment at x=70, y=[60,175] - overlaps with y=50~150
     layoutCD.bendPoints.push_back({{200, 75}});  // Creates horizontal segment
-    layoutCD.sourceSnapIndex = 5;
-    layoutCD.targetSnapIndex = 5;
+    // NOTE: snapIndex is no longer stored - computed from position as needed
     edgeLayouts_[edgeCD] = layoutCD;
     
     // edgeAB: simple edge (not important for this test)
@@ -813,8 +815,7 @@ TEST_F(SnapPointControllerTest, CompleteDrag_MustNotOverlapWithOtherEdgeSegments
     edgeAC.targetPoint = {75, 150};   // Top center of NodeC
     edgeAC.sourceEdge = NodeEdge::Right;
     edgeAC.targetEdge = NodeEdge::Top;
-    edgeAC.sourceSnapIndex = 5;
-    edgeAC.targetSnapIndex = 5;
+    // NOTE: snapIndex is no longer stored - computed from position as needed
     edgeAC.bendPoints.clear();
     edgeAC.bendPoints.push_back({{125, 150}});  // Initial orthogonal path
     

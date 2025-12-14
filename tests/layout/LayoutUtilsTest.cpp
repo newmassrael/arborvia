@@ -269,75 +269,6 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_NegativeSegmentIndex_UsesFallback
     EXPECT_EQ(result.insertIndex, 0u);
 }
 
-// ============== syncSnapConfigsFromEdgeLayouts Tests ==============
-
-TEST_F(LayoutUtilsTest, SyncSnapConfigs_UpdatesFromEdgeLayouts) {
-    ManualLayoutManager manager;
-
-    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-
-    // Edge using snap index 2 on node n1_'s bottom edge
-    EdgeLayout layout1;
-    layout1.from = n1_;
-    layout1.to = n2_;
-    layout1.sourceEdge = NodeEdge::Bottom;
-    layout1.targetEdge = NodeEdge::Top;
-    layout1.sourceSnapIndex = 2;  // Needs at least 3 snap points
-    layout1.targetSnapIndex = 1;  // Needs at least 2 snap points
-    edgeLayouts[e1_] = layout1;
-
-    manager.syncSnapConfigsFromEdgeLayouts(edgeLayouts);
-
-    // Check snap configs were updated
-    SnapPointConfig n1Config = manager.getSnapConfig(n1_);
-    SnapPointConfig n2Config = manager.getSnapConfig(n2_);
-
-    EXPECT_GE(n1Config.bottomCount, 3);  // At least 3 for snapIndex 2
-    EXPECT_GE(n2Config.topCount, 2);     // At least 2 for snapIndex 1
-}
-
-TEST_F(LayoutUtilsTest, SyncSnapConfigs_PreservesHigherManualCounts) {
-    ManualLayoutManager manager;
-
-    // Set higher manual count first
-    SnapPointConfig manualConfig;
-    manualConfig.bottomCount = 5;
-    manager.setSnapConfig(n1_, manualConfig);
-
-    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
-    EdgeLayout layout1;
-    layout1.from = n1_;
-    layout1.to = n2_;
-    layout1.sourceEdge = NodeEdge::Bottom;
-    layout1.targetEdge = NodeEdge::Top;
-    layout1.sourceSnapIndex = 1;  // Would need only 2
-    layout1.targetSnapIndex = 0;
-    edgeLayouts[e1_] = layout1;
-
-    manager.syncSnapConfigsFromEdgeLayouts(edgeLayouts);
-
-    // Manual count (5) should be preserved
-    SnapPointConfig n1Config = manager.getSnapConfig(n1_);
-    EXPECT_EQ(n1Config.bottomCount, 5);
-}
-
-TEST_F(LayoutUtilsTest, SyncSnapConfigs_EmptyEdgeLayouts) {
-    ManualLayoutManager manager;
-
-    // Set initial config
-    SnapPointConfig initialConfig;
-    initialConfig.topCount = 3;
-    manager.setSnapConfig(n1_, initialConfig);
-
-    std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
-
-    manager.syncSnapConfigsFromEdgeLayouts(emptyLayouts);
-
-    // Config should remain unchanged
-    SnapPointConfig config = manager.getSnapConfig(n1_);
-    EXPECT_EQ(config.topCount, 3);
-}
-
 // ============== Label Position Update on Drag Tests ==============
 
 TEST_F(LayoutUtilsTest, LabelPosition_UpdatesAfterDrag) {
@@ -793,35 +724,11 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_UpdatesSnapIndex) {
     checkSnapPointOnEdge(false, "Target");
 
     // =========================================================================
-    // CONSTRAINT 5: snapIndex must be CONSISTENT with position
+    // CONSTRAINT 5: snapIndex consistency (REMOVED)
+    // NOTE: snapIndex is no longer stored in EdgeLayout - position is source of truth.
+    // Snap index is computed from position as needed using GridSnapCalculator.
+    // This constraint is now automatically satisfied by design.
     // =========================================================================
-    auto checkSnapIndexConsistency = [&](bool isSource, const char* label) {
-        NodeId nodeId = isSource ? movedEdge.from : movedEdge.to;
-        const Point& point = isSource ? movedEdge.sourcePoint : movedEdge.targetPoint;
-        int snapIndex = isSource ? movedEdge.sourceSnapIndex : movedEdge.targetSnapIndex;
-        NodeEdge nodeEdge = isSource ? movedEdge.sourceEdge : movedEdge.targetEdge;
-
-        auto nodeIt = nodeLayouts.find(nodeId);
-        if (nodeIt == nodeLayouts.end()) return;
-
-        const NodeLayout& node = nodeIt->second;
-
-        // Use GridSnapCalculator to get expected snap index (handles corner exclusion correctly)
-        int expectedSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-            node, nodeEdge, point, gridSize);
-
-        if (snapIndex != expectedSnapIndex) {
-            std::cout << "[FAIL] " << label << " snapIndex INCONSISTENT: "
-                      << "actual=" << snapIndex << " expected=" << expectedSnapIndex
-                      << " (point=" << point.x << "," << point.y << ")" << std::endl;
-            ++failures;
-        }
-    };
-
-    // Only check snapIndex for the moved snap point (target in this case)
-    // Source snapIndex may be inconsistent if original layout was created with old logic
-    // checkSnapIndexConsistency(true, "Source");  // Skip - not moved
-    checkSnapIndexConsistency(false, "Target");  // Check - this was moved
 
     // =========================================================================
     // CONSTRAINT 6: Edge must NOT penetrate other nodes
@@ -990,11 +897,10 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
     edge1.to = nodeB;
     edge1.sourceEdge = NodeEdge::Bottom;
     edge1.targetEdge = NodeEdge::Top;
-    edge1.sourceSnapIndex = 2;  // x = 30
+    // NOTE: snapIndex is no longer stored - computed from position
     edge1.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
-        nodeA_layout, NodeEdge::Bottom, 2, gridSize);
+        nodeA_layout, NodeEdge::Bottom, 2, gridSize);  // x = 30 (index 2)
     edge1.targetPoint = {50, 150};  // top of B (updated y)
-    edge1.targetSnapIndex = 4;
     edgeLayouts[edgeAB] = edge1;
 
     EdgeLayout edge2;
@@ -1002,18 +908,19 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
     edge2.to = nodeC;
     edge2.sourceEdge = NodeEdge::Bottom;
     edge2.targetEdge = NodeEdge::Top;
-    edge2.sourceSnapIndex = 5;  // x = 60
+    // NOTE: snapIndex is no longer stored - computed from position
     edge2.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
-        nodeA_layout, NodeEdge::Bottom, 5, gridSize);
+        nodeA_layout, NodeEdge::Bottom, 5, gridSize);  // x = 60 (index 5)
     edge2.targetPoint = {200, 150};  // top of C (updated x and y)
-    edge2.targetSnapIndex = 4;
     edgeLayouts[edgeAC] = edge2;
 
     std::cout << "\n========== SWAP TEST (STRICT) ==========\n" << std::endl;
 
-    // Save initial state
-    int edge1_initialIdx = edgeLayouts[edgeAB].sourceSnapIndex;
-    int edge2_initialIdx = edgeLayouts[edgeAC].sourceSnapIndex;
+    // Save initial state - compute snap indices from positions
+    int edge1_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edgeLayouts[edgeAB].sourceEdge, edgeLayouts[edgeAB].sourcePoint, gridSize);
+    int edge2_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edgeLayouts[edgeAC].sourceEdge, edgeLayouts[edgeAC].sourcePoint, gridSize);
     Point edge1_initialPos = edgeLayouts[edgeAB].sourcePoint;
     Point edge2_initialPos = edgeLayouts[edgeAC].sourcePoint;
 
@@ -1034,9 +941,11 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SwapsWithOccupiedPosition) {
 
     ASSERT_TRUE(moveResult.success) << "moveSnapPoint should succeed";
 
-    // Get updated state
-    int edge1_afterIdx = edgeLayouts[edgeAB].sourceSnapIndex;
-    int edge2_afterIdx = edgeLayouts[edgeAC].sourceSnapIndex;
+    // Get updated state - compute snap indices from positions
+    int edge1_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edgeLayouts[edgeAB].sourceEdge, edgeLayouts[edgeAB].sourcePoint, gridSize);
+    int edge2_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edgeLayouts[edgeAC].sourceEdge, edgeLayouts[edgeAC].sourcePoint, gridSize);
     Point edge1_afterPos = edgeLayouts[edgeAB].sourcePoint;
     Point edge2_afterPos = edgeLayouts[edgeAC].sourcePoint;
 
@@ -1113,11 +1022,10 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_CrossNodeEdgeSwap) {
     edge1.to = nodeB;
     edge1.sourceEdge = NodeEdge::Bottom;
     edge1.targetEdge = NodeEdge::Top;
-    edge1.sourceSnapIndex = 4;
+    // NOTE: snapIndex is no longer stored - computed from position
     edge1.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
         nodeA_layout, NodeEdge::Bottom, 4, gridSize);
     edge1.targetPoint = {50, 150};
-    edge1.targetSnapIndex = 4;
     edgeLayouts[edgeAB] = edge1;
 
     // Edge A->C: source on RIGHT edge of A
@@ -1126,20 +1034,21 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_CrossNodeEdgeSwap) {
     edge2.to = nodeC;
     edge2.sourceEdge = NodeEdge::Right;
     edge2.targetEdge = NodeEdge::Left;
-    edge2.sourceSnapIndex = 4;
+    // NOTE: snapIndex is no longer stored - computed from position
     edge2.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
         nodeA_layout, NodeEdge::Right, 4, gridSize);
     edge2.targetPoint = {150, 25};
-    edge2.targetSnapIndex = 2;
     edgeLayouts[edgeAC] = edge2;
 
     std::cout << "\n========== CROSS-NODEEDGE SWAP TEST ==========\n" << std::endl;
 
-    // Save initial state
+    // Save initial state - compute snap indices from positions
     NodeEdge edge1_initialEdge = edgeLayouts[edgeAB].sourceEdge;
     NodeEdge edge2_initialEdge = edgeLayouts[edgeAC].sourceEdge;
-    int edge1_initialIdx = edgeLayouts[edgeAB].sourceSnapIndex;
-    int edge2_initialIdx = edgeLayouts[edgeAC].sourceSnapIndex;
+    int edge1_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edge1_initialEdge, edgeLayouts[edgeAB].sourcePoint, gridSize);
+    int edge2_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edge2_initialEdge, edgeLayouts[edgeAC].sourcePoint, gridSize);
 
     std::cout << "Before swap:" << std::endl;
     std::cout << "  Edge1 (A->B): edge=" << static_cast<int>(edge1_initialEdge)
@@ -1158,11 +1067,13 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_CrossNodeEdgeSwap) {
 
     ASSERT_TRUE(moveResult.success);
 
-    // Get updated state
+    // Get updated state - compute snap indices from positions
     NodeEdge edge1_afterEdge = edgeLayouts[edgeAB].sourceEdge;
     NodeEdge edge2_afterEdge = edgeLayouts[edgeAC].sourceEdge;
-    int edge1_afterIdx = edgeLayouts[edgeAB].sourceSnapIndex;
-    int edge2_afterIdx = edgeLayouts[edgeAC].sourceSnapIndex;
+    int edge1_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edge1_afterEdge, edgeLayouts[edgeAB].sourcePoint, gridSize);
+    int edge2_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeA_layout, edge2_afterEdge, edgeLayouts[edgeAC].sourcePoint, gridSize);
 
     std::cout << "\nAfter swap:" << std::endl;
     std::cout << "  Edge1 (A->B): edge=" << static_cast<int>(edge1_afterEdge)
@@ -1228,11 +1139,10 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SourceTargetCrossSwap) {
     edge1.to = nodeB;
     edge1.sourceEdge = NodeEdge::Bottom;
     edge1.targetEdge = NodeEdge::Top;
-    edge1.sourceSnapIndex = 4;
+    // NOTE: snapIndex is no longer stored - computed from position
     edge1.sourcePoint = {50, 50};
-    edge1.targetSnapIndex = 2;
     edge1.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-        nodeB_layout, NodeEdge::Top, 2, gridSize);
+        nodeB_layout, NodeEdge::Top, 2, gridSize);  // snapIdx=2
     edgeLayouts[edgeAB] = edge1;
 
     // Edge C->B: target on Top edge of B at snapIdx=6
@@ -1241,18 +1151,19 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SourceTargetCrossSwap) {
     edge2.to = nodeB;
     edge2.sourceEdge = NodeEdge::Bottom;
     edge2.targetEdge = NodeEdge::Top;
-    edge2.sourceSnapIndex = 4;
+    // NOTE: snapIndex is no longer stored - computed from position
     edge2.sourcePoint = {200, 50};
-    edge2.targetSnapIndex = 6;
     edge2.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-        nodeB_layout, NodeEdge::Top, 6, gridSize);
+        nodeB_layout, NodeEdge::Top, 6, gridSize);  // snapIdx=6
     edgeLayouts[edgeCB] = edge2;
 
     std::cout << "\n========== SOURCE-TARGET CROSS SWAP TEST ==========\n" << std::endl;
 
-    // Save initial state
-    int edge1_initialIdx = edgeLayouts[edgeAB].targetSnapIndex;
-    int edge2_initialIdx = edgeLayouts[edgeCB].targetSnapIndex;
+    // Save initial state - compute snap indices from positions
+    int edge1_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeB_layout, edgeLayouts[edgeAB].targetEdge, edgeLayouts[edgeAB].targetPoint, gridSize);
+    int edge2_initialIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeB_layout, edgeLayouts[edgeCB].targetEdge, edgeLayouts[edgeCB].targetPoint, gridSize);
     Point edge1_initialPos = edgeLayouts[edgeAB].targetPoint;
     Point edge2_initialPos = edgeLayouts[edgeCB].targetPoint;
 
@@ -1271,8 +1182,11 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_SourceTargetCrossSwap) {
 
     ASSERT_TRUE(moveResult.success);
 
-    int edge1_afterIdx = edgeLayouts[edgeAB].targetSnapIndex;
-    int edge2_afterIdx = edgeLayouts[edgeCB].targetSnapIndex;
+    // Compute snap indices from updated positions
+    int edge1_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeB_layout, edgeLayouts[edgeAB].targetEdge, edgeLayouts[edgeAB].targetPoint, gridSize);
+    int edge2_afterIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeB_layout, edgeLayouts[edgeCB].targetEdge, edgeLayouts[edgeCB].targetPoint, gridSize);
 
     std::cout << "\nAfter swap:" << std::endl;
     std::cout << "  Edge1 (A->B) target: snapIdx=" << edge1_afterIdx << std::endl;
@@ -1317,16 +1231,15 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_ThreeEdgesSwapNoCollision) {
 
     // Three edges on Bottom of A at snapIdx 2, 4, 6
     // Each edge targets its respective node's top edge
+    // NOTE: snapIndex is no longer stored - computed from position
     auto makeEdge = [&](NodeId to, int snapIdx, float targetX, float targetY) {
         EdgeLayout e;
         e.from = nodeA;
         e.to = to;
         e.sourceEdge = NodeEdge::Bottom;
         e.targetEdge = NodeEdge::Top;
-        e.sourceSnapIndex = snapIdx;
         e.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
             nodeA_layout, NodeEdge::Bottom, snapIdx, gridSize);
-        e.targetSnapIndex = 4;
         e.targetPoint = {targetX, targetY};
         return e;
     };
@@ -1338,10 +1251,16 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_ThreeEdgesSwapNoCollision) {
 
     std::cout << "\n========== THREE EDGES SWAP TEST ==========\n" << std::endl;
 
+    // Helper to compute snap index from position
+    auto getSourceSnapIdx = [&](EdgeId eid) {
+        return GridSnapCalculator::getCandidateIndexFromPosition(
+            nodeA_layout, edgeLayouts[eid].sourceEdge, edgeLayouts[eid].sourcePoint, gridSize);
+    };
+
     std::cout << "Before swap:" << std::endl;
-    std::cout << "  EdgeAB: snapIdx=" << edgeLayouts[edgeAB].sourceSnapIndex << std::endl;
-    std::cout << "  EdgeAC: snapIdx=" << edgeLayouts[edgeAC].sourceSnapIndex << std::endl;
-    std::cout << "  EdgeAD: snapIdx=" << edgeLayouts[edgeAD].sourceSnapIndex << std::endl;
+    std::cout << "  EdgeAB: snapIdx=" << getSourceSnapIdx(edgeAB) << std::endl;
+    std::cout << "  EdgeAC: snapIdx=" << getSourceSnapIdx(edgeAC) << std::endl;
+    std::cout << "  EdgeAD: snapIdx=" << getSourceSnapIdx(edgeAD) << std::endl;
 
     // Drag EdgeAB (idx=2) to EdgeAD's position (idx=6)
     // EdgeAC (idx=4) should NOT be affected
@@ -1355,17 +1274,17 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_ThreeEdgesSwapNoCollision) {
     ASSERT_TRUE(moveResult.success);
 
     std::cout << "\nAfter swap:" << std::endl;
-    std::cout << "  EdgeAB: snapIdx=" << edgeLayouts[edgeAB].sourceSnapIndex << std::endl;
-    std::cout << "  EdgeAC: snapIdx=" << edgeLayouts[edgeAC].sourceSnapIndex << std::endl;
-    std::cout << "  EdgeAD: snapIdx=" << edgeLayouts[edgeAD].sourceSnapIndex << std::endl;
+    std::cout << "  EdgeAB: snapIdx=" << getSourceSnapIdx(edgeAB) << std::endl;
+    std::cout << "  EdgeAC: snapIdx=" << getSourceSnapIdx(edgeAC) << std::endl;
+    std::cout << "  EdgeAD: snapIdx=" << getSourceSnapIdx(edgeAD) << std::endl;
 
-    // EdgeAB and EdgeAD should swap
-    EXPECT_EQ(edgeLayouts[edgeAB].sourceSnapIndex, 6)
+    // EdgeAB and EdgeAD should swap - verify by computing indices from positions
+    EXPECT_EQ(getSourceSnapIdx(edgeAB), 6)
         << "EdgeAB should move to idx=6";
-    EXPECT_EQ(edgeLayouts[edgeAD].sourceSnapIndex, 2)
+    EXPECT_EQ(getSourceSnapIdx(edgeAD), 2)
         << "EdgeAD should move to idx=2";
 
     // EdgeAC should be UNCHANGED
-    EXPECT_EQ(edgeLayouts[edgeAC].sourceSnapIndex, 4)
+    EXPECT_EQ(getSourceSnapIdx(edgeAC), 4)
         << "EdgeAC should remain at idx=4 (not affected by swap)";
 }

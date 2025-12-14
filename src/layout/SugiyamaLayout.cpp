@@ -228,15 +228,14 @@ void SugiyamaLayout::applyFinalCleanup() {
         float gridSize = constants::effectiveGridSize(options_.gridConfig.cellSize);
         optimizer.regenerateBendPoints(needsRegeneration, allEdgeLayouts, state_->result.nodeLayouts(), gridSize);
 
-        // Only update edges that were regenerated
-        for (EdgeId edgeId : needsRegeneration) {
-            auto it = allEdgeLayouts.find(edgeId);
-            if (it != allEdgeLayouts.end()) {
-                state_->result.setEdgeLayout(edgeId, it->second);
-            }
+        // Update ALL edges from allEdgeLayouts (not just needsRegeneration)
+        // Phase 2 (rip-up-and-reroute) may have modified other edges too
+        for (const auto& [edgeId, layout] : allEdgeLayouts) {
+            state_->result.setEdgeLayout(edgeId, layout);
         }
 
-        for (EdgeId edgeId : needsRegeneration) {
+        // Apply cleanup to all edges
+        for (const auto& [edgeId, _] : allEdgeLayouts) {
             if (EdgeLayout* layout = state_->result.getEdgeLayout(edgeId)) {
                 applyCleanup(*layout);
             }

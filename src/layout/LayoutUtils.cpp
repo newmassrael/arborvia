@@ -648,10 +648,10 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
 
     const NodeLayout& node = nodeIt->second;
 
-    // Save original position/index BEFORE moving (for potential swap)
+    // Save original position/edge BEFORE moving (for potential swap)
     Point originalPosition = isSource ? edge.sourcePoint : edge.targetPoint;
     NodeEdge originalEdge = isSource ? edge.sourceEdge : edge.targetEdge;
-    int originalSnapIndex = isSource ? edge.sourceSnapIndex : edge.targetSnapIndex;
+    // NOTE: snapIndex computed from position, not stored
 
     // Find which edge the new point maps to
     auto [newEdge, newPosition_] = findClosestNodeEdge(newPosition, node);
@@ -741,27 +741,33 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     result.success = true;
 
     // Check if another edge occupies the target position - if so, SWAP
-    // Compare by snapIndex (exact match) since all positions are grid-aligned
+    // Compare by computing snapIndex from position (position is the source of truth)
     EdgeId swapEdgeId = INVALID_EDGE;
     bool swapIsSource = false;
 
     for (auto& [eid, layout] : edgeLayouts) {
         if (eid == edgeId) continue;
 
-        // Check source snap point (same node, same edge, same snapIndex)
-        if (layout.from == nodeId && layout.sourceEdge == newEdge &&
-            layout.sourceSnapIndex == newSnapIndex) {
-            swapEdgeId = eid;
-            swapIsSource = true;
-            break;
+        // Check source snap point (same node, same edge, same computed snapIndex)
+        if (layout.from == nodeId && layout.sourceEdge == newEdge) {
+            int otherSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, layout.sourceEdge, layout.sourcePoint, gridSize);
+            if (otherSnapIndex == newSnapIndex) {
+                swapEdgeId = eid;
+                swapIsSource = true;
+                break;
+            }
         }
 
-        // Check target snap point (same node, same edge, same snapIndex)
-        if (layout.to == nodeId && layout.targetEdge == newEdge &&
-            layout.targetSnapIndex == newSnapIndex) {
-            swapEdgeId = eid;
-            swapIsSource = false;
-            break;
+        // Check target snap point (same node, same edge, same computed snapIndex)
+        if (layout.to == nodeId && layout.targetEdge == newEdge) {
+            int otherSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                node, layout.targetEdge, layout.targetPoint, gridSize);
+            if (otherSnapIndex == newSnapIndex) {
+                swapEdgeId = eid;
+                swapIsSource = false;
+                break;
+            }
         }
     }
 
@@ -776,11 +782,11 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     if (isSource) {
         edge.sourcePoint = result.actualPosition;
         edge.sourceEdge = newEdge;
-        edge.sourceSnapIndex = newSnapIndex;
+        // NOTE: snapIndex computed from position, not stored
     } else {
         edge.targetPoint = result.actualPosition;
         edge.targetEdge = newEdge;
-        edge.targetSnapIndex = newSnapIndex;
+        // NOTE: snapIndex computed from position, not stored
     }
 
     LOG_DEBUG("[moveSnapPoint] Edge {} AFTER update: src=({},{}) tgt=({},{})",
@@ -793,11 +799,11 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         if (swapIsSource) {
             swapEdge.sourcePoint = originalPosition;
             swapEdge.sourceEdge = originalEdge;
-            swapEdge.sourceSnapIndex = originalSnapIndex;
+            // NOTE: snapIndex computed from position, not stored
         } else {
             swapEdge.targetPoint = originalPosition;
             swapEdge.targetEdge = originalEdge;
-            swapEdge.targetSnapIndex = originalSnapIndex;
+            // NOTE: snapIndex computed from position, not stored
         }
         result.redistributedEdges.push_back(swapEdgeId);
     } else {

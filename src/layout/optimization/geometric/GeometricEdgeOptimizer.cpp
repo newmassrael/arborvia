@@ -211,14 +211,7 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     bool srcFixed = isNodeFixed(base.from);
     bool tgtFixed = isNodeFixed(base.to);
 
-    // When edge routing changes, mark snap indices for redistribution
-    // But preserve snap index if the endpoint is on a fixed node
-    if (sourceEdge != base.sourceEdge) {
-        candidate.sourceSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-    }
-    if (targetEdge != base.targetEdge) {
-        candidate.targetSnapIndex = constants::SNAP_INDEX_UNASSIGNED;
-    }
+    // NOTE: snapIndex is no longer stored - computed from position as needed
 
     auto srcIt = nodeLayouts.find(base.from);
     auto tgtIt = nodeLayouts.find(base.to);
@@ -233,9 +226,8 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     Point sourcePoint, targetPoint;
     
     if (srcFixed && sourceEdge == base.sourceEdge) {
-        // Source is fixed - preserve existing position and snap index
+        // Source is fixed - preserve existing position
         sourcePoint = base.sourcePoint;
-        candidate.sourceSnapIndex = base.sourceSnapIndex;
     } else {
         // Calculate position considering existing connections on this node edge
         sourcePoint = calculateSnapPositionWithContext(
@@ -243,9 +235,8 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     }
     
     if (tgtFixed && targetEdge == base.targetEdge) {
-        // Target is fixed - preserve existing position and snap index
+        // Target is fixed - preserve existing position
         targetPoint = base.targetPoint;
-        candidate.targetSnapIndex = base.targetSnapIndex;
     } else {
         // Calculate position considering existing connections on this node edge
         targetPoint = calculateSnapPositionWithContext(

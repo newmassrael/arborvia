@@ -1,7 +1,10 @@
 #include "arborvia/layout/interactive/ManualLayoutManager.h"
 #include "arborvia/layout/util/LayoutSerializer.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "arborvia/layout/config/LayoutTypes.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "snap/SnapPointCalculator.h"
+#include "snap/GridSnapCalculator.h"
 #include <fstream>
 #include <sstream>
 #include <cmath>
@@ -146,32 +149,6 @@ void ManualLayoutManager::clearAllEdgeRoutings() {
     manualState_.edgeRoutings.clear();
 }
 
-void ManualLayoutManager::syncSnapConfigsFromEdgeLayouts(
-    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts)
-{
-    // Count snap points needed per node edge based on actual edge connections
-    std::map<std::pair<NodeId, NodeEdge>, int> snapCounts;
-
-    for (const auto& [edgeId, layout] : edgeLayouts) {
-        // Track max snap index for each node edge
-        auto& srcCount = snapCounts[{layout.from, layout.sourceEdge}];
-        srcCount = std::max(srcCount, layout.sourceSnapIndex + 1);
-
-        auto& tgtCount = snapCounts[{layout.to, layout.targetEdge}];
-        tgtCount = std::max(tgtCount, layout.targetSnapIndex + 1);
-    }
-
-    // Update snap configs (only if greater than current to preserve manual settings)
-    for (const auto& [key, count] : snapCounts) {
-        auto [nodeId, edge] = key;
-        SnapPointConfig config = getSnapConfig(nodeId);
-        if (count > config.getCount(edge)) {
-            config.setCount(edge, count);
-            setSnapConfig(nodeId, config);
-        }
-    }
-}
-
 void ManualLayoutManager::applyManualState(LayoutResult& result, [[maybe_unused]] const Graph& graph, float gridSize) const {
     applyManualNodePositions(result);
     applyManualEdgeRoutings(result, gridSize);
@@ -211,8 +188,7 @@ void ManualLayoutManager::applyManualEdgeRoutings(LayoutResult& result, float gr
         // Store routing info in edge layout
         layout->sourceEdge = routing.sourceEdge;
         layout->targetEdge = routing.targetEdge;
-        layout->sourceSnapIndex = routing.sourceSnapIndex;
-        layout->targetSnapIndex = routing.targetSnapIndex;
+        // NOTE: snapIndex is no longer stored - computed from position as needed
 
         // Apply bend points - only override if user set manual bends
         // Otherwise preserve optimizer output (do NOT overwrite with midY)
@@ -235,20 +211,33 @@ void ManualLayoutManager::captureFromResult(const LayoutResult& result) {
     std::map<std::pair<NodeId, NodeEdge>, int> snapCounts;
 
     // Capture edge routings and track snap point usage
+    // NOTE: snapIndex is computed from position, need to look up node layouts
     for (const auto& [id, layout] : result.edgeLayouts()) {
         EdgeRoutingConfig routing;
         routing.sourceEdge = layout.sourceEdge;
         routing.targetEdge = layout.targetEdge;
-        routing.sourceSnapIndex = layout.sourceSnapIndex;
-        routing.targetSnapIndex = layout.targetSnapIndex;
+        
+        // Compute snap indices from positions
+        const NodeLayout* srcNode = result.getNodeLayout(layout.from);
+        const NodeLayout* tgtNode = result.getNodeLayout(layout.to);
+        float gridSize = constants::effectiveGridSize(0.0f);  // Use default
+        
+        if (srcNode) {
+            routing.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                *srcNode, layout.sourceEdge, layout.sourcePoint, gridSize);
+        }
+        if (tgtNode) {
+            routing.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                *tgtNode, layout.targetEdge, layout.targetPoint, gridSize);
+        }
         manualState_.edgeRoutings[id] = routing;
 
         // Track max snap index for each node edge
         auto& srcCount = snapCounts[{layout.from, layout.sourceEdge}];
-        srcCount = std::max(srcCount, layout.sourceSnapIndex + 1);
+        srcCount = std::max(srcCount, routing.sourceSnapIndex + 1);
 
         auto& tgtCount = snapCounts[{layout.to, layout.targetEdge}];
-        tgtCount = std::max(tgtCount, layout.targetSnapIndex + 1);
+        tgtCount = std::max(tgtCount, routing.targetSnapIndex + 1);
     }
 
     // Update snap configs based on captured edge routings

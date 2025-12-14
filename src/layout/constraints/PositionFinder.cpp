@@ -3,6 +3,7 @@
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 #include "snap/SnapPointCalculator.h"
+#include "snap/GridSnapCalculator.h"
 
 #include <cmath>
 #include <queue>
@@ -112,6 +113,11 @@ bool PositionFinder::validateAllEdgePaths(
         NodeId srcNodeId, tgtNodeId;
         NodeEdge srcEdge, tgtEdge;
 
+        // Get original node layout for computing snap index from position
+        auto originalNodeIt = nodeLayouts.find(nodeId);
+        if (originalNodeIt == nodeLayouts.end()) continue;
+        const NodeLayout& originalNode = originalNodeIt->second;
+
         if (edgeLayout.from == nodeId) {
             // This node is the source
             srcNodeId = nodeId;
@@ -119,8 +125,11 @@ bool PositionFinder::validateAllEdgePaths(
             srcEdge = edgeLayout.sourceEdge;
             tgtEdge = edgeLayout.targetEdge;
             
-            // Recalculate source point based on new position
-            srcPoint = calculateSnapPointOnEdge(tempLayout, srcEdge, edgeLayout.sourceSnapIndex);
+            // Compute snap index from original position, then recalculate for new position
+            // NOTE: snapIndex is no longer stored - compute from position as needed
+            int srcSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                originalNode, srcEdge, edgeLayout.sourcePoint, config_.gridSize);
+            srcPoint = calculateSnapPointOnEdge(tempLayout, srcEdge, srcSnapIndex);
             tgtPoint = edgeLayout.targetPoint;
         } else {
             // This node is the target
@@ -130,8 +139,11 @@ bool PositionFinder::validateAllEdgePaths(
             tgtEdge = edgeLayout.targetEdge;
             
             srcPoint = edgeLayout.sourcePoint;
-            // Recalculate target point based on new position
-            tgtPoint = calculateSnapPointOnEdge(tempLayout, tgtEdge, edgeLayout.targetSnapIndex);
+            // Compute snap index from original position, then recalculate for new position
+            // NOTE: snapIndex is no longer stored - compute from position as needed
+            int tgtSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                originalNode, tgtEdge, edgeLayout.targetPoint, config_.gridSize);
+            tgtPoint = calculateSnapPointOnEdge(tempLayout, tgtEdge, tgtSnapIndex);
         }
 
         // Convert to grid coordinates

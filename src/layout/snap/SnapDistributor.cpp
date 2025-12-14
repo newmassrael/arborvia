@@ -59,20 +59,20 @@ void SnapDistributor::distribute(
             auto [edgeId, isSource] = connections[i];
             EdgeLayout& layout = result.edgeLayouts[edgeId];
 
-            // Calculate snap position and store the candidate index
+            // Calculate snap position (candidate index computed from position as needed)
             int candidateIndex = 0;
             Point snapPoint = GridSnapCalculator::calculateSnapPosition(
                 node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
 
             if (isSource) {
                 layout.sourcePoint = snapPoint;
-                layout.sourceSnapIndex = candidateIndex;
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} pos=({},{}) snapIdx={}",
+                // NOTE: snapIndex is no longer stored - computed from position as needed
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} pos=({},{}) candidateIdx={}",
                           edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
             } else {
                 layout.targetPoint = snapPoint;
-                layout.targetSnapIndex = candidateIndex;
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} pos=({},{}) snapIdx={}",
+                // NOTE: snapIndex is no longer stored - computed from position as needed
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} pos=({},{}) candidateIdx={}",
                           edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
             }
         }

@@ -14,8 +14,7 @@ namespace arborvia {
  * This class encapsulates the edge optimization workflow:
  * 1. Creates/selects appropriate optimizer based on options
  * 2. Runs optimization on all edges
- * 3. Preserves snap indices during optimization
- * 4. Fixes any indices that need recalculation
+ * NOTE: Snap indices are no longer stored - computed from positions as needed
  */
 class RoutingOptimizer {
 public:
@@ -41,14 +40,6 @@ public:
         const LayoutOptions& options);
 
 private:
-    /**
-     * @brief Fix snap indices that were invalidated during optimization.
-     */
-    void fixInvalidSnapIndices(
-        EdgeRouting::Result& result,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        float effectiveGridSize);
-
     std::shared_ptr<IPathFinder> pathFinder_;
     IEdgeOptimizer* edgeOptimizer_;
 };

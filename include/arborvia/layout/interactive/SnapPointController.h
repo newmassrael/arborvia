@@ -134,7 +134,9 @@ private:
         NodeEdge edge,
         int snapIndex,
         EdgeId excludeEdgeId,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize) const;
 
     /// Calculate A* preview path
     bool calculatePreviewPath(

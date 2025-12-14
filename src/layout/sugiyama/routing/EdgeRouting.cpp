@@ -255,70 +255,9 @@ EdgeRouting::Result EdgeRouting::route(
         auto optimizedLayouts = optimizer->optimize(edgeIds, result.edgeLayouts, nodeLayouts, gridSize);
 
         // Merge optimized layouts (bend points already calculated by optimizer)
-        // IMPORTANT: Preserve snap indices assigned by distributeAutoSnapPoints
-        // BUT: Only if NodeEdge hasn't changed (indices are specific to NodeEdge)
-        // EXCEPTION: Self-loops use position-based snap indices (calculated by SelfLoopRouter)
+        // NOTE: Snap indices are no longer stored - they're computed from positions
         for (auto& [edgeId, layout] : optimizedLayouts) {
-            auto& existing = result.edgeLayouts[edgeId];
-            
-            // Self-loops: always trust optimizer's snap indices (position-based from SelfLoopRouter)
-            bool isSelfLoop = (layout.from == layout.to);
-            if (isSelfLoop) {
-                existing = std::move(layout);
-                continue;
-            }
-            
-            // Regular edges: preserve distributor's snap indices if NodeEdge unchanged
-            NodeEdge origSourceEdge = existing.sourceEdge;
-            NodeEdge origTargetEdge = existing.targetEdge;
-            int preservedSourceSnapIndex = existing.sourceSnapIndex;
-            int preservedTargetSnapIndex = existing.targetSnapIndex;
-            
-            existing = std::move(layout);
-            
-            // Only restore snap indices if NodeEdge didn't change
-            // If NodeEdge changed, the old index is invalid for the new edge
-            if (existing.sourceEdge == origSourceEdge) {
-                existing.sourceSnapIndex = preservedSourceSnapIndex;
-            }
-            if (existing.targetEdge == origTargetEdge) {
-                existing.targetSnapIndex = preservedTargetSnapIndex;
-            }
-        }
-        
-        // Fix any -1 indices that weren't restored (NodeEdge changed during retry)
-        // Group edges by (node, nodeEdge) to properly calculate snap indices
-        float gridSizeToUse = constants::effectiveGridSize(options.gridConfig.cellSize);
-        std::map<std::pair<NodeId, NodeEdge>, std::vector<std::pair<EdgeId, bool>>> connectionsByNodeEdge;
-        for (auto& [edgeId, layout] : result.edgeLayouts) {
-            connectionsByNodeEdge[{layout.from, layout.sourceEdge}].push_back({edgeId, true});
-            connectionsByNodeEdge[{layout.to, layout.targetEdge}].push_back({edgeId, false});
-        }
-        
-        for (auto& [key, connections] : connectionsByNodeEdge) {
-            auto [nodeId, nodeEdge] = key;
-            auto nodeIt = nodeLayouts.find(nodeId);
-            if (nodeIt == nodeLayouts.end()) continue;
-            const NodeLayout& node = nodeIt->second;
-            
-            int totalConnections = static_cast<int>(connections.size());
-            for (int i = 0; i < totalConnections; ++i) {
-                auto [edgeId, isSource] = connections[i];
-                EdgeLayout& layout = result.edgeLayouts[edgeId];
-                
-                int existingIndex = isSource ? layout.sourceSnapIndex : layout.targetSnapIndex;
-                if (existingIndex < 0) {  // -1 means needs fixing
-                    int candidateIndex = 0;
-                    Point snapPoint = GridSnapCalculator::calculateSnapPosition(node, nodeEdge, i, totalConnections, gridSizeToUse, &candidateIndex);
-                    if (isSource) {
-                        layout.sourceSnapIndex = candidateIndex;
-                        layout.sourcePoint = snapPoint;
-                    } else {
-                        layout.targetSnapIndex = candidateIndex;
-                        layout.targetPoint = snapPoint;
-                    }
-                }
-            }
+            result.edgeLayouts[edgeId] = std::move(layout);
         }
     }
 
@@ -527,17 +466,18 @@ void EdgeRouting::regenerateBendPointsOnly(
                           srcIt->second.position.x, srcIt->second.position.y,
                           srcIt->second.size.width, srcIt->second.size.height);
             }
-            LOG_DEBUG("[SNAP-SYNC-DEBUG]   srcPoint=({},{}) srcEdge={} srcSnapIdx={}", 
+            // NOTE: snapIndex computed from position, not stored
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   srcPoint=({},{}) srcEdge={}", 
                       layout.sourcePoint.x, layout.sourcePoint.y,
-                      static_cast<int>(layout.sourceEdge), layout.sourceSnapIndex);
+                      static_cast<int>(layout.sourceEdge));
             if (tgtIt != nodeLayouts.end()) {
                 LOG_DEBUG("[SNAP-SYNC-DEBUG]   tgtNode pos=({},{}) size=({},{})", 
                           tgtIt->second.position.x, tgtIt->second.position.y,
                           tgtIt->second.size.width, tgtIt->second.size.height);
             }
-            LOG_DEBUG("[SNAP-SYNC-DEBUG]   tgtPoint=({},{}) tgtEdge={} tgtSnapIdx={}", 
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   tgtPoint=({},{}) tgtEdge={}", 
                       layout.targetPoint.x, layout.targetPoint.y,
-                      static_cast<int>(layout.targetEdge), layout.targetSnapIndex);
+                      static_cast<int>(layout.targetEdge));
         }
     }
     

@@ -2,6 +2,7 @@
 #include "pathfinding/ObstacleMap.h"
 #include "pathfinding/AStarPathFinder.h"
 #include "snap/SnapPointCalculator.h"
+#include "snap/GridSnapCalculator.h"
 
 #include "arborvia/common/Logger.h"
 
@@ -79,8 +80,11 @@ ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx)
             srcEdge = edgeLayout.sourceEdge;
             tgtEdge = edgeLayout.targetEdge;
             
-            // Recalculate source point based on new position
-            srcPoint = calculateSnapPointOnEdge(tempLayout, srcEdge, edgeLayout.sourceSnapIndex);
+            // Compute snap index from original position, then recalculate for new position
+            // NOTE: snapIndex is no longer stored - compute from position as needed
+            int srcSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                nodeIt->second, srcEdge, edgeLayout.sourcePoint, gridSize_);
+            srcPoint = calculateSnapPointOnEdge(tempLayout, srcEdge, srcSnapIndex);
             tgtPoint = edgeLayout.targetPoint;
         } else {
             // This node is the target
@@ -90,8 +94,11 @@ ConstraintResult EdgePathValidityConstraint::check(const ConstraintContext& ctx)
             tgtEdge = edgeLayout.targetEdge;
             
             srcPoint = edgeLayout.sourcePoint;
-            // Recalculate target point based on new position
-            tgtPoint = calculateSnapPointOnEdge(tempLayout, tgtEdge, edgeLayout.targetSnapIndex);
+            // Compute snap index from original position, then recalculate for new position
+            // NOTE: snapIndex is no longer stored - compute from position as needed
+            int tgtSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+                nodeIt->second, tgtEdge, edgeLayout.targetPoint, gridSize_);
+            tgtPoint = calculateSnapPointOnEdge(tempLayout, tgtEdge, tgtSnapIndex);
         }
 
         // Convert to grid coordinates
