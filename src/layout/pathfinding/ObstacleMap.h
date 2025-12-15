@@ -75,6 +75,17 @@ public:
         EdgeId excludeEdgeId,
         NodeId targetNodeId);
 
+    /// Add edge segments as obstacles for a specific edge layout (RECOMMENDED API)
+    /// Automatically detects Point node targets and applies appropriate blocking rules.
+    /// This is the preferred method - it centralizes Point node awareness logic.
+    /// @param currentLayout The edge layout being routed (used to determine target node)
+    /// @param otherEdges Other edge layouts to add as obstacles
+    /// @param nodeLayouts Node layouts to check for Point nodes
+    void addEdgeSegmentsForLayout(
+        const EdgeLayout& currentLayout,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
+
     /// Add a single edge's segments as obstacles with direction-aware blocking
     /// Use this when you need to add an edge's segments after initial obstacle setup
     /// @param layout The edge layout to add as obstacles

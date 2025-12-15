@@ -182,7 +182,7 @@ bool UnifiedRetryChain::tryAStarPath(
     ObstacleMap obstacles;
     obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &otherEdges);
 
-    // Add other edges as obstacles
+    // Add other edges as obstacles (automatically handles Point node awareness)
     LOG_DEBUG("[tryAStarPath] Edge {} adding {} other edges as obstacles", layout.id, otherEdges.size());
     for (const auto& [eid, el] : otherEdges) {
         if (eid != layout.id) {
@@ -197,7 +197,7 @@ bool UnifiedRetryChain::tryAStarPath(
             LOG_DEBUG("  OtherEdge {} path: {}", eid, pathStr);
         }
     }
-    obstacles.addEdgeSegments(otherEdges, layout.id);
+    obstacles.addEdgeSegmentsForLayout(layout, otherEdges, nodeLayouts);
 
     GridPoint startGrid = obstacles.pixelToGrid(layout.sourcePoint);
     GridPoint goalGrid = obstacles.pixelToGrid(layout.targetPoint);

@@ -316,6 +316,27 @@ void ObstacleMap::addEdgeSegmentsWithPointNodeAwareness(
     }
 }
 
+void ObstacleMap::addEdgeSegmentsForLayout(
+    const EdgeLayout& currentLayout,
+    const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
+    
+    // Check if the current edge targets a Point node
+    // Point nodes (size 0x0) require special handling to allow convergent edges
+    NodeId targetNodeId = currentLayout.to;
+    auto targetIt = nodeLayouts.find(targetNodeId);
+    bool targetIsPoint = (targetIt != nodeLayouts.end() && targetIt->second.isPointNode());
+    
+    if (targetIsPoint) {
+        // For Point node targets: skip last segments of edges sharing the same Point target
+        // This allows multiple edges to converge on the same Point node without blocking each other
+        addEdgeSegmentsWithPointNodeAwareness(otherEdges, nodeLayouts, currentLayout.id, targetNodeId);
+    } else {
+        // For regular nodes: use standard edge segment blocking
+        addEdgeSegments(otherEdges, currentLayout.id);
+    }
+}
+
 void ObstacleMap::addSingleEdgeSegments(const EdgeLayout& layout) {
     // Initialize edge segment tracking if needed
     if (edgeSegmentCells_.size() != grid_.size()) {

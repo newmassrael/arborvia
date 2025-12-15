@@ -242,6 +242,16 @@ PathResult AStarPathFinder::findPath(
             const auto& effectiveExclude = isSelfLoopIntermediate ? emptyExcludeSet : cellExcludeReusable;
             bool directionBlocked = obstacles.isBlockedForDirection(
                 neighborPos.x, neighborPos.y, moveDir, effectiveExclude);
+            
+            // [CONSTRAINT-DEBUG] Diagnostic log for first move failures - kept for future debugging
+            // This helps identify cases where direction constraint + edge segment blocking
+            // creates a deadlock where no valid first move exists
+            if (current.pos == start && current.lastDir == MoveDirection::None && directionBlocked) {
+                LOG_DEBUG("[A* CONSTRAINT-DEBUG] First move BLOCKED: start=({},{}) neighbor=({},{}) moveDir={} excludeSize={} cellCost={}",
+                    start.x, start.y, neighborPos.x, neighborPos.y, static_cast<int>(moveDir),
+                    effectiveExclude.size(), cellCost);
+            }
+            
             if (directionBlocked) {
                 continue;
             }
@@ -347,7 +357,9 @@ PathResult AStarPathFinder::findPathViaSafeZone(
         if (path.size() < 2) return false;
 
         // Check direction constraints first
-        if (!respectsDirections(path)) return false;
+        if (!respectsDirections(path)) {
+            return false;
+        }
 
         for (size_t i = 0; i + 1 < path.size(); ++i) {
             bool isFirst = (i == 0);
@@ -355,6 +367,12 @@ PathResult AStarPathFinder::findPathViaSafeZone(
             if (!validateSegmentWithEndpoints(path[i], path[i+1], obstacles,
                                               sourceNode, targetNode, isFirst, isLast,
                                               extraStartExcludes, extraGoalExcludes)) {
+                // [CONSTRAINT-DEBUG] Log which segment caused validation failure
+                // Common failure: last segment blocked by other edge's vertical segment near shared Point target
+                if (requiredSourceDir == MoveDirection::Right && requiredTargetDir == MoveDirection::Down) {
+                    LOG_DEBUG("[A* CONSTRAINT-DEBUG] Segment {} ({},{})->({},{}) validation FAILED (isFirst={} isLast={})",
+                        i, path[i].x, path[i].y, path[i+1].x, path[i+1].y, isFirst, isLast);
+                }
                 return false;
             }
         }
@@ -485,6 +503,18 @@ PathResult AStarPathFinder::findPathViaSafeZone(
     // Validate all options
     for (auto& [path, valid] : options) {
         valid = validatePath(path);
+        
+        // [CONSTRAINT-DEBUG] Diagnostic log for srcDir=Right, tgtDir=Down case
+        // This combination is particularly prone to failure when target is to the left of source
+        // The path must go right first, then wrap around to reach left target with Down arrival
+        if (requiredSourceDir == MoveDirection::Right && requiredTargetDir == MoveDirection::Down && !valid) {
+            std::string pathStr;
+            for (const auto& p : path) {
+                pathStr += "(" + std::to_string(p.x) + "," + std::to_string(p.y) + ")->";
+            }
+            if (!pathStr.empty()) pathStr = pathStr.substr(0, pathStr.length() - 2);
+            LOG_DEBUG("[A* CONSTRAINT-DEBUG] SafeZone path INVALID: srcDir=Right tgtDir=Down path: {}", pathStr);
+        }
     }
 
     // Find shortest valid path
