@@ -5,6 +5,12 @@
 
 namespace arborvia {
 
+/// Node geometry type for layout calculations
+enum class NodeType {
+    Regular,    ///< Standard node with width/height > 0, position = top-left corner
+    Point       ///< Point node with size {0,0}, position = center = single snap point
+};
+
 /// A bend point in an edge route
 struct BendPoint {
     Point position;

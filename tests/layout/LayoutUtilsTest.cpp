@@ -694,7 +694,8 @@ TEST_F(LayoutUtilsTest, MoveSnapPoint_UpdatesSnapIndex) {
         if (nodeIt == nodeLayouts.end()) return;
 
         const NodeLayout& node = nodeIt->second;
-        float tolerance = 1.0f;
+        // With gridSize=20, snap points may be up to half grid (10px) from exact edge
+        float tolerance = 20.0f;
         bool onEdge = false;
 
         switch (nodeEdge) {

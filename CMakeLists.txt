@@ -83,6 +83,10 @@ if(ARBORVIA_BUILD_TESTS)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
+    # pugixml for SCXML test infrastructure
+    set(PUGIXML_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pugixml/src)
+    set(PUGIXML_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pugixml/src/pugixml.cpp)
+
     add_executable(arborvia_tests
         tests/core/GraphTest.cpp
         tests/core/CompoundGraphTest.cpp
@@ -91,6 +95,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/LayoutUtilsTest.cpp
         tests/layout/ManualLayoutTest.cpp
         tests/layout/SnapPointControllerTest.cpp
+        tests/layout/PointNodeRoutingTest.cpp
         tests/layout/sugiyama/SnapIndexManagerTest.cpp
         tests/layout/sugiyama/EdgeRoutingTransitionTest.cpp
         tests/layout/sugiyama/EdgeOptimizerTest.cpp
@@ -103,6 +108,16 @@ if(ARBORVIA_BUILD_TESTS)
         tests/export/SvgExportTest.cpp
         tests/interactive/DragBehaviorTest.cpp
         tests/integration/DiagonalReproductionTest.cpp
+        # SCXML infrastructure for PointNodeRoutingTest
+        tests/infrastructure/scxml/SCXMLGraph.cpp
+        tests/infrastructure/scxml/SCXMLConverter.cpp
+        tests/infrastructure/scxml/SCXMLTestLoader.cpp
+        ${PUGIXML_SOURCE}
+    )
+    target_include_directories(arborvia_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/infrastructure/scxml
+        ${PUGIXML_INCLUDE_DIR}
+        ${NLOHMANN_JSON_INCLUDE_DIR}
     )
     target_link_libraries(arborvia_tests PRIVATE arborvia GTest::gtest_main)
 
@@ -113,8 +128,24 @@ if(ARBORVIA_BUILD_TESTS)
     target_include_directories(arborvia_integration_tests PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
     target_link_libraries(arborvia_integration_tests PRIVATE GTest::gtest_main)
 
+    # SCXML converter tests (test infrastructure)
+    add_executable(arborvia_scxml_tests
+        tests/infrastructure/scxml/SCXMLGraph.cpp
+        tests/infrastructure/scxml/SCXMLConverter.cpp
+        tests/infrastructure/scxml/SCXMLTestLoader.cpp
+        tests/infrastructure/scxml/SCXMLConverterTest.cpp
+        ${PUGIXML_SOURCE}
+    )
+    target_include_directories(arborvia_scxml_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/infrastructure/scxml
+        ${PUGIXML_INCLUDE_DIR}
+        ${NLOHMANN_JSON_INCLUDE_DIR}
+    )
+    target_link_libraries(arborvia_scxml_tests PRIVATE arborvia GTest::gtest_main)
+
     include(GoogleTest)
     gtest_discover_tests(arborvia_tests)
+    gtest_discover_tests(arborvia_scxml_tests)
     # Integration tests are not auto-discovered (require manual run with display)
 endif()
 
@@ -168,8 +199,23 @@ if(ARBORVIA_BUILD_EXAMPLES)
     )
     target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
 
-    # Interactive demo
-    add_executable(interactive_demo examples/interactive_demo/main.cpp)
+    # pugixml for SCXML loader in interactive demo
+    set(DEMO_PUGIXML_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pugixml/src)
+    set(DEMO_PUGIXML_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pugixml/src/pugixml.cpp)
+
+    # Interactive demo with SCXML test visualization
+    add_executable(interactive_demo
+        examples/interactive_demo/main.cpp
+        tests/infrastructure/scxml/SCXMLGraph.cpp
+        tests/infrastructure/scxml/SCXMLConverter.cpp
+        tests/infrastructure/scxml/SCXMLTestLoader.cpp
+        ${DEMO_PUGIXML_SOURCE}
+    )
+    target_include_directories(interactive_demo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/infrastructure/scxml
+        ${DEMO_PUGIXML_INCLUDE_DIR}
+        ${NLOHMANN_JSON_INCLUDE_DIR}
+    )
     target_link_libraries(interactive_demo PRIVATE arborvia imgui SDL3::SDL3-static)
     set_target_properties(interactive_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 

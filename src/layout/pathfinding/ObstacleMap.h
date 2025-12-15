@@ -63,6 +63,18 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         EdgeId excludeEdgeId = INVALID_EDGE);
 
+    /// Add edge segments as obstacles with Point node awareness
+    /// For edges sharing the same Point target, excludes their last segment
+    /// @param edgeLayouts Edge layouts to add as obstacles
+    /// @param nodeLayouts Node layouts to check for Point nodes
+    /// @param excludeEdgeId Edge ID to exclude (the edge being routed)
+    /// @param targetNodeId Target node ID of the edge being routed
+    void addEdgeSegmentsWithPointNodeAwareness(
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        EdgeId excludeEdgeId,
+        NodeId targetNodeId);
+
     /// Add a single edge's segments as obstacles with direction-aware blocking
     /// Use this when you need to add an edge's segments after initial obstacle setup
     /// @param layout The edge layout to add as obstacles

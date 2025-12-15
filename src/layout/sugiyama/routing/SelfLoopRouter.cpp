@@ -187,8 +187,8 @@ EdgeLayout SelfLoopRouter::route(
     layout.bendPoints.reserve(3);
 
     // Grid coordinates for source, target, and bend points
-    int gSrcX, gSrcY, gTgtX, gTgtY;
-    int gBend1X, gBend1Y, gBend2X, gBend2Y, gBend3X, gBend3Y;
+    int gSrcX = 0, gSrcY = 0, gTgtX = 0, gTgtY = 0;
+    int gBend1X = 0, gBend1Y = 0, gBend2X = 0, gBend2Y = 0, gBend3X = 0, gBend3Y = 0;
 
     switch (dir) {
         case SelfLoopDirection::Right:

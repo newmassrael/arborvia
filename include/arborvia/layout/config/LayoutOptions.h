@@ -39,30 +39,10 @@ struct ChannelRoutingOptions {
     SelfLoopConfig selfLoop;          // Self-loop configuration
 };
 
-/// Configuration for grid-based coordinate snapping
+/// Configuration for grid-based coordinates
+/// Internal calculations use grid coordinates (integers), pixels are for output only
 struct GridConfig {
-    float cellSize = 0.0f;  // Grid cell size (0 = disabled, >0 = snap to multiples)
-
-    /// Check if grid snapping is enabled
-    [[nodiscard]] bool isEnabled() const noexcept { return cellSize > 0.0f; }
-
-    /// Returns cellSize if enabled, 0.0f otherwise
-    /// Caller can skip snapping when return value is 0
-    [[nodiscard]] float effectiveCellSize() const noexcept {
-        return isEnabled() ? cellSize : 0.0f;
-    }
-
-    /// Snap value to grid (returns original if grid disabled)
-    [[nodiscard]] float snap(float value) const noexcept {
-        return isEnabled()
-            ? std::round(value / cellSize) * cellSize
-            : value;
-    }
-
-    /// Snap point to grid (returns original if grid disabled)
-    [[nodiscard]] Point snap(const Point& p) const noexcept {
-        return {snap(p.x), snap(p.y)};
-    }
+    float cellSize = 20.0f;  // Grid cell size in pixels
 
     /// Convert pixel coordinate to grid unit (round to nearest)
     int toGrid(float pixel) const {

@@ -263,6 +263,59 @@ void ObstacleMap::addEdgeSegments(
     }
 }
 
+void ObstacleMap::addEdgeSegmentsWithPointNodeAwareness(
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    EdgeId excludeEdgeId,
+    NodeId targetNodeId) {
+
+    // Initialize edge segment tracking if needed
+    if (edgeSegmentCells_.size() != grid_.size()) {
+        edgeSegmentCells_.resize(grid_.size(), false);
+    }
+
+    // Check if target node is a Point node
+    bool targetIsPointNode = false;
+    auto targetIt = nodeLayouts.find(targetNodeId);
+    if (targetIt != nodeLayouts.end()) {
+        targetIsPointNode = targetIt->second.isPointNode();
+    }
+
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        if (edgeId == excludeEdgeId) {
+            continue;  // Skip the edge being routed
+        }
+
+        // Check if this edge shares the same Point target
+        bool sharesPointTarget = targetIsPointNode && (layout.to == targetNodeId);
+
+        // Build segments from edge layout
+        std::vector<std::pair<Point, Point>> segments;
+        layout.forEachSegment([&](const Point& p1, const Point& p2) {
+            segments.emplace_back(p1, p2);
+        });
+
+        // Register segments with direction-aware blocking
+        // For edges sharing a Point target: skip the ENTIRE last segment
+        // For normal edges: skip only endpoint cells
+        for (size_t i = 0; i < segments.size(); ++i) {
+            bool isLastSegment = (i + 1 == segments.size());
+            
+            // Skip entire last segment for edges sharing a Point target
+            if (sharesPointTarget && isLastSegment) {
+                LOG_DEBUG("[addEdgeSegmentsWithPointNodeAwareness] Edge {} shares Point target {}, skipping last segment",
+                          edgeId, targetNodeId);
+                continue;
+            }
+            
+            bool skipStartCell = (i == 0);  // First segment: skip source point
+            bool skipEndCell = isLastSegment;  // Last segment: skip target point
+            
+            markSegmentBlockedWithSkip(segments[i].first, segments[i].second, skipStartCell, skipEndCell);
+        }
+    }
+}
+
 void ObstacleMap::addSingleEdgeSegments(const EdgeLayout& layout) {
     // Initialize edge segment tracking if needed
     if (edgeSegmentCells_.size() != grid_.size()) {

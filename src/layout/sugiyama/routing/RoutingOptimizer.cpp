@@ -65,7 +65,6 @@ void RoutingOptimizer::optimize(
     // IMPORTANT: Always recalculate snap indices from final positions
     // The optimizer may change positions while keeping the same NodeEdge,
     // so preserving old indices would cause position/index mismatch
-    float gridSizeForCalc = constants::effectiveGridSize(options.gridConfig.cellSize);
     for (auto& [edgeId, layout] : optimizedLayouts) {
         auto& existing = result.edgeLayouts[edgeId];
 

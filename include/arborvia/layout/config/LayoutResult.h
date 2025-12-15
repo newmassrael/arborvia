@@ -17,12 +17,21 @@ struct ConstraintPlacementResult;
 /// Positioned node in the layout result
 struct NodeLayout {
     NodeId id = INVALID_NODE;
-    Point position;           // Top-left corner position
-    Size size;                // Node dimensions
+    Point position;           // Top-left corner for Regular, center for Point
+    Size size;                // Node dimensions (0,0 for Point nodes)
     int layer = 0;            // Layer index in hierarchy
     int order = 0;            // Order within layer
+    NodeType nodeType = NodeType::Regular;  // Geometry type
+    
+    /// Check if this is a point node (single snap point at center)
+    bool isPointNode() const {
+        return nodeType == NodeType::Point;
+    }
     
     Point center() const {
+        if (nodeType == NodeType::Point) {
+            return position;  // For point nodes, position IS the center
+        }
         return {position.x + size.width / 2, position.y + size.height / 2};
     }
     

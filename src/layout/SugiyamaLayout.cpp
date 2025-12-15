@@ -339,6 +339,11 @@ void SugiyamaLayout::assignCoordinates() {
             layout.size = state_->nodeSizes[id];
             layout.layer = static_cast<int>(layerIdx);
             layout.order = static_cast<int>(order);
+            
+            // Detect Point nodes (size = {0,0})
+            if (layout.size.width < 1.0f && layout.size.height < 1.0f) {
+                layout.nodeType = NodeType::Point;
+            }
 
             state_->result.setNodeLayout(id, layout);
         }
@@ -413,6 +418,9 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
             layout.id = child;
             layout.position = pos;
             layout.size = size;
+            if (size.width < 1.0f && size.height < 1.0f) {
+                layout.nodeType = NodeType::Point;
+            }
 
             state_->result.setNodeLayout(child, layout);
 
@@ -451,6 +459,9 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
         layout.id = child;
         layout.position = pos;
         layout.size = size;
+        if (size.width < 1.0f && size.height < 1.0f) {
+            layout.nodeType = NodeType::Point;
+        }
 
         state_->result.setNodeLayout(child, layout);
 

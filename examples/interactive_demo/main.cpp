@@ -19,6 +19,17 @@
 #include "CommandServer.h"
 #include <arborvia/core/TaskExecutor.h>
 
+// SCXML test infrastructure
+#include "SCXMLTestLoader.h"
+#include "SCXMLGraph.h"
+#include "SCXMLTypes.h"
+
+using arborvia::test::scxml::SCXMLTestLoader;
+using arborvia::test::scxml::SCXMLGraph;
+using arborvia::test::scxml::SCXMLNodeType;
+using arborvia::test::scxml::TestInfo;
+using arborvia::test::scxml::ConvertOptions;
+
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -1073,23 +1084,110 @@ public:
                 fillColor = COLOR_NODE_HOVER;
             }
 
+            // Check if this is a point node (size = 0,0)
+            // For point nodes, position IS the center (used for Initial, Final, History)
+            bool isPointNode = (layout.size.width < 1.0f && layout.size.height < 1.0f);
+            
             ImVec2 p1 = worldToScreen(layout.position);
             ImVec2 p2 = worldToScreen({layout.position.x + layout.size.width,
                                        layout.position.y + layout.size.height});
-            float scaledRounding = 5.0f * zoom_;
+            
+            // Get center and radius for circular nodes
+            float centerX, centerY, radius;
+            if (isPointNode) {
+                // Point node: position is center, use fixed radius
+                ImVec2 centerScreen = worldToScreen(layout.position);
+                centerX = centerScreen.x;
+                centerY = centerScreen.y;
+                radius = 10.0f * zoom_;  // Fixed radius for point nodes
+            } else {
+                // Regular node: center is middle of bounding box
+                centerX = (p1.x + p2.x) / 2.0f;
+                centerY = (p1.y + p2.y) / 2.0f;
+                radius = std::min(p2.x - p1.x, p2.y - p1.y) / 2.0f;
+            }
 
-            drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
-            drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
+            // Check SCXML node type for special rendering
+            bool drawnAsSpecial = false;
+            if (scxmlModeActive_ && scxmlGraph_) {
+                SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
+                
+                switch (nodeType) {
+                    case SCXMLNodeType::Initial: {
+                        // Initial pseudo-state: filled black circle at grid point
+                        ImU32 initialColor = IM_COL32(30, 30, 30, 255);
+                        drawList->AddCircleFilled({centerX, centerY}, radius, initialColor);
+                        drawnAsSpecial = true;
+                        break;
+                    }
+                    case SCXMLNodeType::Final: {
+                        // Final state: double circle at grid point
+                        ImU32 outerColor = COLOR_NODE_BORDER;
+                        float outerRadius = radius;
+                        float innerRadius = radius * 0.6f;
+                        drawList->AddCircle({centerX, centerY}, outerRadius, outerColor, 0, 2.0f * zoom_);
+                        drawList->AddCircleFilled({centerX, centerY}, innerRadius, IM_COL32(30, 30, 30, 255));
+                        drawnAsSpecial = true;
+                        break;
+                    }
+                    case SCXMLNodeType::History:
+                    case SCXMLNodeType::HistoryDeep: {
+                        // History: circle with "H" or "H*" at grid point
+                        drawList->AddCircle({centerX, centerY}, radius, COLOR_NODE_BORDER, 0, 2.0f * zoom_);
+                        drawList->AddCircleFilled({centerX, centerY}, radius - 1.0f * zoom_, fillColor);
+                        const char* histText = (nodeType == SCXMLNodeType::HistoryDeep) ? "H*" : "H";
+                        ImVec2 textSize = ImGui::CalcTextSize(histText);
+                        ImVec2 textPos = {centerX - textSize.x / 2, centerY - textSize.y / 2};
+                        drawList->AddText(textPos, COLOR_TEXT, histText);
+                        drawnAsSpecial = true;
+                        break;
+                    }
+                    case SCXMLNodeType::Parallel: {
+                        // Parallel state: rectangle with dashed border
+                        float scaledRounding = 5.0f * zoom_;
+                        drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
+                        // Dashed border effect: double line
+                        drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
+                        drawList->AddRect({p1.x + 3*zoom_, p1.y + 3*zoom_}, 
+                                         {p2.x - 3*zoom_, p2.y - 3*zoom_}, 
+                                         IM_COL32(100, 100, 100, 150), scaledRounding, 0, 1.0f * zoom_);
+                        drawnAsSpecial = true;
+                        // Fall through to draw label
+                    }
+                    default:
+                        break;
+                }
+            }
 
-            // Draw label
+            // Standard rectangular node rendering
+            if (!drawnAsSpecial) {
+                float scaledRounding = 5.0f * zoom_;
+                drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
+                drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
+            }
+
+            // Draw label (for State, Parallel types)
             const NodeData& node = graph_.getNode(id);
             if (!node.label.empty()) {
-                ImVec2 textSize = ImGui::CalcTextSize(node.label.c_str());
-                float scaledWidth = layout.size.width * zoom_;
-                float scaledHeight = layout.size.height * zoom_;
-                ImVec2 textPos = {p1.x + (scaledWidth - textSize.x) / 2,
-                                 p1.y + (scaledHeight - textSize.y) / 2};
-                drawList->AddText(textPos, COLOR_TEXT, node.label.c_str());
+                // Skip label for Initial/Final/History (already drawn or no label)
+                bool skipLabel = false;
+                if (scxmlModeActive_ && scxmlGraph_) {
+                    SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
+                    if (nodeType == SCXMLNodeType::Initial || 
+                        nodeType == SCXMLNodeType::Final ||
+                        nodeType == SCXMLNodeType::History ||
+                        nodeType == SCXMLNodeType::HistoryDeep) {
+                        skipLabel = true;
+                    }
+                }
+                if (!skipLabel) {
+                    ImVec2 textSize = ImGui::CalcTextSize(node.label.c_str());
+                    float scaledWidth = layout.size.width * zoom_;
+                    float scaledHeight = layout.size.height * zoom_;
+                    ImVec2 textPos = {p1.x + (scaledWidth - textSize.x) / 2,
+                                     p1.y + (scaledHeight - textSize.y) / 2};
+                    drawList->AddText(textPos, COLOR_TEXT, node.label.c_str());
+                }
             }
 
             // Draw snap points if show enabled
@@ -1208,7 +1306,9 @@ public:
                 drawList->AddCircle(screenPos, radius, borderColor, 0, 1.5f);
 
                 // Draw snap index label for source
-                if (showSnapIndices_) {
+                // Skip for Point nodes (they only have one snap point, label would be redundant)
+                bool isSourcePointNode = (nodeLayout.size.width < 1.0f && nodeLayout.size.height < 1.0f);
+                if (showSnapIndices_ && !isSourcePointNode) {
                     char label[32];
                     const char* edgeName = "";
                     switch (edgeLayout.sourceEdge) {
@@ -1282,7 +1382,11 @@ public:
                 drawList->AddCircle(screenPos, radius, borderColor, 0, 1.5f);
 
                 // Draw snap index label for target
-                if (showSnapIndices_) {
+                // Skip for Point nodes (they only have one snap point, label would be redundant)
+                auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
+                bool isTargetPointNode = (tgtNodeIt != nodeLayouts_.end() && 
+                    tgtNodeIt->second.size.width < 1.0f && tgtNodeIt->second.size.height < 1.0f);
+                if (showSnapIndices_ && !isTargetPointNode) {
                     char label[32];
                     const char* edgeName = "";
                     switch (edgeLayout.targetEdge) {
@@ -1292,7 +1396,6 @@ public:
                         case NodeEdge::Right: edgeName = "R"; break;
                     }
                     // Compute snap index from position (use target node)
-                    auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
                     int tgtSnapIdx = 0;
                     if (tgtNodeIt != nodeLayouts_.end()) {
                         tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
@@ -1606,6 +1709,71 @@ public:
             }
         }
 
+        // SCXML Test Visualization Section
+        ImGui::Separator();
+        if (scxmlLoader_ && scxmlLoader_->getTestCount() > 0) {
+            if (ImGui::CollapsingHeader("SCXML Tests", ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Current test info
+                if (scxmlModeActive_ && currentTestIndex_ >= 0) {
+                    const auto* testInfo = getCurrentTestInfo();
+                    if (testInfo) {
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Test %s", testInfo->id.c_str());
+                        ImGui::TextWrapped("%s", testInfo->file.c_str());
+                        if (!testInfo->description.empty()) {
+                            ImGui::TextWrapped("%s", testInfo->description.c_str());
+                        }
+                    }
+                    ImGui::Text("Index: %d / %zu", currentTestIndex_ + 1, scxmlLoader_->getTestCount());
+                } else {
+                    ImGui::TextDisabled("No test loaded");
+                    ImGui::Text("Tests available: %zu", scxmlLoader_->getTestCount());
+                }
+
+                // Navigation buttons
+                ImGui::Spacing();
+                if (ImGui::Button("Prev")) {
+                    prevTest();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Next")) {
+                    nextTest();
+                }
+                ImGui::SameLine();
+                if (scxmlModeActive_) {
+                    if (ImGui::Button("Exit SCXML")) {
+                        exitSCXMLMode();
+                    }
+                } else {
+                    if (ImGui::Button("Load First")) {
+                        loadSCXMLTest(0);
+                    }
+                }
+
+                // Test selection combo
+                ImGui::Spacing();
+                if (ImGui::BeginCombo("Select Test", currentTestIndex_ >= 0 ?
+                    scxmlLoader_->getTest(static_cast<size_t>(currentTestIndex_))->id.c_str() : "None")) {
+                    for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
+                        const auto* info = scxmlLoader_->getTest(i);
+                        bool isSelected = (static_cast<int>(i) == currentTestIndex_);
+                        std::string label = info->id + " - " + info->file;
+                        if (ImGui::Selectable(label.c_str(), isSelected)) {
+                            loadSCXMLTest(i);
+                        }
+                        if (isSelected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+        } else {
+            ImGui::TextDisabled("SCXML tests not loaded");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Place SCXML tests in resources/scxml/");
+            }
+        }
+
         ImGui::Separator();
         if (ImGui::Button("Reset Layout")) {
             manualManager_->clearManualState();
@@ -1718,6 +1886,13 @@ private:
     std::mutex queueMutex_;
     std::unique_ptr<ITaskExecutor> executor_ = std::make_unique<JThreadExecutor>();
 
+    // SCXML test visualization state
+    std::unique_ptr<SCXMLTestLoader> scxmlLoader_;
+    std::unique_ptr<SCXMLGraph> scxmlGraph_;
+    int currentTestIndex_ = -1;
+    bool scxmlModeActive_ = false;
+    std::string scxmlBasePath_;
+
 public:
     // Start command server
     bool startCommandServer() {
@@ -1736,6 +1911,78 @@ public:
     const std::string& pauseMessage() const { return pauseMessage_; }
     bool shouldQuit() const { return shouldQuit_; }
     int port() const { return port_; }
+
+    // SCXML test visualization methods
+    bool initSCXML(const std::string& basePath) {
+        scxmlBasePath_ = basePath;
+        scxmlLoader_ = std::make_unique<SCXMLTestLoader>(basePath);
+        if (!scxmlLoader_->loadIndex()) {
+            std::cerr << "Failed to load SCXML test index from " << basePath << std::endl;
+            scxmlLoader_.reset();
+            return false;
+        }
+        std::cout << "Loaded " << scxmlLoader_->getTestCount() << " SCXML tests from " << basePath << std::endl;
+        return true;
+    }
+
+    bool loadSCXMLTest(size_t index) {
+        if (!scxmlLoader_ || index >= scxmlLoader_->getTestCount()) {
+            return false;
+        }
+
+        auto newGraph = scxmlLoader_->loadGraph(index);
+        if (!newGraph) {
+            std::cerr << "Failed to load SCXML test " << index << std::endl;
+            return false;
+        }
+
+        const auto* testInfo = scxmlLoader_->getTest(index);
+        std::cout << "Loading SCXML test " << testInfo->id << ": " << testInfo->file << std::endl;
+
+        // Replace the current graph with SCXMLGraph
+        scxmlGraph_ = std::move(newGraph);
+        currentTestIndex_ = static_cast<int>(index);
+        scxmlModeActive_ = true;
+
+        // Copy to main graph_ and do layout
+        graph_ = *scxmlGraph_;
+        manualManager_->clearManualState();
+        doLayout();
+
+        return true;
+    }
+
+    void nextTest() {
+        if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
+        size_t next = (currentTestIndex_ < 0) ? 0 :
+                      static_cast<size_t>((currentTestIndex_ + 1) % static_cast<int>(scxmlLoader_->getTestCount()));
+        loadSCXMLTest(next);
+    }
+
+    void prevTest() {
+        if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
+        size_t prev = (currentTestIndex_ <= 0) ?
+                      scxmlLoader_->getTestCount() - 1 :
+                      static_cast<size_t>(currentTestIndex_ - 1);
+        loadSCXMLTest(prev);
+    }
+
+    void exitSCXMLMode() {
+        scxmlModeActive_ = false;
+        scxmlGraph_.reset();
+        currentTestIndex_ = -1;
+        // Restore default graph
+        graph_ = Graph();
+        setupGraph();
+        doLayout();
+    }
+
+    bool isSCXMLModeActive() const { return scxmlModeActive_; }
+    size_t getSCXMLTestCount() const { return scxmlLoader_ ? scxmlLoader_->getTestCount() : 0; }
+    const TestInfo* getCurrentTestInfo() const {
+        if (!scxmlLoader_ || currentTestIndex_ < 0) return nullptr;
+        return scxmlLoader_->getTest(static_cast<size_t>(currentTestIndex_));
+    }
 
     // Process async optimization results (call from main loop)
     void processMainThreadQueue() {
@@ -2440,6 +2687,77 @@ private:
             debugObstacles_.reset();
             commandServer_.sendResponse("OK astar_viz_off");
         }
+        else if (cmd.name == "scxml_load" && !cmd.args.empty()) {
+            // Load SCXML test by index or ID
+            if (!scxmlLoader_) {
+                commandServer_.sendResponse("ERROR SCXML not initialized");
+            } else {
+                bool success = false;
+                // Try as numeric index first
+                try {
+                    size_t index = std::stoul(cmd.args[0]);
+                    success = loadSCXMLTest(index);
+                } catch (...) {
+                    // Try as test ID
+                    for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
+                        if (scxmlLoader_->getTest(i)->id == cmd.args[0]) {
+                            success = loadSCXMLTest(i);
+                            break;
+                        }
+                    }
+                }
+                if (success) {
+                    commandServer_.sendResponse("OK scxml_load " + std::to_string(currentTestIndex_));
+                } else {
+                    commandServer_.sendResponse("ERROR test not found: " + cmd.args[0]);
+                }
+            }
+        }
+        else if (cmd.name == "scxml_next") {
+            if (!scxmlLoader_) {
+                commandServer_.sendResponse("ERROR SCXML not initialized");
+            } else {
+                nextTest();
+                commandServer_.sendResponse("OK scxml_next " + std::to_string(currentTestIndex_));
+            }
+        }
+        else if (cmd.name == "scxml_prev") {
+            if (!scxmlLoader_) {
+                commandServer_.sendResponse("ERROR SCXML not initialized");
+            } else {
+                prevTest();
+                commandServer_.sendResponse("OK scxml_prev " + std::to_string(currentTestIndex_));
+            }
+        }
+        else if (cmd.name == "scxml_list") {
+            if (!scxmlLoader_) {
+                commandServer_.sendResponse("ERROR SCXML not initialized");
+            } else {
+                std::ostringstream oss;
+                oss << "SCXML_TESTS count=" << scxmlLoader_->getTestCount() << "\\n";
+                for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
+                    const auto* info = scxmlLoader_->getTest(i);
+                    oss << i << ": " << info->id << " - " << info->file << "\\n";
+                }
+                commandServer_.sendResponse(oss.str());
+            }
+        }
+        else if (cmd.name == "scxml_info") {
+            if (!scxmlLoader_) {
+                commandServer_.sendResponse("ERROR SCXML not initialized");
+            } else if (currentTestIndex_ < 0) {
+                commandServer_.sendResponse("SCXML_INFO none loaded");
+            } else {
+                const auto* info = getCurrentTestInfo();
+                std::ostringstream oss;
+                oss << "SCXML_INFO index=" << currentTestIndex_
+                    << " id=" << info->id
+                    << " file=" << info->file
+                    << " nodes=" << graph_.nodeCount()
+                    << " edges=" << graph_.edgeCount();
+                commandServer_.sendResponse(oss.str());
+            }
+        }
         else if (cmd.name == "quit") {
             commandServer_.sendResponse("OK bye");
             shouldQuit_ = true;
@@ -2500,6 +2818,20 @@ int main(int argc, char* argv[]) {
     ImGui_ImplSDLRenderer3_Init(renderer);
 
     InteractiveDemo demo(port);
+
+    // Try to load SCXML tests from resources directory
+    // Look for resources/scxml relative to executable or common paths
+    std::vector<std::string> scxmlPaths = {
+        "resources/scxml",
+        "../resources/scxml",
+        "../../resources/scxml",
+        "../../../resources/scxml"
+    };
+    for (const auto& path : scxmlPaths) {
+        if (demo.initSCXML(path)) {
+            break;
+        }
+    }
 
     // Start command server for external control
     if (!demo.startCommandServer()) {

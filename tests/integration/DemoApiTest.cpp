@@ -152,8 +152,8 @@ protected:
         demoPid_ = fork();
         if (demoPid_ == 0) {
             // Child process - run demo
-            freopen("/dev/null", "w", stdout);
-            freopen("/dev/null", "w", stderr);
+            [[maybe_unused]] auto* unused1 = freopen("/dev/null", "w", stdout);
+            [[maybe_unused]] auto* unused2 = freopen("/dev/null", "w", stderr);
             std::string portArg = "--port=" + std::to_string(TEST_PORT);
             execl("./build/examples/interactive_demo", "interactive_demo", portArg.c_str(), nullptr);
             _exit(1);

@@ -107,6 +107,13 @@ Point GridSnapCalculator::getPositionFromCandidateIndex(
     int candidateIndex,
     float gridSize)
 {
+    // Point node handling (Single Source of Truth)
+    // Point nodes have no valid snap candidates, always return center
+    int candidateCount = getCandidateCount(node, edge, gridSize);
+    if (candidateCount <= 0) {
+        return node.center();
+    }
+
     auto [gridStart, gridEnd] = getEdgeGridRange(node, edge, gridSize);
     int gridPos = gridStart + candidateIndex;
     float pixelCoord = gridPos * gridSize;
