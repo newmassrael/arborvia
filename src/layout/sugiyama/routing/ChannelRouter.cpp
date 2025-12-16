@@ -341,48 +341,50 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
 
     float gridSize = options.gridConfig.cellSize;
 
-    if (isVertical) {
-        // Vertical layout: source bottom, target top
-        // Use SnapPointCalculator for grid-aligned snap points (A* standard)
-        if (fromCenter.y < toCenter.y) {
-            layout.sourceEdge = NodeEdge::Bottom;
-            layout.targetEdge = NodeEdge::Top;
-            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
-                fromLayout, NodeEdge::Bottom, 0.5f, gridSize);
-            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
-                toLayout, NodeEdge::Top, 0.5f, gridSize);
-        } else {
-            layout.sourceEdge = NodeEdge::Top;
-            layout.targetEdge = NodeEdge::Bottom;
-            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
-                fromLayout, NodeEdge::Top, 0.5f, gridSize);
-            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
-                toLayout, NodeEdge::Bottom, 0.5f, gridSize);
-        }
+    // Point nodes always connect at center (no distribution needed)
+    // Normal nodes use center as temporary - SnapDistributor will redistribute later
+    bool fromIsPoint = fromLayout.isPointNode();
+    bool toIsPoint = toLayout.isPointNode();
 
-        // Store channel Y for recalculation (already grid-aligned from computeChannelY)
-        layout.channelY = channel.yPosition;
+    // Determine sourceEdge/targetEdge
+    // Point nodes: use dominant axis direction (consistent with LayoutUtils)
+    // Normal nodes: use layout direction (isVertical)
+    if (fromIsPoint) {
+        layout.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(fromLayout, toLayout);
+    } else if (isVertical) {
+        layout.sourceEdge = (fromCenter.y < toCenter.y) ? NodeEdge::Bottom : NodeEdge::Top;
     } else {
-        // Horizontal layout: source right, target left
-        // Use SnapPointCalculator for grid-aligned snap points (A* standard)
-        if (fromCenter.x < toCenter.x) {
-            layout.sourceEdge = NodeEdge::Right;
-            layout.targetEdge = NodeEdge::Left;
-            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
-                fromLayout, NodeEdge::Right, 0.5f, gridSize);
-            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
-                toLayout, NodeEdge::Left, 0.5f, gridSize);
-        } else {
-            layout.sourceEdge = NodeEdge::Left;
-            layout.targetEdge = NodeEdge::Right;
-            layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
-                fromLayout, NodeEdge::Left, 0.5f, gridSize);
-            layout.targetPoint = SnapPointCalculator::calculateFromRatio(
-                toLayout, NodeEdge::Right, 0.5f, gridSize);
-        }
+        layout.sourceEdge = (fromCenter.x < toCenter.x) ? NodeEdge::Right : NodeEdge::Left;
+    }
 
-        // Store channel X (stored in channelY field, already grid-aligned from computeChannelY)
-        layout.channelY = channel.yPosition;
+    if (toIsPoint) {
+        layout.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(fromLayout, toLayout);
+    } else if (isVertical) {
+        layout.targetEdge = (fromCenter.y < toCenter.y) ? NodeEdge::Top : NodeEdge::Bottom;
+    } else {
+        layout.targetEdge = (fromCenter.x < toCenter.x) ? NodeEdge::Left : NodeEdge::Right;
+    }
+
+    // Store channel position for recalculation
+    layout.channelY = channel.yPosition;
+
+    // Set snap points:
+    // - Point nodes: always center (fixed)
+    // - Normal nodes: use center temporarily, SnapDistributor will redistribute with proper indices
+    if (fromIsPoint) {
+        layout.sourcePoint = fromCenter;
+    } else {
+        // Temporary center position - SnapDistributor will override with proper index-based position
+        layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+            fromLayout, layout.sourceEdge, 0.5f, gridSize);
+    }
+
+    if (toIsPoint) {
+        layout.targetPoint = toCenter;
+    } else {
+        // Temporary center position - SnapDistributor will override with proper index-based position
+        layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+            toLayout, layout.targetEdge, 0.5f, gridSize);
     }
 
     // NOTE: snapIndex is no longer stored - computed from position as needed

@@ -237,7 +237,12 @@ bool UnifiedRetryChain::tryAStarPath(
             Point pixelPoint = obstacles.gridToPixel(pathResult.path[i].x, pathResult.path[i].y);
             layout.bendPoints.push_back({pixelPoint});
         }
-        
+
+        // Ensure orthogonality at source and target
+        // The grid path may not align perfectly with sourcePoint/targetPoint
+        // (e.g., sourcePoint.y=50 while grid bend is at y=60 for gridSize=20)
+        ensureEndpointOrthogonality(layout);
+
         // Log generated bend points in pixel coordinates
         std::string pixelPathStr = "src=(" + std::to_string(static_cast<int>(layout.sourcePoint.x)) + "," 
                                  + std::to_string(static_cast<int>(layout.sourcePoint.y)) + ")";
@@ -596,6 +601,73 @@ UnifiedRetryChain::PathValidationResult UnifiedRetryChain::validatePathResult(
     }
 
     return result;
+}
+
+void UnifiedRetryChain::ensureEndpointOrthogonality(EdgeLayout& layout) const {
+    // Ensure the path from sourcePoint to first bend is orthogonal based on sourceEdge
+    // and the path from last bend to targetPoint is orthogonal based on targetEdge
+    //
+    // The issue: A* works on a grid, so bend points are grid-aligned.
+    // But sourcePoint/targetPoint may not be grid-aligned (e.g., Y=50 for gridSize=20).
+    // This creates diagonal segments from source to first bend or from last bend to target.
+
+    constexpr float TOLERANCE = 1.0f;  // Tolerance for coordinate comparison
+
+    // --- Fix source side ---
+    Point firstRef = layout.bendPoints.empty() ? layout.targetPoint : layout.bendPoints[0].position;
+    bool isHorizontalSource = (layout.sourceEdge == NodeEdge::Left || layout.sourceEdge == NodeEdge::Right);
+
+    if (isHorizontalSource) {
+        // First segment should be horizontal (same Y)
+        // If Y values differ, insert alignment point
+        if (std::abs(firstRef.y - layout.sourcePoint.y) > TOLERANCE) {
+            // Insert alignment point at (firstRef.x, sourcePoint.y)
+            // This creates: source -> (firstRef.x, source.y) -> firstRef
+            Point alignPoint{firstRef.x, layout.sourcePoint.y};
+            layout.bendPoints.insert(layout.bendPoints.begin(), {alignPoint});
+            LOG_DEBUG("[ensureEndpointOrthogonality] Source alignment: inserted ({},{}) before first bend",
+                      alignPoint.x, alignPoint.y);
+        }
+    } else {
+        // First segment should be vertical (same X)
+        // If X values differ, insert alignment point
+        if (std::abs(firstRef.x - layout.sourcePoint.x) > TOLERANCE) {
+            // Insert alignment point at (sourcePoint.x, firstRef.y)
+            // This creates: source -> (source.x, firstRef.y) -> firstRef
+            Point alignPoint{layout.sourcePoint.x, firstRef.y};
+            layout.bendPoints.insert(layout.bendPoints.begin(), {alignPoint});
+            LOG_DEBUG("[ensureEndpointOrthogonality] Source alignment: inserted ({},{}) before first bend",
+                      alignPoint.x, alignPoint.y);
+        }
+    }
+
+    // --- Fix target side ---
+    Point lastRef = layout.bendPoints.empty() ? layout.sourcePoint : layout.bendPoints.back().position;
+    bool isHorizontalTarget = (layout.targetEdge == NodeEdge::Left || layout.targetEdge == NodeEdge::Right);
+
+    if (isHorizontalTarget) {
+        // Last segment should be horizontal (same Y)
+        // If Y values differ, insert alignment point
+        if (std::abs(lastRef.y - layout.targetPoint.y) > TOLERANCE) {
+            // Insert alignment point at (lastRef.x, targetPoint.y)
+            // This creates: lastRef -> (lastRef.x, target.y) -> target
+            Point alignPoint{lastRef.x, layout.targetPoint.y};
+            layout.bendPoints.push_back({alignPoint});
+            LOG_DEBUG("[ensureEndpointOrthogonality] Target alignment: inserted ({},{}) after last bend",
+                      alignPoint.x, alignPoint.y);
+        }
+    } else {
+        // Last segment should be vertical (same X)
+        // If X values differ, insert alignment point
+        if (std::abs(lastRef.x - layout.targetPoint.x) > TOLERANCE) {
+            // Insert alignment point at (targetPoint.x, lastRef.y)
+            // This creates: lastRef -> (target.x, lastRef.y) -> target
+            Point alignPoint{layout.targetPoint.x, lastRef.y};
+            layout.bendPoints.push_back({alignPoint});
+            LOG_DEBUG("[ensureEndpointOrthogonality] Target alignment: inserted ({},{}) after last bend",
+                      alignPoint.x, alignPoint.y);
+        }
+    }
 }
 
 }  // namespace arborvia

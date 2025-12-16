@@ -229,6 +229,48 @@ public:
         int end,
         int count,
         std::vector<int>& outPositions);
+
+private:
+    // =========================================================================
+    // Corner Exclusion Helpers (Single Source of Truth)
+    // =========================================================================
+
+    /**
+     * @brief Check if a coordinate is at a corner of the node edge.
+     *
+     * Corners are points where two edges meet, causing direction ambiguity.
+     * Snap points must NOT be placed at corners.
+     *
+     * @param node Node layout
+     * @param edge Which edge the coordinate is on
+     * @param alongEdgeCoord Coordinate along the edge (X for Top/Bottom, Y for Left/Right)
+     * @param gridSize Grid cell size (unused, reserved for future epsilon scaling)
+     * @return True if coordinate is at a corner (within epsilon tolerance)
+     */
+    static bool isAtCorner(
+        const NodeLayout& node,
+        NodeEdge edge,
+        float alongEdgeCoord,
+        float gridSize);
+
+    /**
+     * @brief Adjust coordinate away from corner by one grid unit.
+     *
+     * If the coordinate is at the start corner, moves it inward (increases).
+     * If the coordinate is at the end corner, moves it inward (decreases).
+     * If not at a corner, returns the coordinate unchanged.
+     *
+     * @param node Node layout
+     * @param edge Which edge the coordinate is on
+     * @param alongEdgeCoord Coordinate along the edge
+     * @param gridSize Grid cell size (used for adjustment amount)
+     * @return Adjusted coordinate that is not at a corner
+     */
+    static float adjustAwayFromCorner(
+        const NodeLayout& node,
+        NodeEdge edge,
+        float alongEdgeCoord,
+        float gridSize);
 };
 
 }  // namespace arborvia

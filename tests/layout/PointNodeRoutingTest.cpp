@@ -473,13 +473,31 @@ TEST_F(PointNodeRoutingTest, AfterDrag_NoSpikePattern_WhenTargetMovesAbove) {
         << "Bug: sourceEdge=" << static_cast<int>(edgeLayout->sourceEdge)
         << " (0=Top, 1=Bottom) may not match new target direction after drag.";
 
-    // 추가 검증: 타겟이 위쪽이면 sourceEdge는 Top이어야 함 (Point 노드는 중심에서 출발)
-    if (targetIsAbove) {
-        // Point 노드는 어느 방향이든 중심에서 출발하지만,
-        // A*의 첫 이동 방향을 결정하는 sourceEdge는 타겟 방향과 일치해야 함
-        EXPECT_EQ(edgeLayout->sourceEdge, NodeEdge::Top)
-            << "When target is above source, sourceEdge should be Top(0) to avoid spike, not "
-            << static_cast<int>(edgeLayout->sourceEdge)
-            << " (Bottom=1 would cause downward first move creating spike)";
+    // 추가 검증: sourceEdge는 주축(major axis)에 따라 결정됨
+    // X 차이 > Y 차이 → Right/Left, Y 차이 >= X 차이 → Top/Bottom
+    Point srcCenter = initialLayout->center();
+    Point tgtCenter = s0Layout->center();
+    float deltaX = std::abs(tgtCenter.x - srcCenter.x);
+    float deltaY = std::abs(tgtCenter.y - srcCenter.y);
+
+    if (deltaY >= deltaX) {
+        // Y축이 주축 - sourceEdge는 Top 또는 Bottom
+        if (targetIsAbove) {
+            EXPECT_EQ(edgeLayout->sourceEdge, NodeEdge::Top)
+                << "When Y is major axis and target is above, sourceEdge should be Top";
+        } else {
+            EXPECT_EQ(edgeLayout->sourceEdge, NodeEdge::Bottom)
+                << "When Y is major axis and target is below, sourceEdge should be Bottom";
+        }
+    } else {
+        // X축이 주축 - sourceEdge는 Left 또는 Right
+        bool targetIsRight = tgtCenter.x > srcCenter.x;
+        if (targetIsRight) {
+            EXPECT_EQ(edgeLayout->sourceEdge, NodeEdge::Right)
+                << "When X is major axis and target is right, sourceEdge should be Right";
+        } else {
+            EXPECT_EQ(edgeLayout->sourceEdge, NodeEdge::Left)
+                << "When X is major axis and target is left, sourceEdge should be Left";
+        }
     }
 }

@@ -3,6 +3,7 @@
 #include <arborvia/layout/api/LayoutController.h>
 #include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
 #include "../../../src/layout/snap/GridSnapCalculator.h"
+#include "../../../src/layout/optimization/astar/AStarEdgeOptimizer.h"
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -5306,4 +5307,232 @@ TEST(EdgeRoutingTransitionTest, SnapPosition_NoDuplicatesOnSameNodeEdge) {
     EXPECT_EQ(duplicateCount, 0)
         << "No two edges should share the same snap position on a node edge!\n"
         << errors.str();
+}
+
+// =============================================================================
+// TDD Red: Snap position collision when edge joins another edge's NodeEdge
+// =============================================================================
+// Bug: When Edge 1 changes its NodeEdge and joins Edge 2's NodeEdge,
+// Edge 2's snap position is not recalculated, causing both edges to share
+// the same sourcePoint.
+//
+// Scenario from user's bug report:
+//   Edge 1 snap: src=(60,160) snapIdx=2 conn=1/2
+//   Edge 2 path: (60,160)->(60,340)->...
+// Both edges share sourcePoint (60,160) - this is the bug.
+TEST(EdgeRoutingTransitionTest, SnapPositionCollision_EdgeJoinsExistingNodeEdge) {
+    // Setup: 3 nodes in a vertical line
+    // Node 0 at top, Node 1 in middle, Node 2 at bottom
+    //
+    // Initial state:
+    //   Edge 0: Node 0 -> Node 1 (exits from Node 0's BOTTOM)
+    //   Edge 1: Node 0 -> Node 2 (exits from Node 0's BOTTOM) - same NodeEdge as Edge 0
+    //
+    // Both edges should have DIFFERENT sourcePoints after distribution.
+    
+    using namespace arborvia;
+    
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{120, 60}, "n0");  // Top node
+    NodeId n1 = graph.addNode(Size{120, 60}, "n1");  // Middle node
+    NodeId n2 = graph.addNode(Size{120, 60}, "n2");  // Bottom node
+    
+    EdgeId e0 = graph.addEdge(n0, n1);  // n0 -> n1
+    EdgeId e1 = graph.addEdge(n0, n2);  // n0 -> n2
+    
+    // Create initial layout with nodes in vertical line
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    
+    NodeLayout nl0;
+    nl0.id = n0;
+    nl0.position = Point{100, 100};
+    nl0.size = Size{120, 60};
+    nodeLayouts[n0] = nl0;
+    
+    NodeLayout nl1;
+    nl1.id = n1;
+    nl1.position = Point{100, 250};
+    nl1.size = Size{120, 60};
+    nodeLayouts[n1] = nl1;
+    
+    NodeLayout nl2;
+    nl2.id = n2;
+    nl2.position = Point{100, 400};
+    nl2.size = Size{120, 60};
+    nodeLayouts[n2] = nl2;
+    
+    // Create edge layouts - both edges exit from n0's BOTTOM edge
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    
+    EdgeLayout el0;
+    el0.id = e0;
+    el0.from = n0;
+    el0.to = n1;
+    el0.sourceEdge = NodeEdge::Bottom;
+    el0.targetEdge = NodeEdge::Top;
+    el0.sourcePoint = Point{140, 160};  // Will be recalculated
+    el0.targetPoint = Point{160, 250};
+    edgeLayouts[e0] = el0;
+    
+    EdgeLayout el1;
+    el1.id = e1;
+    el1.from = n0;
+    el1.to = n2;
+    el1.sourceEdge = NodeEdge::Bottom;
+    el1.targetEdge = NodeEdge::Top;
+    el1.sourcePoint = Point{180, 160};  // Will be recalculated
+    el1.targetPoint = Point{160, 400};
+    edgeLayouts[e1] = el1;
+    
+    // Run AStarEdgeOptimizer to recalculate snap positions
+    float gridSize = 20.0f;
+    
+    AStarEdgeOptimizer optimizer;
+    
+    std::vector<EdgeId> edgesToOptimize = {e0, e1};
+    
+    // Mark node n0 as "moved" to trigger recalculation
+    std::unordered_set<NodeId> movedNodes = {n0};
+    
+    // Run optimization
+    auto result = optimizer.optimize(
+        edgesToOptimize, edgeLayouts, nodeLayouts, gridSize, movedNodes);
+    
+    // Get updated layouts
+    auto it0 = result.find(e0);
+    auto it1 = result.find(e1);
+    ASSERT_TRUE(it0 != result.end()) << "Edge 0 should be in result";
+    ASSERT_TRUE(it1 != result.end()) << "Edge 1 should be in result";
+    
+    const EdgeLayout& resultE0 = it0->second;
+    const EdgeLayout& resultE1 = it1->second;
+    
+    // Both edges exit from n0 - check they're on same NodeEdge
+    ASSERT_EQ(resultE0.from, n0);
+    ASSERT_EQ(resultE1.from, n0);
+    
+    // If both edges exit from the same NodeEdge, they MUST have different sourcePoints
+    if (resultE0.sourceEdge == resultE1.sourceEdge) {
+        const float tolerance = 0.1f;
+        bool sameSourcePoint = 
+            std::abs(resultE0.sourcePoint.x - resultE1.sourcePoint.x) < tolerance &&
+            std::abs(resultE0.sourcePoint.y - resultE1.sourcePoint.y) < tolerance;
+        
+        EXPECT_FALSE(sameSourcePoint)
+            << "BUG: Two edges on same NodeEdge share the same sourcePoint!\n"
+            << "  Edge " << e0 << " sourcePoint: (" 
+            << resultE0.sourcePoint.x << ", " << resultE0.sourcePoint.y << ")\n"
+            << "  Edge " << e1 << " sourcePoint: (" 
+            << resultE1.sourcePoint.x << ", " << resultE1.sourcePoint.y << ")\n"
+            << "  NodeEdge: " << static_cast<int>(resultE0.sourceEdge) << "\n"
+            << "  Expected: Different sourcePoints due to snap distribution";
+    }
+}
+
+// Additional test: Edge changes NodeEdge and joins existing edge
+// This tests the specific scenario where Edge 1 moves to Edge 2's NodeEdge
+TEST(EdgeRoutingTransitionTest, SnapPositionCollision_EdgeChangesNodeEdgeAndJoinsExisting) {
+    using namespace arborvia;
+    
+    Graph graph;
+    NodeId n0 = graph.addNode(Size{120, 60}, "n0");  // Source node
+    NodeId n1 = graph.addNode(Size{120, 60}, "n1");  // Target 1 (right)
+    NodeId n2 = graph.addNode(Size{120, 60}, "n2");  // Target 2 (below)
+    
+    EdgeId e0 = graph.addEdge(n0, n1);  // n0 -> n1
+    EdgeId e1 = graph.addEdge(n0, n2);  // n0 -> n2
+    
+    // Initial: n1 is to the RIGHT of n0, n2 is BELOW n0
+    // Edge 0 exits from n0's RIGHT
+    // Edge 1 exits from n0's BOTTOM
+    std::unordered_map<NodeId, NodeLayout> nodeLayouts;
+    
+    NodeLayout nl0;
+    nl0.id = n0;
+    nl0.position = Point{100, 200};
+    nl0.size = Size{120, 60};
+    nodeLayouts[n0] = nl0;
+    
+    NodeLayout nl1;
+    nl1.id = n1;
+    nl1.position = Point{300, 200};  // Right of n0
+    nl1.size = Size{120, 60};
+    nodeLayouts[n1] = nl1;
+    
+    NodeLayout nl2;
+    nl2.id = n2;
+    nl2.position = Point{100, 400};  // Below n0
+    nl2.size = Size{120, 60};
+    nodeLayouts[n2] = nl2;
+    
+    std::unordered_map<EdgeId, EdgeLayout> edgeLayouts;
+    
+    EdgeLayout el0;
+    el0.id = e0;
+    el0.from = n0;
+    el0.to = n1;
+    el0.sourceEdge = NodeEdge::Right;  // Initially exits RIGHT
+    el0.targetEdge = NodeEdge::Left;
+    el0.sourcePoint = Point{220, 230};
+    el0.targetPoint = Point{300, 230};
+    edgeLayouts[e0] = el0;
+    
+    EdgeLayout el1;
+    el1.id = e1;
+    el1.from = n0;
+    el1.to = n2;
+    el1.sourceEdge = NodeEdge::Bottom;  // Exits BOTTOM
+    el1.targetEdge = NodeEdge::Top;
+    el1.sourcePoint = Point{160, 260};
+    el1.targetPoint = Point{160, 400};
+    edgeLayouts[e1] = el1;
+    
+    // Now MOVE n1 to below n0 (same position as n2, just shifted)
+    // This should cause Edge 0 to change its sourceEdge from RIGHT to BOTTOM
+    // Now both Edge 0 and Edge 1 should exit from n0's BOTTOM edge
+    nodeLayouts[n1].position = Point{200, 400};  // Move n1 below n0
+    
+    float gridSize = 20.0f;
+    
+    AStarEdgeOptimizer optimizer;
+    
+    // Mark n1 as moved - this triggers recalculation of Edge 0
+    std::unordered_set<NodeId> movedNodes = {n1};
+    
+    std::vector<EdgeId> edgesToOptimize = {e0, e1};
+    
+    auto result = optimizer.optimize(
+        edgesToOptimize, edgeLayouts, nodeLayouts, gridSize, movedNodes);
+    
+    auto it0 = result.find(e0);
+    auto it1 = result.find(e1);
+    ASSERT_TRUE(it0 != result.end());
+    ASSERT_TRUE(it1 != result.end());
+    
+    const EdgeLayout& resultE0 = it0->second;
+    const EdgeLayout& resultE1 = it1->second;
+    
+    // After moving n1 below n0, Edge 0 should now exit from BOTTOM
+    // (Optimal direction for n0 -> n1 when n1 is below)
+    if (resultE0.sourceEdge == NodeEdge::Bottom) {
+        // Edge 0 changed to BOTTOM - now both edges on same NodeEdge
+        EXPECT_EQ(resultE1.sourceEdge, NodeEdge::Bottom)
+            << "Edge 1 should still be on BOTTOM";
+        
+        // KEY ASSERTION: They must have DIFFERENT sourcePoints
+        const float tolerance = 0.1f;
+        bool sameSourcePoint = 
+            std::abs(resultE0.sourcePoint.x - resultE1.sourcePoint.x) < tolerance &&
+            std::abs(resultE0.sourcePoint.y - resultE1.sourcePoint.y) < tolerance;
+        
+        EXPECT_FALSE(sameSourcePoint)
+            << "BUG: Edge 0 joined Edge 1's NodeEdge but they share sourcePoint!\n"
+            << "  Edge " << e0 << " changed NodeEdge from RIGHT to BOTTOM\n"
+            << "  Edge " << e0 << " sourcePoint: (" 
+            << resultE0.sourcePoint.x << ", " << resultE0.sourcePoint.y << ")\n"
+            << "  Edge " << e1 << " sourcePoint: (" 
+            << resultE1.sourcePoint.x << ", " << resultE1.sourcePoint.y << ")\n"
+            << "  Expected: When Edge 0 joins Edge 1's NodeEdge, "
+            << "Edge 1's sourcePoint should be recalculated for proper distribution";
+    }
 }

@@ -171,6 +171,13 @@ private:
         const EdgeLayout& layout,
         const std::unordered_map<EdgeId, EdgeLayout>& otherEdges,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
+
+    /// Ensure orthogonality at source and target endpoints
+    /// The grid path may not align perfectly with sourcePoint/targetPoint
+    /// (e.g., sourcePoint.y=50 while grid bend is at y=60 for gridSize=20)
+    /// This inserts alignment points to ensure the first and last segments are orthogonal
+    /// @param layout Edge layout to fix (modified in place)
+    void ensureEndpointOrthogonality(EdgeLayout& layout) const;
 };
 
 }  // namespace arborvia

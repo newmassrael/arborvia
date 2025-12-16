@@ -413,6 +413,8 @@ void EdgeRouting::updateEdgeRoutingWithOptimization(
     };
 
     // Delegate to DragOptimizationHandler
+    LOG_DEBUG("[EdgeRouting::updateEdgeRoutingWithOptimization] dragAlgorithm={} affectedEdges.size={}",
+              static_cast<int>(options.optimizationOptions.dragAlgorithm), affectedEdges.size());
     DragOptimizationHandler handler(pathFinder_, snapUpdateFunc, recalcFunc);
     handler.updateEdgeRoutingWithOptimization(
         edgeLayouts, nodeLayouts, affectedEdges, options, movedNodes, edgeOptimizer_);

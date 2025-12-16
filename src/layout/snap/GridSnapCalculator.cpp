@@ -290,6 +290,74 @@ Point GridSnapCalculator::calculatePositionInContext(
     return calculateSnapPosition(*nodeLayout, nodeEdge, connectionIndex, totalConnections, gridSize, outCandidateIndex);
 }
 
+// =============================================================================
+// Corner Exclusion Helpers (Single Source of Truth)
+// =============================================================================
+
+bool GridSnapCalculator::isAtCorner(
+    const NodeLayout& node,
+    NodeEdge edge,
+    float alongEdgeCoord,
+    float /*gridSize*/)
+{
+    const float epsilon = 0.001f;
+    float edgeStart, edgeEnd;
+
+    switch (edge) {
+        case NodeEdge::Top:
+        case NodeEdge::Bottom:
+            edgeStart = node.position.x;
+            edgeEnd = node.position.x + node.size.width;
+            break;
+        case NodeEdge::Left:
+        case NodeEdge::Right:
+            edgeStart = node.position.y;
+            edgeEnd = node.position.y + node.size.height;
+            break;
+        default:
+            return false;
+    }
+
+    return std::abs(alongEdgeCoord - edgeStart) < epsilon ||
+           std::abs(alongEdgeCoord - edgeEnd) < epsilon;
+}
+
+float GridSnapCalculator::adjustAwayFromCorner(
+    const NodeLayout& node,
+    NodeEdge edge,
+    float alongEdgeCoord,
+    float gridSize)
+{
+    const float epsilon = 0.001f;
+    float edgeStart, edgeEnd;
+
+    switch (edge) {
+        case NodeEdge::Top:
+        case NodeEdge::Bottom:
+            edgeStart = node.position.x;
+            edgeEnd = node.position.x + node.size.width;
+            break;
+        case NodeEdge::Left:
+        case NodeEdge::Right:
+            edgeStart = node.position.y;
+            edgeEnd = node.position.y + node.size.height;
+            break;
+        default:
+            return alongEdgeCoord;
+    }
+
+    // At start corner: move inward (increase)
+    if (std::abs(alongEdgeCoord - edgeStart) < epsilon) {
+        return alongEdgeCoord + gridSize;
+    }
+    // At end corner: move inward (decrease)
+    if (std::abs(alongEdgeCoord - edgeEnd) < epsilon) {
+        return alongEdgeCoord - gridSize;
+    }
+
+    return alongEdgeCoord;  // Not at corner
+}
+
 Point GridSnapCalculator::computeSnapPointFromRatio(
     const NodeLayout& node,
     NodeEdge edge,
@@ -331,6 +399,12 @@ Point GridSnapCalculator::computeSnapPointFromRatio(
     if (gridSize > 0.0f) {
         float quantizedAlongEdge = std::round(rawAlongEdge / gridSize) * gridSize;
         float quantizedPerpendicular = std::round(perpendicular / gridSize) * gridSize;
+        
+        // Corner exclusion: snap points must NOT be at node corners
+        // This is the Single Source of Truth for corner exclusion in ratio-based calculations
+        if (isAtCorner(node, edge, quantizedAlongEdge, gridSize)) {
+            quantizedAlongEdge = adjustAwayFromCorner(node, edge, quantizedAlongEdge, gridSize);
+        }
         
         switch (edge) {
             case NodeEdge::Top:

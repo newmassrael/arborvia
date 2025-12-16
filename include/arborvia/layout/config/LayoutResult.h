@@ -55,8 +55,11 @@ struct EdgeLayout {
     // Edge routing information (which node edge is used)
     NodeEdge sourceEdge = NodeEdge::Bottom;  // Which edge of source node
     NodeEdge targetEdge = NodeEdge::Top;     // Which edge of target node
-    // NOTE: sourceSnapIndex/targetSnapIndex removed - compute from position using
-    // GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gridSize)
+    
+    // Snap point indices - stable identity for position calculation
+    // Position = GridSnapCalculator::getPositionFromCandidateIndex(node, edge, snapIndex, gridSize)
+    int sourceSnapIndex = -1;                 // -1 = not assigned, use position-based calculation
+    int targetSnapIndex = -1;                 // -1 = not assigned, use position-based calculation
     
     // Channel routing information
     float channelY = -1.0f;                   // Channel Y position for orthogonal routing (-1 = not set)

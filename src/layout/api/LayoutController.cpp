@@ -180,8 +180,9 @@ void LayoutController::updateEdgeRouting(
     const std::vector<EdgeId>& affectedEdges,
     const std::unordered_set<NodeId>& movedNodes) {
 
-    EdgeRouting routing;
-    routing.updateEdgeRoutingWithOptimization(
+    // LayoutController::moveNode()는 항상 "드롭"으로 간주
+    // postDragAlgorithm 사용 (dragAlgorithm이 HideUntilDrop이어도 올바르게 동작)
+    LayoutUtils::updateEdgePositions(
         edgeLayouts_, nodeLayouts_, affectedEdges, options_, movedNodes);
 }
 

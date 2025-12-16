@@ -134,11 +134,14 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
     bool usedDragOptimizer = false;
 
     // Apply drag algorithm if enabled
+    LOG_DEBUG("[DragOptimizationHandler] dragAlgorithm={} affectedEdges.size={}", 
+              static_cast<int>(options.optimizationOptions.dragAlgorithm), affectedEdges.size());
     if (options.optimizationOptions.dragAlgorithm != DragAlgorithm::None && !affectedEdges.empty()) {
         std::unique_ptr<IEdgeOptimizer> optimizer;
 
         switch (options.optimizationOptions.dragAlgorithm) {
             case DragAlgorithm::Geometric: {
+                LOG_DEBUG("[DragOptimizationHandler] Creating Geometric optimizer");
                 OptimizerConfig config = OptimizerConfig::aggressive();
                 config.preserveDirections = true;
                 config.penaltySystem = EdgePenaltySystem::createDefault();
@@ -146,6 +149,7 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
                 break;
             }
             case DragAlgorithm::AStar: {
+                LOG_DEBUG("[DragOptimizationHandler] Creating AStar optimizer");
                 OptimizerConfig config = OptimizerConfig::aggressive();
                 config.preserveDirections = false;
                 config.pathFinder = pathFinder_;
@@ -154,8 +158,10 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
                 break;
             }
             case DragAlgorithm::None:
+                LOG_DEBUG("[DragOptimizationHandler] DragAlgorithm::None - no optimizer created");
                 break;
             case DragAlgorithm::HideUntilDrop:
+                LOG_DEBUG("[DragOptimizationHandler] DragAlgorithm::HideUntilDrop - early return");
                 return;
         }
 
@@ -171,7 +177,9 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             }
 
             // Pass movedNodes to optimizer - FixedEndpointPenalty will handle constraints
+            LOG_DEBUG("[DragOptimizationHandler] Calling optimizer->optimize() for {} edges", edgesToOptimize.size());
             auto optimizedLayouts = edgeOptimizer->optimize(edgesToOptimize, edgeLayouts, nodeLayouts, gridSize, movedNodes);
+            LOG_DEBUG("[DragOptimizationHandler] optimizer->optimize() returned {} layouts", optimizedLayouts.size());
 
             // Copy optimized layouts
             // The optimizer respects constraints, preserving positions and snap indices
@@ -179,6 +187,10 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
             for (auto& [edgeId, layout] : optimizedLayouts) {
                 auto it = edgeLayouts.find(edgeId);
                 if (it != edgeLayouts.end()) {
+                    LOG_DEBUG("[DragOptimizationHandler] Edge {} optimized: srcPt=({},{}) bendPts.size={} tgtPt=({},{})",
+                              edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
+                              layout.bendPoints.size(),
+                              layout.targetPoint.x, layout.targetPoint.y);
                     it->second = layout;
                 }
             }

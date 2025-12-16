@@ -106,10 +106,49 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
         return;
     }
 
+    // MOVED UP: Get all connections BEFORE collision detection
+    // This allows detecting collisions with sibling edges that aren't in 'connections'
+    auto allConnections = SnapIndexManager::getConnections(edgeLayouts, nodeId, nodeEdge);
+    int totalCount = static_cast<int>(allConnections.incoming.size() + allConnections.outgoing.size());
+
+    // Build set of affected edge IDs for quick lookup
+    std::set<EdgeId> affectedEdgeIds;
+    for (const auto& [edgeId, isSource] : connections) {
+        affectedEdgeIds.insert(edgeId);
+    }
+
     // Check if redistribution is needed by computing indices from positions
-    // Use oldNode to correctly interpret old snap positions
+    // FIXED: Check against ALL edges on this NodeEdge, not just affected ones
     bool needsRedistribution = false;
     std::set<int> usedIndices;
+
+    // First: collect indices from non-affected sibling edges (existing edges on this NodeEdge)
+    for (EdgeId edgeId : allConnections.incoming) {
+        if (affectedEdgeIds.count(edgeId) == 0) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it != edgeLayouts.end()) {
+                int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                    node, nodeEdge, it->second.targetPoint, effectiveGridSize);
+                if (snapIdx >= 0 && snapIdx < candidateCount) {
+                    usedIndices.insert(snapIdx);
+                }
+            }
+        }
+    }
+    for (EdgeId edgeId : allConnections.outgoing) {
+        if (affectedEdgeIds.count(edgeId) == 0) {
+            auto it = edgeLayouts.find(edgeId);
+            if (it != edgeLayouts.end()) {
+                int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+                    node, nodeEdge, it->second.sourcePoint, effectiveGridSize);
+                if (snapIdx >= 0 && snapIdx < candidateCount) {
+                    usedIndices.insert(snapIdx);
+                }
+            }
+        }
+    }
+
+    // Then: check if affected edges collide with existing sibling indices
     for (const auto& [edgeId, isSource] : connections) {
         auto it = edgeLayouts.find(edgeId);
         if (it != edgeLayouts.end()) {
@@ -121,15 +160,21 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
                 break;
             }
             if (usedIndices.count(snapIdx) > 0) {
-                needsRedistribution = true;
+                LOG_DEBUG("[CONSTRAINT-DEBUG] Snap collision detected! Edge {} index {} already used, triggering redistribution",
+                          edgeId, snapIdx);
+                needsRedistribution = true;  // Collision with sibling detected!
                 break;
             }
             usedIndices.insert(snapIdx);
         }
     }
 
-    auto allConnections = SnapIndexManager::getConnections(edgeLayouts, nodeId, nodeEdge);
-    int totalCount = static_cast<int>(allConnections.incoming.size() + allConnections.outgoing.size());
+    // [CONSTRAINT-DEBUG] Log redistribution decision
+    if (needsRedistribution) {
+        LOG_DEBUG("[CONSTRAINT-DEBUG] Node {} edge {} needs redistribution, total edges to process: {}",
+                  nodeId, static_cast<int>(nodeEdge), 
+                  allConnections.incoming.size() + allConnections.outgoing.size());
+    }
 
     std::vector<std::pair<EdgeId, bool>> edgesToProcess;
     if (needsRedistribution) {
@@ -302,6 +347,48 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
                       eid, it->second.from, it->second.to,
                       it->second.sourcePoint.x, it->second.sourcePoint.y,
                       it->second.targetPoint.x, it->second.targetPoint.y);
+        }
+    }
+
+    // Phase 0: Recalculate sourceEdge/targetEdge for Point nodes
+    // Point nodes have no physical edge, so their exit direction should match target direction
+    // Uses LayoutUtils::calculateSourceEdgeForPointNode/calculateTargetEdgeForPointNode
+    for (EdgeId edgeId : affectedEdges) {
+        auto it = edgeLayouts.find(edgeId);
+        if (it == edgeLayouts.end()) continue;
+        EdgeLayout& layout = it->second;
+
+        auto srcNodeIt = nodeLayouts.find(layout.from);
+        auto tgtNodeIt = nodeLayouts.find(layout.to);
+        if (srcNodeIt == nodeLayouts.end() || tgtNodeIt == nodeLayouts.end()) continue;
+
+        const NodeLayout& srcNode = srcNodeIt->second;
+        const NodeLayout& tgtNode = tgtNodeIt->second;
+
+        // Source is Point node → recalculate sourceEdge
+        if (srcNode.isPointNode()) {
+            NodeEdge oldSourceEdge = layout.sourceEdge;
+            layout.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(srcNode, tgtNode);
+
+            if (layout.sourceEdge != oldSourceEdge) {
+                LOG_DEBUG("[SNAP-SYNC-DEBUG] Point node sourceEdge recalculated: edge={} from={} "
+                          "oldEdge={} newEdge={}",
+                          edgeId, layout.from, static_cast<int>(oldSourceEdge),
+                          static_cast<int>(layout.sourceEdge));
+            }
+        }
+
+        // Target is Point node → recalculate targetEdge
+        if (tgtNode.isPointNode()) {
+            NodeEdge oldTargetEdge = layout.targetEdge;
+            layout.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(srcNode, tgtNode);
+
+            if (layout.targetEdge != oldTargetEdge) {
+                LOG_DEBUG("[SNAP-SYNC-DEBUG] Point node targetEdge recalculated: edge={} to={} "
+                          "oldEdge={} newEdge={}",
+                          edgeId, layout.to, static_cast<int>(oldTargetEdge),
+                          static_cast<int>(layout.targetEdge));
+            }
         }
     }
 

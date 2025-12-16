@@ -6,6 +6,7 @@
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "arborvia/common/Logger.h"
+#include <algorithm>
 #include <map>
 
 namespace arborvia {
@@ -34,7 +35,12 @@ void SnapDistributor::distribute(
     for (auto& [key, connections] : allConnections) {
         auto [nodeId, nodeEdge] = key;
 
-        // Sort snap points by other node position to minimize edge crossings
+        // IMPORTANT: Sort by EdgeId first to ensure deterministic ordering
+        // This prevents snap collision caused by non-deterministic unordered_map iteration
+        std::sort(connections.begin(), connections.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        // Optionally re-sort by other node position to minimize edge crossings
         if (sortSnapPoints && connections.size() > 1) {
             auto sortedPairs = SnapIndexManager::sortSnapPointsByOtherNode(
                 nodeId, nodeEdge, result.edgeLayouts, nodeLayouts);
@@ -52,6 +58,28 @@ void SnapDistributor::distribute(
         if (nodeIt == nodeLayouts.end()) continue;
 
         const NodeLayout& node = nodeIt->second;
+
+        // Point nodes: all edges connect at center, no distribution needed
+        if (node.isPointNode()) {
+            Point center = node.center();
+            for (const auto& [edgeId, isSource] : connections) {
+                EdgeLayout& layout = result.edgeLayouts[edgeId];
+                if (isSource) {
+                    layout.sourcePoint = center;
+                    layout.sourceSnapIndex = 0;
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE PointNode={} center=({},{})",
+                              edgeId, nodeId, center.x, center.y);
+                } else {
+                    layout.targetPoint = center;
+                    layout.targetSnapIndex = 0;
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET PointNode={} center=({},{})",
+                              edgeId, nodeId, center.x, center.y);
+                }
+            }
+            continue;
+        }
+
+        // Normal nodes: distribute using index-based calculation
         int connectionCount = static_cast<int>(connections.size());
 
         // Use grid-based calculation for all snap point positions
@@ -59,21 +87,21 @@ void SnapDistributor::distribute(
             auto [edgeId, isSource] = connections[i];
             EdgeLayout& layout = result.edgeLayouts[edgeId];
 
-            // Calculate snap position (candidate index computed from position as needed)
+            // Calculate snap position using index (NOT ratio)
             int candidateIndex = 0;
             Point snapPoint = GridSnapCalculator::calculateSnapPosition(
                 node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
 
             if (isSource) {
                 layout.sourcePoint = snapPoint;
-                // NOTE: snapIndex is no longer stored - computed from position as needed
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} pos=({},{}) candidateIdx={}",
-                          edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
+                layout.sourceSnapIndex = candidateIndex;  // Store snap index for stable identity
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
+                          edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
             } else {
                 layout.targetPoint = snapPoint;
-                // NOTE: snapIndex is no longer stored - computed from position as needed
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} pos=({},{}) candidateIdx={}",
-                          edgeId, nodeId, static_cast<int>(nodeEdge), snapPoint.x, snapPoint.y, candidateIndex);
+                layout.targetSnapIndex = candidateIndex;  // Store snap index for stable identity
+                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
+                          edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
             }
         }
     }

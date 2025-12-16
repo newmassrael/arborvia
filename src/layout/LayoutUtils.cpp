@@ -164,6 +164,14 @@ void LayoutUtils::updateEdgePositions(
             break;
     }
     
+    LOG_DEBUG("[LayoutUtils::updateEdgePositions] postDragAlgo={} -> dragAlgo={}, affectedEdges.size={}, movedNodes.size={}",
+              static_cast<int>(options.optimizationOptions.postDragAlgorithm),
+              static_cast<int>(postDropOptions.optimizationOptions.dragAlgorithm),
+              affectedEdges.size(), movedNodes.size());
+    for (EdgeId edgeId : affectedEdges) {
+        LOG_DEBUG("[LayoutUtils::updateEdgePositions] affectedEdge={}", edgeId);
+    }
+    
     // First pass: update directly affected edges (connected to moved nodes)
     routing.updateEdgeRoutingWithOptimization(
         edgeLayouts, nodeLayouts, affectedEdges, postDropOptions, movedNodes);
@@ -570,6 +578,42 @@ bool LayoutUtils::canMoveNodeToFast(
 }
 
 // ========== Snap Point Manipulation API ==========
+
+NodeEdge LayoutUtils::calculateSourceEdgeForPointNode(
+    const NodeLayout& srcNode,
+    const NodeLayout& tgtNode) {
+    
+    Point srcCenter = srcNode.center();
+    Point tgtCenter = tgtNode.center();
+    float deltaX = tgtCenter.x - srcCenter.x;
+    float deltaY = tgtCenter.y - srcCenter.y;
+
+    // Determine edge based on dominant axis
+    if (std::abs(deltaX) > std::abs(deltaY)) {
+        // X-axis dominant: use Right or Left
+        return (deltaX > 0) ? NodeEdge::Right : NodeEdge::Left;
+    } else {
+        // Y-axis dominant: use Bottom or Top
+        return (deltaY > 0) ? NodeEdge::Bottom : NodeEdge::Top;
+    }
+}
+
+NodeEdge LayoutUtils::calculateTargetEdgeForPointNode(
+    const NodeLayout& srcNode,
+    const NodeLayout& tgtNode) {
+    
+    Point srcCenter = srcNode.center();
+    Point tgtCenter = tgtNode.center();
+    // Reverse direction for target: where does the edge come FROM?
+    float deltaX = srcCenter.x - tgtCenter.x;
+    float deltaY = srcCenter.y - tgtCenter.y;
+
+    if (std::abs(deltaX) > std::abs(deltaY)) {
+        return (deltaX > 0) ? NodeEdge::Right : NodeEdge::Left;
+    } else {
+        return (deltaY > 0) ? NodeEdge::Bottom : NodeEdge::Top;
+    }
+}
 
 std::pair<NodeEdge, float> LayoutUtils::findClosestNodeEdge(
     const Point& point,

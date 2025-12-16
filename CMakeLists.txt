@@ -93,6 +93,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/layout/SugiyamaLayoutTest.cpp
         tests/layout/LayoutResultTest.cpp
         tests/layout/LayoutUtilsTest.cpp
+        tests/layout/OrthogonalityConstraintTest.cpp
         tests/layout/ManualLayoutTest.cpp
         tests/layout/SnapPointControllerTest.cpp
         tests/layout/PointNodeRoutingTest.cpp
@@ -108,6 +109,7 @@ if(ARBORVIA_BUILD_TESTS)
         tests/export/SvgExportTest.cpp
         tests/interactive/DragBehaviorTest.cpp
         tests/integration/DiagonalReproductionTest.cpp
+        tests/integration/SnapCollisionReproductionTest.cpp
         # SCXML infrastructure for PointNodeRoutingTest
         tests/infrastructure/scxml/SCXMLGraph.cpp
         tests/infrastructure/scxml/SCXMLConverter.cpp

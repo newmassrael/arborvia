@@ -152,6 +152,26 @@ public:
         const LayoutOptions& options,
         const BendPointRegenerator& regenerator = nullptr);
 
+    /// Calculate optimal sourceEdge for Point node based on target direction
+    /// Point nodes have no physical edges, so the exit direction should match
+    /// the dominant axis toward the target node.
+    /// @param srcNode Source node (must be a Point node)
+    /// @param tgtNode Target node
+    /// @return Optimal NodeEdge for source connection (Right/Left if X dominant, Bottom/Top if Y dominant)
+    static NodeEdge calculateSourceEdgeForPointNode(
+        const NodeLayout& srcNode,
+        const NodeLayout& tgtNode);
+
+    /// Calculate optimal targetEdge for Point node based on source direction
+    /// Point nodes have no physical edges, so the entry direction should match
+    /// the dominant axis from the source node.
+    /// @param srcNode Source node
+    /// @param tgtNode Target node (must be a Point node)
+    /// @return Optimal NodeEdge for target connection
+    static NodeEdge calculateTargetEdgeForPointNode(
+        const NodeLayout& srcNode,
+        const NodeLayout& tgtNode);
+
     /// Calculate which node edge a point is closest to
     /// @param point The query point
     /// @param node The node layout
