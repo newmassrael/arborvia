@@ -180,7 +180,15 @@ TEST_F(PointNodeRoutingTest, Test144_SideEdgeToPointNode_TargetPointAtCenter) {
 
     Point failCenter = failLayout->center();
 
-    // 디버그 출력
+    // 디버그 출력 - 모든 노드 레이아웃
+    std::cout << "[TEST144] All nodes:" << std::endl;
+    for (const auto& [nid, nl] : result.nodeLayouts()) {
+        std::string scxmlId = graph->getScxmlId(nid);
+        std::cout << "  Node " << nid << " (" << (scxmlId.empty() ? "?" : scxmlId) << "): "
+                  << "pos=(" << nl.position.x << "," << nl.position.y << ") "
+                  << "size=(" << nl.size.width << "," << nl.size.height << ") "
+                  << (nl.isPointNode() ? "POINT" : "Regular") << std::endl;
+    }
     std::cout << "[TEST144] s1Id=" << s1Id << " failId=" << failId << " targetEdge(edgeId)=" << targetEdge << std::endl;
     std::cout << "[TEST144] fail (Point): pos=(" << failLayout->position.x << ", " << failLayout->position.y
               << ") center=(" << failCenter.x << ", " << failCenter.y << ")" << std::endl;

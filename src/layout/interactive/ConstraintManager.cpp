@@ -224,7 +224,12 @@ std::vector<NodeId> ConstraintManager::findOverlappingNodes(
         for (size_t j = i + 1; j < nodes.size(); ++j) {
             const auto& a = *nodes[i].second;
             const auto& b = *nodes[j].second;
-            
+
+            // Skip nodes that don't participate in overlap detection (e.g., Point nodes)
+            if (!a.participatesInOverlapDetection() || !b.participatesInOverlapDetection()) {
+                continue;
+            }
+
             // AABB intersection check
             if (a.position.x < b.position.x + b.size.width &&
                 a.position.x + a.size.width > b.position.x &&

@@ -18,7 +18,7 @@ struct ConstraintPlacementResult;
 struct NodeLayout {
     NodeId id = INVALID_NODE;
     Point position;           // Top-left corner for Regular, center for Point
-    Size size;                // Node dimensions (0,0 for Point nodes)
+    Size size;                // Node dimensions
     int layer = 0;            // Layer index in hierarchy
     int order = 0;            // Order within layer
     NodeType nodeType = NodeType::Regular;  // Geometry type
@@ -27,7 +27,23 @@ struct NodeLayout {
     bool isPointNode() const {
         return nodeType == NodeType::Point;
     }
-    
+
+    /// Check if this node should be treated as an obstacle for pathfinding
+    ///
+    /// Point nodes are NOT obstacles - edges converge on them freely.
+    /// Regular nodes ARE obstacles - edges must route around them.
+    bool isObstacle() const {
+        return !isPointNode();
+    }
+
+    /// Check if this node should participate in overlap detection
+    ///
+    /// Point nodes do NOT participate - they have no area to overlap.
+    /// Regular nodes DO participate - overlapping nodes is invalid.
+    bool participatesInOverlapDetection() const {
+        return !isPointNode();
+    }
+
     Point center() const {
         if (nodeType == NodeType::Point) {
             return position;  // For point nodes, position IS the center
@@ -35,7 +51,24 @@ struct NodeLayout {
         return {position.x + size.width / 2, position.y + size.height / 2};
     }
     
+    /// Get bounds rectangle for collision/overlap detection
+    ///
+    /// For Regular nodes: position is top-left, returns {position, size}
+    /// For Point nodes: position is center, returns area centered on position
+    ///
+    /// Note: Point nodes typically have size (0,0), which means bounds() returns
+    /// a zero-area rectangle. This is intentional - Point nodes should not be
+    /// treated as obstacles for A* pathfinding or overlap detection.
     Rect bounds() const {
+        if (nodeType == NodeType::Point) {
+            // Point node: position is center, so offset by half-size
+            return {
+                position.x - size.width / 2,
+                position.y - size.height / 2,
+                size.width,
+                size.height
+            };
+        }
         return {position.x, position.y, size.width, size.height};
     }
 };

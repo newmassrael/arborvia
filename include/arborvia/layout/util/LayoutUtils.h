@@ -19,7 +19,7 @@ namespace arborvia {
 
 // Forward declarations for internal types
 class PathRoutingCoordinator;
-class ConstraintManager;
+class IConstraintValidator;
 
 /// Utility functions for interactive layout manipulation
 /// NOTE: For node moves, use LayoutController::moveNode() instead
@@ -299,7 +299,7 @@ public:
         Point newPosition,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-        const ConstraintManager& constraintManager,
+        const IConstraintValidator& constraintValidator,
         float gridSize = 20.0f);
 
     /// Check if a node can be moved using ConstraintConfig (internal)

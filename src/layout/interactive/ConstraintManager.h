@@ -1,5 +1,6 @@
 #pragma once
 
+#include "arborvia/layout/api/IConstraintValidator.h"
 #include "arborvia/layout/api/IDragConstraint.h"
 #include "arborvia/layout/config/LayoutOptions.h"
 
@@ -11,30 +12,7 @@
 
 namespace arborvia {
 
-/// Result of final state validation (post-routing)
-struct FinalStateValidationResult {
-    bool satisfied = true;
-    std::vector<NodeId> overlappingNodes;           ///< Nodes that overlap
-    std::vector<EdgeId> diagonalEdges;              ///< Edges with diagonal segments
-    std::vector<std::pair<EdgeId, EdgeId>> overlappingEdgePairs; ///< Edge pairs that overlap
-    
-    bool hasNodeOverlap() const { return !overlappingNodes.empty(); }
-    bool hasDiagonals() const { return !diagonalEdges.empty(); }
-    bool hasEdgeOverlap() const { return !overlappingEdgePairs.empty(); }
-    
-    std::string summary() const;
-};
-
-/// Result of drag validation through ConstraintManager
-struct DragValidationResult {
-    bool valid = true;                      ///< True if all constraints are satisfied
-    std::string failedConstraint;           ///< Name of first failed constraint (empty if valid)
-    std::string reason;                     ///< Reason for failure (empty if valid)
-    std::vector<EdgeId> invalidEdges;       ///< Edges that would be invalid
-
-    /// Create a valid result
-    static DragValidationResult ok() { return {true, "", "", {}}; }
-};
+// Result types are now defined in IConstraintValidator.h
 
 /// Manager for drag constraints with tiered execution
 ///
@@ -53,10 +31,10 @@ struct DragValidationResult {
 ///     std::cout << "Failed: " << result.failedConstraint << ": " << result.reason << "\n";
 /// }
 /// @endcode
-class ConstraintManager {
+class ConstraintManager : public IConstraintValidator {
 public:
     ConstraintManager() = default;
-    ~ConstraintManager() = default;
+    ~ConstraintManager() override = default;
 
     // Non-copyable but movable
     ConstraintManager(const ConstraintManager&) = delete;
@@ -91,12 +69,12 @@ public:
     /// Validation stops on first failure for efficiency
     /// @param ctx The constraint context
     /// @return DragValidationResult with validation status
-    DragValidationResult validate(const ConstraintContext& ctx) const;
+    DragValidationResult validate(const ConstraintContext& ctx) const override;
 
     /// Get all blocked regions from constraints with visualization support
     /// @param ctx The constraint context
     /// @return Combined blocked regions from all constraints
-    std::vector<Rect> getAllBlockedRegions(const ConstraintContext& ctx) const;
+    std::vector<Rect> getAllBlockedRegions(const ConstraintContext& ctx) const override;
 
     // =========================================================================
     // Post-Routing Validation (Global State)
@@ -109,7 +87,7 @@ public:
     /// @return FinalStateValidationResult with detailed issues
     FinalStateValidationResult validateFinalState(
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const;
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) const override;
 
     /// Find nodes that overlap with each other
     /// @param nodeLayouts All node layouts

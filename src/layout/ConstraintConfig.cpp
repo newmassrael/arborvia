@@ -154,7 +154,7 @@ const SingleConstraintConfig* ConstraintConfig::get(const std::string& type) con
     return it != constraints.end() ? &(*it) : nullptr;
 }
 
-std::unique_ptr<ConstraintManager> ConstraintFactory::create(const ConstraintConfig& config) {
+std::unique_ptr<IConstraintValidator> ConstraintFactory::create(const ConstraintConfig& config) {
     LOG_DEBUG("[ConstraintFactory::create] Creating manager from config with {} constraints", config.constraints.size());
     auto manager = std::make_unique<ConstraintManager>();
 

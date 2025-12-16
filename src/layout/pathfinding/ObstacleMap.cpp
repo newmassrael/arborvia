@@ -67,6 +67,11 @@ void ObstacleMap::buildFromNodes(
 
     // Mark cells blocked by each node (with margin)
     for (const auto& [nodeId, node] : nodeLayouts) {
+        // Skip non-obstacle nodes (e.g., Point nodes)
+        if (!node.isObstacle()) {
+            continue;
+        }
+
         // Calculate node bounds in grid coordinates
         int nodeGridMinX = static_cast<int>(std::floor(node.position.x / gridSize)) - margin;
         int nodeGridMinY = static_cast<int>(std::floor(node.position.y / gridSize)) - margin;

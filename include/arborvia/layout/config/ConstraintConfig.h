@@ -9,7 +9,7 @@
 namespace arborvia {
 
 // Forward declarations
-class ConstraintManager;
+class IConstraintValidator;
 struct LayoutOptions;
 
 /// Configuration for a single constraint
@@ -140,13 +140,13 @@ struct ConstraintConfig {
     const SingleConstraintConfig* get(const std::string& type) const;
 };
 
-/// Factory for creating ConstraintManager from configuration
+/// Factory for creating IConstraintValidator from configuration
 class ConstraintFactory {
 public:
-    /// Create a ConstraintManager from configuration
+    /// Create a constraint validator from configuration
     /// @param config The constraint configuration
-    /// @return Configured ConstraintManager
-    static std::unique_ptr<ConstraintManager> create(const ConstraintConfig& config);
+    /// @return Configured IConstraintValidator (ConstraintManager implementation)
+    static std::unique_ptr<IConstraintValidator> create(const ConstraintConfig& config);
     
     /// Register a custom constraint creator
     /// @param type The constraint type name

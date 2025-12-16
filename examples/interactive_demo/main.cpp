@@ -297,6 +297,34 @@ public:
         graph_.addEdge(error, error, "retry");  // Self-loop for demo
     }
 
+    /// Start node drag operation (called when drag threshold is exceeded)
+    void startNodeDrag(NodeId nodeId) {
+        draggedNode_ = nodeId;
+        auto& layout = nodeLayouts_[draggedNode_];
+        affectedEdges_ = graph_.getConnectedEdges(draggedNode_);
+
+        // Initialize drag constraint state
+        lastValidPosition_ = layout.position;
+        isInvalidDragPosition_ = false;
+
+        // Create constraint manager for drag validation
+        LOG_DEBUG("[Demo::startNodeDrag] Creating constraint manager");
+        auto defaultConfig = ConstraintConfig::createDefault(&layoutOptions_);
+        constraintManager_ = ConstraintFactory::create(defaultConfig);
+
+        // Pre-calculate blocked regions for visualization
+        ConstraintContext ctx{draggedNode_, layout.position, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
+        blockedRegions_ = constraintManager_->getAllBlockedRegions(ctx);
+
+        // Sync LayoutController state before drag
+        if (layoutController_) {
+            layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+        }
+
+        // Notify coordinator that drag started
+        routingCoordinator_->onDragStart(affectedEdges_);
+    }
+
     void doLayout() {
         SugiyamaLayout layout;
         layout.setOptions(layoutOptions_);
@@ -558,37 +586,16 @@ public:
             selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
             doLayout();
         } else if (ImGui::IsMouseClicked(0) && hoveredNode_ != INVALID_NODE) {
-            // Handle click for node selection
+            // Handle click for node selection (drag starts after threshold)
             selectedNode_ = hoveredNode_;
             selectedEdge_ = INVALID_EDGE;
             selectedBendPoint_.clear();
-            draggedNode_ = hoveredNode_;
-            auto& layout = nodeLayouts_[draggedNode_];
+            // Store click position for drag threshold detection
+            pendingNodeDrag_ = true;
+            nodeClickStart_ = {io.MousePos.x, io.MousePos.y};
+            auto& layout = nodeLayouts_[hoveredNode_];
             dragOffset_ = {graphMouse.x - layout.position.x,
                           graphMouse.y - layout.position.y};
-            affectedEdges_ = graph_.getConnectedEdges(draggedNode_);
-            // Initialize drag constraint state
-            lastValidPosition_ = layout.position;
-            isInvalidDragPosition_ = false;
-            // Create constraint manager for drag validation
-            LOG_DEBUG("[Demo::dragStart] Creating constraint manager with layoutOptions_.optimizationOptions.dragAlgorithm={}",
-                      static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm));
-            auto defaultConfig = ConstraintConfig::createDefault(&layoutOptions_);
-            LOG_DEBUG("[Demo::dragStart] ConstraintConfig has {} constraints", defaultConfig.constraints.size());
-            for (const auto& c : defaultConfig.constraints) {
-                LOG_DEBUG("[Demo::dragStart]   constraint: type={} enabled={}", c.type, c.enabled);
-            }
-            constraintManager_ = ConstraintFactory::create(defaultConfig);
-            LOG_DEBUG("[Demo::dragStart] ConstraintManager created with {} constraints", constraintManager_->constraintCount());
-            // Pre-calculate blocked regions for visualization
-            ConstraintContext ctx{draggedNode_, layout.position, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
-            blockedRegions_ = constraintManager_->getAllBlockedRegions(ctx);
-            // Sync LayoutController state before drag
-            if (layoutController_) {
-                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
-            }
-            // Notify coordinator that drag started
-            routingCoordinator_->onDragStart(affectedEdges_);
         } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
             selectedEdge_ = hoveredEdge_;
             selectedNode_ = INVALID_NODE;
@@ -596,6 +603,18 @@ public:
         } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE && !hoveredBendPoint_.isValid() && !hoveredSnapPoint_.isValid()) {
             // Left click on empty area - start potential pan
             emptyAreaPanStarted_ = true;
+        }
+
+        // Handle pending node drag - check if threshold exceeded to start actual drag
+        if (pendingNodeDrag_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            float dx = io.MousePos.x - nodeClickStart_.x;
+            float dy = io.MousePos.y - nodeClickStart_.y;
+            float distance = std::sqrt(dx * dx + dy * dy);
+
+            if (distance > DRAG_THRESHOLD) {
+                pendingNodeDrag_ = false;
+                startNodeDrag(selectedNode_);
+            }
         }
 
         // Handle empty area pan (left-drag on empty)
@@ -606,6 +625,9 @@ public:
         }
 
         if (ImGui::IsMouseReleased(0)) {
+            // Clear pending drag state (click without exceeding threshold = just selection)
+            pendingNodeDrag_ = false;
+
             // Handle snap point drag release using SnapPointController
             if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
                 Point dropPosition = {graphMouse.x - snapPointDragOffset_.x,
@@ -1123,8 +1145,10 @@ public:
             }
 
             // Check SCXML node type for special rendering
+            // BUT: Only draw special shapes if NodeLayout.nodeType is Point
+            // If user converted to Normal, draw as rectangle regardless of SCXMLNodeType
             bool drawnAsSpecial = false;
-            if (scxmlModeActive_ && scxmlGraph_) {
+            if (scxmlModeActive_ && scxmlGraph_ && isPointNode) {
                 SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
                 
                 switch (nodeType) {
@@ -1183,10 +1207,33 @@ public:
 
             // Draw label (for State, Parallel types)
             const NodeData& node = graph_.getNode(id);
+            
+            // Always draw node ID (small, with background for visibility)
+            {
+                char idStr[16];
+                snprintf(idStr, sizeof(idStr), "[%d]", static_cast<int>(id));
+                ImVec2 idSize = ImGui::CalcTextSize(idStr);
+                ImVec2 idPos;
+                if (isPointNode) {
+                    // For Point nodes, draw ID above the node
+                    idPos = {centerX - idSize.x / 2, centerY - radius - idSize.y - 4};
+                } else {
+                    // For Regular nodes, draw ID in top-left corner
+                    idPos = {p1.x + 3, p1.y + 3};
+                }
+                // Draw background rectangle for better visibility
+                float padding = 2.0f;
+                ImVec2 bgMin = {idPos.x - padding, idPos.y - padding};
+                ImVec2 bgMax = {idPos.x + idSize.x + padding, idPos.y + idSize.y + padding};
+                drawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 200, 220), 2.0f);
+                drawList->AddRect(bgMin, bgMax, IM_COL32(100, 100, 0, 200), 2.0f);
+                drawList->AddText(idPos, IM_COL32(0, 0, 0, 255), idStr);
+            }
+            
             if (!node.label.empty()) {
-                // Skip label for Initial/Final/History (already drawn or no label)
+                // Skip label for Initial/Final/History only if still a Point node
                 bool skipLabel = false;
-                if (scxmlModeActive_ && scxmlGraph_) {
+                if (scxmlModeActive_ && scxmlGraph_ && isPointNode) {
                     SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
                     if (nodeType == SCXMLNodeType::Initial || 
                         nodeType == SCXMLNodeType::Final ||
@@ -1539,6 +1586,50 @@ public:
             ImGui::Text("Affected edges: %zu", affectedEdges_.size());
         }
 
+        // Selected node info and type toggle
+        if (selectedNode_ != INVALID_NODE && draggedNode_ == INVALID_NODE) {
+            auto nodeIt = nodeLayouts_.find(selectedNode_);
+            if (nodeIt != nodeLayouts_.end()) {
+                const auto& layout = nodeIt->second;
+                auto graphNode = graph_.tryGetNode(selectedNode_);
+                
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1),
+                    "Selected: %s", graphNode ? graphNode->label.c_str() : "Unknown");
+                
+                bool isPoint = layout.isPointNode();
+                ImGui::Text("Type: %s", isPoint ? "Point (dot)" : "Normal (rect)");
+                ImGui::Text("Position: (%.0f, %.0f)", layout.position.x, layout.position.y);
+                if (!isPoint) {
+                    ImGui::Text("Size: %.0f x %.0f", layout.size.width, layout.size.height);
+                }
+                
+                // Node type toggle button
+                const char* buttonLabel = isPoint ? "To Normal Node" : "To Point Node";
+                if (ImGui::Button(buttonLabel)) {
+                    NodeType newType = isPoint ? NodeType::Regular : NodeType::Point;
+                    if (layoutController_) {
+                        layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+                        auto result = layoutController_->setNodeType(selectedNode_, newType);
+                        if (result.success) {
+                            // Sync back from controller
+                            for (const auto& [id, nl] : layoutController_->nodeLayouts()) {
+                                nodeLayouts_[id] = nl;
+                            }
+                            for (const auto& [id, el] : layoutController_->edgeLayouts()) {
+                                edgeLayouts_[id] = el;
+                            }
+                            std::cout << "[Demo] Node " << selectedNode_ 
+                                      << " converted to " << (newType == NodeType::Point ? "Point" : "Normal") 
+                                      << std::endl;
+                        } else {
+                            std::cout << "[Demo] Type conversion failed: " << result.reason << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+
         ImGui::Separator();
         ImGui::Checkbox("Show Snap Points", &showSnapPoints_);
         if (showSnapPoints_) {
@@ -1857,11 +1948,16 @@ private:
     bool showSnapIndices_ = true;
     bool showBlockedCells_ = true;  // Show node obstacle areas in red
 
+    // Drag threshold detection (distinguish click from drag)
+    static constexpr float DRAG_THRESHOLD = 5.0f;  // Pixels before drag starts
+    bool pendingNodeDrag_ = false;                 // Clicked but not yet dragging
+    Point nodeClickStart_ = {0, 0};               // Screen position at click
+
     // Drag constraint state
     bool isInvalidDragPosition_ = false;      // Current drag position is invalid
     Point lastValidPosition_ = {0, 0};        // Last known valid position during drag
     Point lastRoutedPosition_ = {-9999, -9999};  // Last position where edges were routed
-    std::unique_ptr<ConstraintManager> constraintManager_;  // Constraint manager for drag validation
+    std::unique_ptr<IConstraintValidator> constraintManager_;  // Constraint validator for drag validation
     std::vector<Rect> blockedRegions_;  // Pre-calculated blocked regions for visualization
 
     // Bend point interaction state

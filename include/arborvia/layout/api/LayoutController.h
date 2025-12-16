@@ -2,6 +2,7 @@
 
 #include "arborvia/core/Types.h"
 #include "arborvia/core/Graph.h"
+#include "arborvia/layout/api/IConstraintValidator.h"
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/config/LayoutOptions.h"
 #include "arborvia/layout/config/ConstraintConfig.h"
@@ -16,9 +17,7 @@ namespace arborvia {
 
 // Forward declarations
 class IEdgeOptimizer;
-class ConstraintManager;
 class PositionFinder;
-struct FinalStateValidationResult;
 
 /// Result of a node move operation
 struct NodeMoveResult {
@@ -130,6 +129,19 @@ public:
     /// Re-route all edges
     EdgeRouteResult rerouteAllEdges();
 
+    /// Change a node's type (Regular ↔ Point)
+    ///
+    /// This method:
+    /// 1. Converts between Regular and Point node types
+    /// 2. Regular→Point: saves original size, sets size to {0,0}, position becomes center
+    /// 3. Point→Regular: restores saved size (or default 120x60), position becomes top-left
+    /// 4. Recalculates connected edge routing
+    ///
+    /// @param nodeId Node to convert
+    /// @param newType Target node type
+    /// @return Result with success status and affected edges
+    NodeMoveResult setNodeType(NodeId nodeId, NodeType newType);
+
     // =========================================================================
     // Drag Support (visual feedback during drag, validation on drop)
     // =========================================================================
@@ -169,8 +181,11 @@ private:
     const Graph& graph_;
     LayoutOptions options_;
 
-    std::unique_ptr<ConstraintManager> constraintManager_;
+    std::unique_ptr<IConstraintValidator> constraintManager_;
     std::unique_ptr<PositionFinder> positionFinder_;
+
+    // Saved sizes for nodes converted to Point type (for restoration when converting back)
+    std::unordered_map<NodeId, Size> savedSizesBeforePointConversion_;
 
     // Internal helpers
     void updateEdgeRouting(const std::vector<EdgeId>& affectedEdges,

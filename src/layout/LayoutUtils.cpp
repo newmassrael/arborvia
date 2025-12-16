@@ -508,11 +508,11 @@ LayoutUtils::DragValidation LayoutUtils::canMoveNodeTo(
     Point newPosition,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
     const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
-    const ConstraintManager& constraintManager,
+    const IConstraintValidator& constraintValidator,
     float gridSize) {
 
     ConstraintContext ctx{nodeId, newPosition, nodeLayouts, edgeLayouts, nullptr, gridSize};
-    auto validationResult = constraintManager.validate(ctx);
+    auto validationResult = constraintValidator.validate(ctx);
 
     // Convert DragValidationResult to DragValidation for API compatibility
     DragValidation result;
