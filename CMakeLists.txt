@@ -208,6 +208,9 @@ if(ARBORVIA_BUILD_EXAMPLES)
     # Interactive demo with SCXML test visualization
     add_executable(interactive_demo
         examples/interactive_demo/main.cpp
+        examples/interactive_demo/DemoRenderer.cpp
+        examples/interactive_demo/DemoInputHandler.cpp
+        examples/interactive_demo/DemoCommandProcessor.cpp
         tests/infrastructure/scxml/SCXMLGraph.cpp
         tests/infrastructure/scxml/SCXMLConverter.cpp
         tests/infrastructure/scxml/SCXMLTestLoader.cpp

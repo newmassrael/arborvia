@@ -3,6 +3,12 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 
+#include "DemoState.h"
+#include "DemoRenderer.h"
+#include "DemoColors.h"
+#include "DemoInputHandler.h"
+#include "DemoCommandProcessor.h"
+
 #include <arborvia/arborvia.h>
 #include <arborvia/common/Logger.h>
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
@@ -143,62 +149,22 @@ private:
     bool installed_ = false;
 };
 
-// Colors
-const ImU32 COLOR_NODE = IM_COL32(200, 200, 200, 255);
-const ImU32 COLOR_NODE_HOVER = IM_COL32(150, 200, 255, 255);
-const ImU32 COLOR_NODE_DRAG = IM_COL32(100, 180, 255, 255);
-const ImU32 COLOR_NODE_BORDER = IM_COL32(80, 80, 80, 255);
-const ImU32 COLOR_EDGE = IM_COL32(100, 100, 100, 255);
-const ImU32 COLOR_EDGE_AFFECTED = IM_COL32(255, 100, 100, 255);
-const ImU32 COLOR_TEXT = IM_COL32(0, 0, 0, 255);
-const ImU32 COLOR_SNAP_POINT = IM_COL32(0, 150, 255, 200);
-const ImU32 COLOR_SNAP_POINT_HOVER = IM_COL32(255, 200, 0, 255);
-const ImU32 COLOR_EDGE_SELECTED = IM_COL32(0, 200, 100, 255);
-const ImU32 COLOR_NODE_SELECTED = IM_COL32(100, 255, 100, 255);
+// Use centralized colors and visual constants from DemoColors.h
+// Aliases for backward compatibility with existing render code
+#define COLOR_NODE          DemoColors::NODE
+#define COLOR_NODE_HOVER    DemoColors::NODE_HOVER
+#define COLOR_NODE_DRAG     DemoColors::NODE_DRAG
+#define COLOR_NODE_BORDER   DemoColors::NODE_BORDER
+#define COLOR_NODE_SELECTED DemoColors::NODE_SELECTED
+#define COLOR_EDGE          DemoColors::EDGE
+#define COLOR_EDGE_AFFECTED DemoColors::EDGE_AFFECTED
+#define COLOR_EDGE_SELECTED DemoColors::EDGE_SELECTED
+#define COLOR_TEXT          DemoColors::TEXT
+#define COLOR_BEND_POINT_PREVIEW DemoColors::BEND_POINT_PREVIEW
+#define COLOR_BLOCKED_CELL  DemoColors::BLOCKED_CELL
+#define POINT_NODE_RADIUS   DemoVisuals::POINT_NODE_RADIUS
 
-// Point node visual radius (used for both rendering and hit detection)
-constexpr float POINT_NODE_RADIUS = 10.0f;
-
-// Grid obstacle colors
-const ImU32 COLOR_BLOCKED_CELL = IM_COL32(255, 100, 100, 60);  // Red, semi-transparent
-
-// Bend point colors
-const ImU32 COLOR_BEND_POINT = IM_COL32(100, 150, 255, 200);
-const ImU32 COLOR_BEND_POINT_HOVER = IM_COL32(150, 200, 255, 255);
-const ImU32 COLOR_BEND_POINT_SELECTED = IM_COL32(100, 255, 100, 255);
-const ImU32 COLOR_BEND_POINT_DRAGGING = IM_COL32(255, 180, 100, 255);
-const ImU32 COLOR_BEND_POINT_PREVIEW = IM_COL32(100, 200, 255, 128);
-
-// Bend point interaction state
-struct HoveredBendPoint {
-    EdgeId edgeId = INVALID_EDGE;
-    int bendPointIndex = -1;
-    bool isValid() const { return edgeId != INVALID_EDGE && bendPointIndex >= 0; }
-    void clear() { edgeId = INVALID_EDGE; bendPointIndex = -1; }
-};
-
-struct BendPointPreview {
-    EdgeId edgeId = INVALID_EDGE;
-    int insertIndex = -1;
-    Point position = {0, 0};
-    bool active = false;
-    void clear() { edgeId = INVALID_EDGE; insertIndex = -1; active = false; }
-};
-
-// Snap point interaction state (for source/target snap points)
-struct HoveredSnapPoint {
-    EdgeId edgeId = INVALID_EDGE;
-    bool isSource = true;  // true = source snap, false = target snap
-    bool isValid() const { return edgeId != INVALID_EDGE; }
-    void clear() { edgeId = INVALID_EDGE; }
-};
-
-// Snap point candidate for drag preview
-struct SnapPointCandidate {
-    NodeEdge edge;
-    int candidateIndex;
-    Point position;
-};
+// HoveredBendPoint, BendPointPreview, HoveredSnapPoint are now in DemoState.h
 
 class InteractiveDemo : public IRoutingListener {
 public:
@@ -226,6 +192,69 @@ public:
 
         setupGraph();
         doLayout();
+
+        // Initialize extracted components
+        inputHandler_ = std::make_unique<DemoInputHandler>(manualManager_);
+        commandProcessor_ = std::make_unique<DemoCommandProcessor>(
+            commandServer_, manualManager_, routingCoordinator_);
+
+        // Set up input handler callbacks
+        inputHandler_->setDoLayoutCallback([this]() { doLayout(); });
+        inputHandler_->setRerouteEdgesCallback([this]() { rerouteAffectedEdges(); });
+        inputHandler_->setStartDragCallback([this](NodeId nodeId) {
+            startNodeDrag(nodeId);
+        });
+
+        // Set up command processor callbacks
+        commandProcessor_->setGetLogCallback([](const std::string& pattern, int tailLines) {
+            // Get logs from library API
+            auto loggerLogs = Logger::getCapturedLogs(pattern, static_cast<size_t>(tailLines));
+            
+            // Also get cout logs and filter
+            std::string coutLogs = LogCapture::instance().get();
+            std::vector<std::string> coutLines;
+            std::istringstream iss(coutLogs);
+            std::string line;
+            while (std::getline(iss, line)) {
+                if (pattern.empty() || line.find(pattern) != std::string::npos) {
+                    coutLines.push_back(line);
+                }
+            }
+            
+            // Combine and apply tail limit
+            std::vector<std::string> allLines;
+            allLines.insert(allLines.end(), loggerLogs.begin(), loggerLogs.end());
+            allLines.insert(allLines.end(), coutLines.begin(), coutLines.end());
+            
+            if (static_cast<int>(allLines.size()) > tailLines) {
+                allLines.erase(allLines.begin(), allLines.begin() + (allLines.size() - tailLines));
+            }
+            
+            if (allLines.empty()) {
+                return std::string("LOG_EMPTY");
+            }
+            
+            // Build response with line count info
+            std::ostringstream result;
+            result << "LOG [" << allLines.size() << " lines]\\n";
+            for (const auto& l : allLines) {
+                for (char c : l) {
+                    if (c == '\n') {
+                        result << "\\n";
+                    } else {
+                        result << c;
+                    }
+                }
+                result << "\\n";
+            }
+            return result.str();
+        });
+        commandProcessor_->setClearLogCallback([]() {
+            Logger::clearCapturedLogs();
+        });
+        commandProcessor_->setWaitIdleCallback([this](int timeoutMs) {
+            return waitForOptimizationIdle(timeoutMs);
+        });
     }
 
     ~InteractiveDemo() {
@@ -871,659 +900,76 @@ public:
             layoutOptions_, movedNodes);
     }
 
-    void drawGrid(ImDrawList* drawList, float width, float height) {
-        if (gridSize_ <= 0.0f) return;
-
-        ImU32 gridColor = IM_COL32(200, 200, 200, 80);  // Light gray, semi-transparent
-        ImU32 gridColorMajor = IM_COL32(180, 180, 180, 120);  // Slightly darker for major lines
-
-        // Calculate zoomed grid spacing
-        float zoomedGridSize = gridSize_ * zoom_;
-
-        // Calculate grid bounds with pan/zoom
-        // Find the world coordinate of the screen origin
-        Point worldOrigin = screenToWorld({0, 0});
-        // Find where the first grid line should be in world coordinates
-        float worldStartX = std::floor(worldOrigin.x / gridSize_) * gridSize_;
-        float worldStartY = std::floor(worldOrigin.y / gridSize_) * gridSize_;
-        // Convert back to screen coordinates
-        ImVec2 screenStart = worldToScreen({worldStartX, worldStartY});
-
-        // Draw vertical lines
-        int lineCount = static_cast<int>(std::floor(worldOrigin.x / gridSize_));
-        for (float x = screenStart.x; x < width; x += zoomedGridSize) {
-            if (x >= 0) {
-                ImU32 color = (std::abs(lineCount) % 5 == 0) ? gridColorMajor : gridColor;
-                drawList->AddLine({x, 0}, {x, height}, color, 1.0f);
-            }
-            lineCount++;
-        }
-
-        // Draw horizontal lines
-        lineCount = static_cast<int>(std::floor(worldOrigin.y / gridSize_));
-        for (float y = screenStart.y; y < height; y += zoomedGridSize) {
-            if (y >= 0) {
-                ImU32 color = (std::abs(lineCount) % 5 == 0) ? gridColorMajor : gridColor;
-                drawList->AddLine({0, y}, {width, y}, color, 1.0f);
-            }
-            lineCount++;
-        }
-    }
-
-    void drawBlockedCells(ImDrawList* drawList) {
-        // Only show during drag, and skip if disabled or no blocked regions
-        if (!showBlockedCells_ || gridSize_ <= 0.0f || draggedNode_ == INVALID_NODE) return;
-
-        // Verify dragged node exists
-        if (nodeLayouts_.find(draggedNode_) == nodeLayouts_.end()) return;
-
-        // Use pre-calculated blocked regions from ConstraintManager
-        for (const auto& region : blockedRegions_) {
-            // Convert region bounds to grid cells
-            int leftCell = static_cast<int>(std::ceil(region.x / gridSize_));
-            int topCell = static_cast<int>(std::ceil(region.y / gridSize_));
-            int rightCell = static_cast<int>(std::ceil((region.x + region.width) / gridSize_));
-            int bottomCell = static_cast<int>(std::ceil((region.y + region.height) / gridSize_));
-
-            // Draw blocked cells
-            for (int gx = leftCell; gx < rightCell; ++gx) {
-                for (int gy = topCell; gy < bottomCell; ++gy) {
-                    ImVec2 p1 = worldToScreen({gx * gridSize_, gy * gridSize_});
-                    ImVec2 p2 = worldToScreen({(gx + 1) * gridSize_, (gy + 1) * gridSize_});
-
-                    drawList->AddRectFilled(p1, p2, COLOR_BLOCKED_CELL);
-                }
-            }
-        }
-    }
-
-    void drawAStarDebug(ImDrawList* drawList) {
-        if (!showAStarDebug_) return;
-
-        // Rebuild obstacle map every frame to reflect current state
-        debugObstacles_ = std::make_shared<ObstacleMap>();
-        debugObstacles_->buildFromNodes(nodeLayouts_, gridSize_);
-        debugObstacles_->addEdgeSegments(edgeLayouts_, debugEdgeId_);
-
-        // Update start/goal from selected or debug edge
-        EdgeId targetEdge = (debugEdgeId_ != INVALID_EDGE) ? debugEdgeId_ : selectedEdge_;
-        if (targetEdge != INVALID_EDGE) {
-            auto it = edgeLayouts_.find(targetEdge);
-            if (it != edgeLayouts_.end()) {
-                astarStart_ = it->second.sourcePoint;
-                astarGoal_ = it->second.targetPoint;
-            }
-        }
-
-        // Colors for visualization
-        ImU32 nodeBlockColor = IM_COL32(255, 200, 0, 80);      // Yellow: node obstacles
-        ImU32 hSegmentColor = IM_COL32(100, 100, 255, 100);    // Blue: horizontal edge segments
-        ImU32 vSegmentColor = IM_COL32(100, 255, 100, 100);    // Green: vertical edge segments
-        ImU32 startColor = IM_COL32(0, 255, 0, 200);           // Bright green: start point
-        ImU32 goalColor = IM_COL32(255, 0, 0, 200);            // Red: goal point
-
-        float cellSize = debugObstacles_->gridSize();
-        int obsOffsetX = debugObstacles_->offsetX();
-        int obsOffsetY = debugObstacles_->offsetY();
-        float zoomedCellSize = cellSize * zoom_;
-
-        // Draw all grid cells with obstacles
-        for (int gy = 0; gy < debugObstacles_->height(); ++gy) {
-            for (int gx = 0; gx < debugObstacles_->width(); ++gx) {
-                int gridX = gx + obsOffsetX;
-                int gridY = gy + obsOffsetY;
-                auto info = debugObstacles_->getCellVisInfo(gridX, gridY);
-
-                ImVec2 p1 = worldToScreen({gridX * cellSize, gridY * cellSize});
-                ImVec2 p2 = worldToScreen({(gridX + 1) * cellSize, (gridY + 1) * cellSize});
-
-                // Node obstacles (yellow fill)
-                if (info.isNodeBlocked) {
-                    drawList->AddRectFilled(p1, p2, nodeBlockColor);
-                }
-                // Horizontal edge segments (blue horizontal bar)
-                if (info.hasHorizontalSegment) {
-                    drawList->AddRectFilled({p1.x, p1.y + zoomedCellSize*0.35f},
-                                           {p2.x, p2.y - zoomedCellSize*0.35f}, hSegmentColor);
-                }
-                // Vertical edge segments (green vertical bar)
-                if (info.hasVerticalSegment) {
-                    drawList->AddRectFilled({p1.x + zoomedCellSize*0.35f, p1.y},
-                                           {p2.x - zoomedCellSize*0.35f, p2.y}, vSegmentColor);
-                }
-            }
-        }
-
-        // Highlight start/goal points
-        if (astarStart_.x >= 0) {
-            ImVec2 p = worldToScreen(astarStart_);
-            float radius = 8 * zoom_;
-            drawList->AddCircleFilled(p, radius, startColor);
-            drawList->AddText({p.x + 10, p.y - 5}, IM_COL32_WHITE, "START");
-        }
-        if (astarGoal_.x >= 0) {
-            ImVec2 p = worldToScreen(astarGoal_);
-            float radius = 8 * zoom_;
-            drawList->AddCircleFilled(p, radius, goalColor);
-            drawList->AddText({p.x + 10, p.y - 5}, IM_COL32_WHITE, "GOAL");
-        }
-    }
-
     void render(ImDrawList* drawList) {
-        // Draw grid background first
+        // Get state for DemoRenderer calls
+        ViewTransform view = getViewTransform();
+        RenderOptions options = getRenderOptions();
         ImGuiIO& io = ImGui::GetIO();
-        drawGrid(drawList, io.DisplaySize.x, io.DisplaySize.y);
+        ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+
+        // Draw grid background
+        DemoRenderer::drawGrid(drawList, view, io.DisplaySize.x, io.DisplaySize.y, gridSize_);
 
         // Draw blocked cells (node obstacle areas)
-        drawBlockedCells(drawList);
+        if (options.showBlockedCells) {
+            DemoRenderer::drawBlockedCells(drawList, view, blockedRegions_, gridSize_);
+        }
 
         // Draw A* debug visualization
-        drawAStarDebug(drawList);
+        if (options.showAStarDebug) {
+            updateAStarDebugState();
+            DemoRenderer::drawAStarDebug(drawList, view, getAStarDebugState(), gridSize_);
+        }
 
-        // Draw edges first
+        // Draw edges
         for (const auto& [id, layout] : edgeLayouts_) {
             bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id)
                              != affectedEdges_.end();
 
-            // Hide edges connected to dragged node when in invalid position
-            if (isAffected && isInvalidDragPosition_) {
-                continue;
-            }
-
-            // Hide edges during drag and until A* completes when HideUntilDrop mode is active
-            // affectedEdges_ is kept until onOptimizationComplete() clears it
-            if (isAffected &&
-                layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop) {
-                continue;
-            }
-
-            // Hide the edge being snap-point-dragged (preview will be shown instead)
-            if (draggingSnapPoint_.isValid() && draggingSnapPoint_.edgeId == id && hasSnapPreview_) {
-                continue;
-            }
+            // Skip logic for edge visibility
+            if (isAffected && isInvalidDragPosition_) continue;
+            if (isAffected && layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop) continue;
+            if (draggingSnapPoint_.isValid() && draggingSnapPoint_.edgeId == id && hasSnapPreview_) continue;
 
             bool isSelected = (id == selectedEdge_);
             bool isHovered = (id == hoveredEdge_);
+            const EdgeData* edgeData = &graph_.getEdge(id);
 
-            ImU32 color = COLOR_EDGE;
-            float thickness = 2.0f;
-            if (isSelected) {
-                color = COLOR_EDGE_SELECTED;
-                thickness = 3.0f;
-            } else if (isHovered) {
-                color = COLOR_NODE_HOVER;
-                thickness = 2.5f;
-            } else if (isAffected) {
-                color = COLOR_EDGE_AFFECTED;
-            }
-
-            auto points = layout.allPoints();
-            float scaledThickness = thickness * zoom_;
-            for (size_t i = 1; i < points.size(); ++i) {
-                ImVec2 p1 = worldToScreen(points[i-1]);
-                ImVec2 p2 = worldToScreen(points[i]);
-                drawList->AddLine(p1, p2, color, scaledThickness);
-            }
-
-            // Draw arrowhead
-            if (points.size() >= 2) {
-                Point last = points.back();
-                Point prev = points[points.size() - 2];
-                drawArrowhead(drawList, prev, last, color);
-            }
-
-            // Draw edge label (using pre-computed labelPosition)
-            const EdgeData& edge = graph_.getEdge(id);
-            if (!edge.label.empty()) {
-                ImVec2 labelPos = worldToScreen(layout.labelPosition);
-                ImVec2 textPos = {labelPos.x - 20, labelPos.y - 15};
-                drawList->AddText(textPos, COLOR_TEXT, edge.label.c_str());
-            }
+            DemoRenderer::drawEdge(drawList, view, layout, edgeData, isSelected, isHovered, isAffected);
         }
 
         // Draw bend point insertion preview
-        if (bendPointPreview_.active) {
-            ImVec2 screenPos = worldToScreen(bendPointPreview_.position);
-            float size = 5.0f * zoom_;
-            ImVec2 pts[4] = {
-                {screenPos.x, screenPos.y - size},
-                {screenPos.x + size, screenPos.y},
-                {screenPos.x, screenPos.y + size},
-                {screenPos.x - size, screenPos.y}
-            };
-            drawList->AddConvexPolyFilled(pts, 4, COLOR_BEND_POINT_PREVIEW);
-            drawList->AddPolyline(pts, 4, IM_COL32(100, 200, 255, 200), ImDrawFlags_Closed, 1.0f);
-
-            // Draw "+" indicator
-            float plusSize = 3.0f * zoom_;
-            drawList->AddLine(
-                {screenPos.x - plusSize, screenPos.y},
-                {screenPos.x + plusSize, screenPos.y},
-                IM_COL32(255, 255, 255, 200), 2.0f);
-            drawList->AddLine(
-                {screenPos.x, screenPos.y - plusSize},
-                {screenPos.x, screenPos.y + plusSize},
-                IM_COL32(255, 255, 255, 200), 2.0f);
-        }
+        DemoRenderer::drawBendPointPreview(drawList, view, bendPointPreview_);
 
         // Draw nodes
         for (const auto& [id, layout] : nodeLayouts_) {
-            ImU32 fillColor = COLOR_NODE;
-            if (id == draggedNode_) {
-                if (isInvalidDragPosition_) {
-                    fillColor = IM_COL32(255, 80, 80, 255);  // Red for invalid position
-                } else {
-                    fillColor = COLOR_NODE_DRAG;
-                }
-            } else if (id == selectedNode_) {
-                fillColor = COLOR_NODE_SELECTED;
-            } else if (id == hoveredNode_) {
-                fillColor = COLOR_NODE_HOVER;
-            }
+            bool isSelected = (id == selectedNode_);
+            bool isHovered = (id == hoveredNode_);
+            bool isDragged = (id == draggedNode_);
+            const NodeData* nodeData = &graph_.getNode(id);
+            test::scxml::SCXMLGraph* scxmlGraph = scxmlModeActive_ ? scxmlGraph_.get() : nullptr;
 
-            // Check if this is a point node (size = 0,0)
-            // For point nodes, position IS the center (used for Initial, Final, History)
-            bool isPointNode = layout.isPointNode();
-            
-            ImVec2 p1 = worldToScreen(layout.position);
-            ImVec2 p2 = worldToScreen({layout.position.x + layout.size.width,
-                                       layout.position.y + layout.size.height});
-            
-            // Get center and radius for circular nodes
-            float centerX, centerY, radius;
-            if (isPointNode) {
-                // Point node: position is center, use visual radius
-                ImVec2 centerScreen = worldToScreen(layout.position);
-                centerX = centerScreen.x;
-                centerY = centerScreen.y;
-                radius = POINT_NODE_RADIUS * zoom_;  // Scaled for screen space
-            } else {
-                // Regular node: center is middle of bounding box
-                centerX = (p1.x + p2.x) / 2.0f;
-                centerY = (p1.y + p2.y) / 2.0f;
-                radius = std::min(p2.x - p1.x, p2.y - p1.y) / 2.0f;
-            }
+            DemoRenderer::drawNode(drawList, view, id, layout, nodeData,
+                                   isSelected, isHovered, isDragged, isInvalidDragPosition_,
+                                   scxmlGraph);
 
-            // Check SCXML node type for special rendering
-            // BUT: Only draw special shapes if NodeLayout.nodeType is Point
-            // If user converted to Normal, draw as rectangle regardless of SCXMLNodeType
-            bool drawnAsSpecial = false;
-            if (scxmlModeActive_ && scxmlGraph_ && isPointNode) {
-                SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
-                
-                switch (nodeType) {
-                    case SCXMLNodeType::Initial: {
-                        // Initial pseudo-state: filled black circle at grid point
-                        ImU32 initialColor = IM_COL32(30, 30, 30, 255);
-                        drawList->AddCircleFilled({centerX, centerY}, radius, initialColor);
-                        drawnAsSpecial = true;
-                        break;
-                    }
-                    case SCXMLNodeType::Final: {
-                        // Final state: double circle at grid point
-                        ImU32 outerColor = COLOR_NODE_BORDER;
-                        float outerRadius = radius;
-                        float innerRadius = radius * 0.6f;
-                        drawList->AddCircle({centerX, centerY}, outerRadius, outerColor, 0, 2.0f * zoom_);
-                        drawList->AddCircleFilled({centerX, centerY}, innerRadius, IM_COL32(30, 30, 30, 255));
-                        drawnAsSpecial = true;
-                        break;
-                    }
-                    case SCXMLNodeType::History:
-                    case SCXMLNodeType::HistoryDeep: {
-                        // History: circle with "H" or "H*" at grid point
-                        drawList->AddCircle({centerX, centerY}, radius, COLOR_NODE_BORDER, 0, 2.0f * zoom_);
-                        drawList->AddCircleFilled({centerX, centerY}, radius - 1.0f * zoom_, fillColor);
-                        const char* histText = (nodeType == SCXMLNodeType::HistoryDeep) ? "H*" : "H";
-                        ImVec2 textSize = ImGui::CalcTextSize(histText);
-                        ImVec2 textPos = {centerX - textSize.x / 2, centerY - textSize.y / 2};
-                        drawList->AddText(textPos, COLOR_TEXT, histText);
-                        drawnAsSpecial = true;
-                        break;
-                    }
-                    case SCXMLNodeType::Parallel: {
-                        // Parallel state: rectangle with dashed border
-                        float scaledRounding = 5.0f * zoom_;
-                        drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
-                        // Dashed border effect: double line
-                        drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
-                        drawList->AddRect({p1.x + 3*zoom_, p1.y + 3*zoom_}, 
-                                         {p2.x - 3*zoom_, p2.y - 3*zoom_}, 
-                                         IM_COL32(100, 100, 100, 150), scaledRounding, 0, 1.0f * zoom_);
-                        drawnAsSpecial = true;
-                        // Fall through to draw label
-                    }
-                    default:
-                        break;
-                }
-            }
-
-            // Standard rectangular node rendering
-            if (!drawnAsSpecial) {
-                float scaledRounding = 5.0f * zoom_;
-                drawList->AddRectFilled(p1, p2, fillColor, scaledRounding);
-                drawList->AddRect(p1, p2, COLOR_NODE_BORDER, scaledRounding, 0, 2.0f * zoom_);
-            }
-
-            // Draw label (for State, Parallel types)
-            const NodeData& node = graph_.getNode(id);
-            
-            // Always draw node ID (small, with background for visibility)
-            {
-                char idStr[16];
-                snprintf(idStr, sizeof(idStr), "[%d]", static_cast<int>(id));
-                ImVec2 idSize = ImGui::CalcTextSize(idStr);
-                ImVec2 idPos;
-                if (isPointNode) {
-                    // For Point nodes, draw ID above the node
-                    idPos = {centerX - idSize.x / 2, centerY - radius - idSize.y - 4};
-                } else {
-                    // For Regular nodes, draw ID in top-left corner
-                    idPos = {p1.x + 3, p1.y + 3};
-                }
-                // Draw background rectangle for better visibility
-                float padding = 2.0f;
-                ImVec2 bgMin = {idPos.x - padding, idPos.y - padding};
-                ImVec2 bgMax = {idPos.x + idSize.x + padding, idPos.y + idSize.y + padding};
-                drawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 200, 220), 2.0f);
-                drawList->AddRect(bgMin, bgMax, IM_COL32(100, 100, 0, 200), 2.0f);
-                drawList->AddText(idPos, IM_COL32(0, 0, 0, 255), idStr);
-            }
-            
-            if (!node.label.empty()) {
-                // Skip label for Initial/Final/History only if still a Point node
-                bool skipLabel = false;
-                if (scxmlModeActive_ && scxmlGraph_ && isPointNode) {
-                    SCXMLNodeType nodeType = scxmlGraph_->getNodeType(id);
-                    if (nodeType == SCXMLNodeType::Initial || 
-                        nodeType == SCXMLNodeType::Final ||
-                        nodeType == SCXMLNodeType::History ||
-                        nodeType == SCXMLNodeType::HistoryDeep) {
-                        skipLabel = true;
-                    }
-                }
-                if (!skipLabel) {
-                    ImVec2 textSize = ImGui::CalcTextSize(node.label.c_str());
-                    float scaledWidth = layout.size.width * zoom_;
-                    float scaledHeight = layout.size.height * zoom_;
-                    ImVec2 textPos = {p1.x + (scaledWidth - textSize.x) / 2,
-                                     p1.y + (scaledHeight - textSize.y) / 2};
-                    drawList->AddText(textPos, COLOR_TEXT, node.label.c_str());
-                }
-            }
-
-            // Draw snap points if show enabled
+            // Draw snap points per node
             if (showSnapPoints_) {
-                drawSnapPoints(drawList, layout);
+                DemoRenderer::drawSnapPoints(drawList, fgDrawList, view, layout,
+                                            edgeLayouts_, nodeLayouts_, options,
+                                            hoveredSnapPoint_, draggingSnapPoint_);
             }
         }
 
         // Draw snap point candidates during drag
         if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
-            drawSnapCandidates(drawList);
+            DemoRenderer::drawSnapCandidates(drawList, view, snapController_, snappedCandidateIndex_);
         }
 
         // Draw A* path preview during snap point drag
         if (hasSnapPreview_ && draggingSnapPoint_.isValid()) {
-            drawSnapPreviewPath(drawList);
+            DemoRenderer::drawSnapPreviewPath(drawList, view, snapController_);
         }
-    }
-
-    void drawSnapCandidates(ImDrawList* drawList) {
-        const auto& candidates = snapController_.getCandidates();
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            const auto& candidate = candidates[i];
-            ImVec2 screenPos = worldToScreen(candidate.position);
-
-            bool isSnapped = (static_cast<int>(i) == snappedCandidateIndex_);
-
-            if (isSnapped) {
-                // Highlight the snapped candidate
-                float radius = 8.0f * zoom_;
-                drawList->AddCircleFilled(screenPos, radius, IM_COL32(255, 100, 100, 255));
-                drawList->AddCircle(screenPos, radius, IM_COL32(255, 255, 255, 255), 0, 2.0f);
-            } else {
-                // Draw other candidates as smaller circles
-                float radius = 4.0f * zoom_;
-                drawList->AddCircleFilled(screenPos, radius, IM_COL32(150, 150, 255, 150));
-                drawList->AddCircle(screenPos, radius, IM_COL32(100, 100, 200, 200), 0, 1.0f);
-            }
-        }
-    }
-
-    void drawSnapPreviewPath(ImDrawList* drawList) {
-        // Draw preview path in a distinct color (cyan, semi-transparent)
-        ImU32 previewColor = IM_COL32(0, 200, 255, 180);
-        float thickness = 3.0f * zoom_;
-
-        auto points = snapController_.getPreviewLayout().allPoints();
-        for (size_t i = 1; i < points.size(); ++i) {
-            ImVec2 p1 = worldToScreen(points[i-1]);
-            ImVec2 p2 = worldToScreen(points[i]);
-            drawList->AddLine(p1, p2, previewColor, thickness);
-        }
-
-        // Draw arrow at the target
-        if (points.size() >= 2) {
-            ImVec2 p1 = worldToScreen(points[points.size()-2]);
-            ImVec2 p2 = worldToScreen(points.back());
-
-            float dx = p2.x - p1.x;
-            float dy = p2.y - p1.y;
-            float len = std::sqrt(dx*dx + dy*dy);
-            if (len > 0.01f) {
-                dx /= len;
-                dy /= len;
-                float arrowSize = 8.0f * zoom_;
-                ImVec2 arrow1 = {p2.x - arrowSize * (dx + dy * 0.5f),
-                                 p2.y - arrowSize * (dy - dx * 0.5f)};
-                ImVec2 arrow2 = {p2.x - arrowSize * (dx - dy * 0.5f),
-                                 p2.y - arrowSize * (dy + dx * 0.5f)};
-                drawList->AddTriangleFilled(p2, arrow1, arrow2, previewColor);
-            }
-        }
-    }
-
-    void drawSnapPoints(ImDrawList* drawList, const NodeLayout& nodeLayout) {
-        // Draw actual edge connection points with snap indices (for both modes)
-        // Use foreground draw list for labels to ensure they're on top
-        ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
-
-        for (const auto& [edgeId, edgeLayout] : edgeLayouts_) {
-            // Skip snap points for affected edges when in invalid drag position
-            bool isAffectedEdge = std::find(affectedEdges_.begin(), affectedEdges_.end(), edgeId)
-                                  != affectedEdges_.end();
-            if (isAffectedEdge && isInvalidDragPosition_) {
-                continue;
-            }
-
-            // Skip snap points during drag and until A* completes when HideUntilDrop mode is active
-            if (isAffectedEdge &&
-                layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop) {
-                continue;
-            }
-
-            // Source point on this node (outgoing - green)
-            if (edgeLayout.from == nodeLayout.id) {
-                ImVec2 screenPos = worldToScreen(edgeLayout.sourcePoint);
-
-                // Determine colors based on hover/drag state
-                bool isSourceHovered = (hoveredSnapPoint_.edgeId == edgeId && hoveredSnapPoint_.isSource);
-                bool isSourceDragging = (draggingSnapPoint_.edgeId == edgeId && draggingSnapPoint_.isSource);
-                float radius = 5.0f * zoom_;
-                ImU32 fillColor = IM_COL32(100, 200, 100, 255);
-                ImU32 borderColor = IM_COL32(50, 150, 50, 255);
-
-                if (isSourceDragging) {
-                    radius = 8.0f * zoom_;
-                    fillColor = IM_COL32(255, 180, 80, 255);  // Orange for dragging
-                    borderColor = IM_COL32(200, 130, 50, 255);
-                } else if (isSourceHovered) {
-                    radius = 7.0f * zoom_;
-                    fillColor = IM_COL32(255, 220, 100, 255);  // Yellow for hover
-                    borderColor = IM_COL32(200, 170, 50, 255);
-                }
-
-                drawList->AddCircleFilled(screenPos, radius, fillColor);
-                drawList->AddCircle(screenPos, radius, borderColor, 0, 1.5f);
-
-                // Draw snap index label for source
-                // Skip for Point nodes (they only have one snap point, label would be redundant)
-                bool isSourcePointNode = nodeLayout.isPointNode();
-                if (showSnapIndices_ && !isSourcePointNode) {
-                    char label[32];
-                    const char* edgeName = "";
-                    switch (edgeLayout.sourceEdge) {
-                        case NodeEdge::Top: edgeName = "T"; break;
-                        case NodeEdge::Bottom: edgeName = "B"; break;
-                        case NodeEdge::Left: edgeName = "L"; break;
-                        case NodeEdge::Right: edgeName = "R"; break;
-                    }
-                    // Compute snap index from position
-                    int srcSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                        nodeLayout, edgeLayout.sourceEdge, edgeLayout.sourcePoint, gridSize_);
-                    snprintf(label, sizeof(label), "%s%d", edgeName, srcSnapIdx);
-
-                    // Position label: centered on snap point, inside node (away from arrow)
-                    ImVec2 textSize = ImGui::CalcTextSize(label);
-                    ImVec2 textPos = screenPos;
-                    float labelOffset = 8.0f * zoom_;
-
-                    // Center text horizontally/vertically and move inside node
-                    switch (edgeLayout.sourceEdge) {
-                        case NodeEdge::Top:
-                            textPos.x -= textSize.x / 2.0f;
-                            textPos.y += labelOffset;  // Move down into node
-                            break;
-                        case NodeEdge::Bottom:
-                            textPos.x -= textSize.x / 2.0f;
-                            textPos.y -= textSize.y + labelOffset;  // Move up into node
-                            break;
-                        case NodeEdge::Left:
-                            textPos.x += labelOffset;  // Move right into node
-                            textPos.y -= textSize.y / 2.0f;
-                            break;
-                        case NodeEdge::Right:
-                            textPos.x -= textSize.x + labelOffset;  // Move left into node
-                            textPos.y -= textSize.y / 2.0f;
-                            break;
-                    }
-
-                    // Draw bold text with white background
-                    ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
-                    ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
-                    fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
-                    fgDrawList->AddRect(bgMin, bgMax, IM_COL32(40, 140, 40, 255), 3.0f, 0, 2.0f);
-                    // Bold effect: draw text twice with offset
-                    fgDrawList->AddText({textPos.x + 1, textPos.y}, IM_COL32(20, 100, 20, 255), label);
-                    fgDrawList->AddText(textPos, IM_COL32(20, 100, 20, 255), label);
-                }
-            }
-            // Target point on this node (incoming - red)
-            if (edgeLayout.to == nodeLayout.id) {
-                ImVec2 screenPos = worldToScreen(edgeLayout.targetPoint);
-
-                // Determine colors based on hover/drag state
-                bool isTargetHovered = (hoveredSnapPoint_.edgeId == edgeId && !hoveredSnapPoint_.isSource);
-                bool isTargetDragging = (draggingSnapPoint_.edgeId == edgeId && !draggingSnapPoint_.isSource);
-                float radius = 5.0f * zoom_;
-                ImU32 fillColor = IM_COL32(200, 100, 100, 255);
-                ImU32 borderColor = IM_COL32(150, 50, 50, 255);
-
-                if (isTargetDragging) {
-                    radius = 8.0f * zoom_;
-                    fillColor = IM_COL32(255, 180, 80, 255);  // Orange for dragging
-                    borderColor = IM_COL32(200, 130, 50, 255);
-                } else if (isTargetHovered) {
-                    radius = 7.0f * zoom_;
-                    fillColor = IM_COL32(255, 220, 100, 255);  // Yellow for hover
-                    borderColor = IM_COL32(200, 170, 50, 255);
-                }
-
-                drawList->AddCircleFilled(screenPos, radius, fillColor);
-                drawList->AddCircle(screenPos, radius, borderColor, 0, 1.5f);
-
-                // Draw snap index label for target
-                // Skip for Point nodes (they only have one snap point, label would be redundant)
-                auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
-                bool isTargetPointNode = (tgtNodeIt != nodeLayouts_.end() &&
-                    tgtNodeIt->second.isPointNode());
-                if (showSnapIndices_ && !isTargetPointNode) {
-                    char label[32];
-                    const char* edgeName = "";
-                    switch (edgeLayout.targetEdge) {
-                        case NodeEdge::Top: edgeName = "T"; break;
-                        case NodeEdge::Bottom: edgeName = "B"; break;
-                        case NodeEdge::Left: edgeName = "L"; break;
-                        case NodeEdge::Right: edgeName = "R"; break;
-                    }
-                    // Compute snap index from position (use target node)
-                    int tgtSnapIdx = 0;
-                    if (tgtNodeIt != nodeLayouts_.end()) {
-                        tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                            tgtNodeIt->second, edgeLayout.targetEdge, edgeLayout.targetPoint, gridSize_);
-                    }
-                    snprintf(label, sizeof(label), "%s%d", edgeName, tgtSnapIdx);
-
-                    // Position label: centered on snap point, inside node (away from arrow)
-                    ImVec2 textSize = ImGui::CalcTextSize(label);
-                    ImVec2 textPos = screenPos;
-                    float labelOffset = 8.0f * zoom_;
-
-                    // Center text horizontally/vertically and move inside node
-                    switch (edgeLayout.targetEdge) {
-                        case NodeEdge::Top:
-                            textPos.x -= textSize.x / 2.0f;
-                            textPos.y += labelOffset;  // Move down into node
-                            break;
-                        case NodeEdge::Bottom:
-                            textPos.x -= textSize.x / 2.0f;
-                            textPos.y -= textSize.y + labelOffset;  // Move up into node
-                            break;
-                        case NodeEdge::Left:
-                            textPos.x += labelOffset;  // Move right into node
-                            textPos.y -= textSize.y / 2.0f;
-                            break;
-                        case NodeEdge::Right:
-                            textPos.x -= textSize.x + labelOffset;  // Move left into node
-                            textPos.y -= textSize.y / 2.0f;
-                            break;
-                    }
-
-                    // Draw bold text with white background
-                    ImVec2 bgMin = {textPos.x - 3, textPos.y - 2};
-                    ImVec2 bgMax = {textPos.x + textSize.x + 3, textPos.y + textSize.y + 2};
-                    fgDrawList->AddRectFilled(bgMin, bgMax, IM_COL32(255, 255, 255, 240), 3.0f);
-                    fgDrawList->AddRect(bgMin, bgMax, IM_COL32(180, 40, 40, 255), 3.0f, 0, 2.0f);
-                    // Bold effect: draw text twice with offset
-                    fgDrawList->AddText({textPos.x + 1, textPos.y}, IM_COL32(160, 20, 20, 255), label);
-                    fgDrawList->AddText(textPos, IM_COL32(160, 20, 20, 255), label);
-                }
-            }
-        }
-    }
-
-    void drawArrowhead(ImDrawList* drawList, const Point& from, const Point& to, ImU32 color) {
-        // Convert to screen coordinates first
-        ImVec2 screenFrom = worldToScreen(from);
-        ImVec2 screenTo = worldToScreen(to);
-
-        float dx = screenTo.x - screenFrom.x;
-        float dy = screenTo.y - screenFrom.y;
-        float len = std::sqrt(dx * dx + dy * dy);
-        if (len < 0.001f) return;
-
-        dx /= len;
-        dy /= len;
-
-        float arrowSize = 10.0f * zoom_;
-        ImVec2 tip = screenTo;
-        ImVec2 left = {tip.x - arrowSize * dx + arrowSize * 0.5f * dy,
-                       tip.y - arrowSize * dy - arrowSize * 0.5f * dx};
-        ImVec2 right = {tip.x - arrowSize * dx - arrowSize * 0.5f * dy,
-                        tip.y - arrowSize * dy + arrowSize * 0.5f * dx};
-
-        drawList->AddTriangleFilled(tip, left, right, color);
     }
 
     void renderUI() {
@@ -1909,6 +1355,10 @@ private:
     std::unique_ptr<LayoutController> layoutController_;  // Centralized constraint enforcement
     LayoutOptions layoutOptions_;
 
+    // Extracted components for separation of concerns
+    std::unique_ptr<DemoInputHandler> inputHandler_;
+    std::unique_ptr<DemoCommandProcessor> commandProcessor_;
+
     Point offset_ = {0, 0};
     float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
 
@@ -1935,6 +1385,167 @@ private:
 
     float worldToScreenScale(float worldSize) const {
         return worldSize * zoom_;
+    }
+
+    /// Get current view transform for DemoRenderer calls
+    ViewTransform getViewTransform() const {
+        ViewTransform vt;
+        vt.panOffset = panOffset_;
+        vt.zoom = zoom_;
+        vt.screenOffset = offset_;
+        return vt;
+    }
+
+    /// Get render options for DemoRenderer calls
+    RenderOptions getRenderOptions() const {
+        RenderOptions opts;
+        opts.showSnapPoints = showSnapPoints_;
+        opts.showSnapIndices = showSnapIndices_;
+        opts.showBlockedCells = showBlockedCells_;
+        opts.showAStarDebug = showAStarDebug_;
+        opts.gridSize = gridSize_;
+        return opts;
+    }
+
+    /// Get A* debug state for DemoRenderer calls
+    AStarDebugState getAStarDebugState() const {
+        AStarDebugState debug;
+        debug.debugEdgeId = debugEdgeId_;
+        debug.obstacles = debugObstacles_;
+        debug.start = astarStart_;
+        debug.goal = astarGoal_;
+        return debug;
+    }
+
+    /// Update A* debug state (obstacle map, start/goal points)
+    void updateAStarDebugState() {
+        // Rebuild obstacle map every frame to reflect current state
+        debugObstacles_ = std::make_shared<ObstacleMap>();
+        debugObstacles_->buildFromNodes(nodeLayouts_, gridSize_);
+        debugObstacles_->addEdgeSegments(edgeLayouts_, debugEdgeId_);
+
+        // Update start/goal from selected or debug edge
+        EdgeId targetEdge = (debugEdgeId_ != INVALID_EDGE) ? debugEdgeId_ : selectedEdge_;
+        if (targetEdge != INVALID_EDGE) {
+            auto it = edgeLayouts_.find(targetEdge);
+            if (it != edgeLayouts_.end()) {
+                astarStart_ = it->second.sourcePoint;
+                astarGoal_ = it->second.targetPoint;
+            }
+        }
+    }
+
+    /// Get DemoState for passing to extracted components (DemoInputHandler, etc.)
+    /// Note: This creates a view into InteractiveDemo's state, not a copy.
+    DemoState getDemoState() {
+        DemoState state;
+        
+        // Core data (non-owning pointers)
+        state.graph = &graph_;
+        state.nodeLayouts = &nodeLayouts_;
+        state.edgeLayouts = &edgeLayouts_;
+        state.layoutOptions = &layoutOptions_;
+        
+        // Controllers (non-owning pointers)
+        state.layoutController = layoutController_.get();
+        state.routingCoordinator = routingCoordinator_.get();
+        state.constraintManager = constraintManager_.get();
+        state.snapController = &snapController_;
+        
+        // View transform
+        state.view.panOffset = panOffset_;
+        state.view.zoom = zoom_;
+        state.view.screenOffset = offset_;
+        
+        // Interaction state
+        state.interaction.selectedNode = selectedNode_;
+        state.interaction.selectedEdge = selectedEdge_;
+        state.interaction.selectedBendPoint = selectedBendPoint_;
+        state.interaction.hoveredNode = hoveredNode_;
+        state.interaction.hoveredEdge = hoveredEdge_;
+        state.interaction.hoveredBendPoint = hoveredBendPoint_;
+        state.interaction.hoveredSnapPoint = hoveredSnapPoint_;
+        state.interaction.draggedNode = draggedNode_;
+        state.interaction.dragOffset = dragOffset_;
+        state.interaction.affectedEdges = affectedEdges_;
+        state.interaction.isInvalidDragPosition = isInvalidDragPosition_;
+        state.interaction.lastValidPosition = lastValidPosition_;
+        state.interaction.lastRoutedPosition = lastRoutedPosition_;
+        state.interaction.pendingNodeDrag = pendingNodeDrag_;
+        state.interaction.nodeClickStart = nodeClickStart_;
+        state.interaction.draggingBendPoint = draggingBendPoint_;
+        state.interaction.bendPointDragOffset = bendPointDragOffset_;
+        state.interaction.bendPointPreview = bendPointPreview_;
+        state.interaction.draggingSnapPoint = draggingSnapPoint_;
+        state.interaction.snapPointDragOffset = snapPointDragOffset_;
+        state.interaction.snapPointDragStart = snapPointDragStart_;
+        state.interaction.snappedCandidateIndex = snappedCandidateIndex_;
+        state.interaction.hasSnapPreview = hasSnapPreview_;
+        state.interaction.isPanning = isPanning_;
+        state.interaction.emptyAreaPanStarted = emptyAreaPanStarted_;
+        
+        // Render options
+        state.renderOptions.showSnapPoints = showSnapPoints_;
+        state.renderOptions.showSnapIndices = showSnapIndices_;
+        state.renderOptions.showBlockedCells = showBlockedCells_;
+        state.renderOptions.showAStarDebug = showAStarDebug_;
+        state.renderOptions.gridSize = gridSize_;
+        
+        // A* debug state
+        state.astarDebug.debugEdgeId = debugEdgeId_;
+        state.astarDebug.obstacles = debugObstacles_;
+        state.astarDebug.start = astarStart_;
+        state.astarDebug.goal = astarGoal_;
+        
+        // Blocked regions
+        state.blockedRegions = blockedRegions_;
+        
+        return state;
+    }
+
+    /// Update interaction state from external source (for extracted components)
+    void setInteractionState(const InteractionState& state) {
+        selectedNode_ = state.selectedNode;
+        selectedEdge_ = state.selectedEdge;
+        selectedBendPoint_ = state.selectedBendPoint;
+        hoveredNode_ = state.hoveredNode;
+        hoveredEdge_ = state.hoveredEdge;
+        hoveredBendPoint_ = state.hoveredBendPoint;
+        hoveredSnapPoint_ = state.hoveredSnapPoint;
+        draggedNode_ = state.draggedNode;
+        dragOffset_ = state.dragOffset;
+        affectedEdges_ = state.affectedEdges;
+        isInvalidDragPosition_ = state.isInvalidDragPosition;
+        lastValidPosition_ = state.lastValidPosition;
+        lastRoutedPosition_ = state.lastRoutedPosition;
+        pendingNodeDrag_ = state.pendingNodeDrag;
+        nodeClickStart_ = state.nodeClickStart;
+        draggingBendPoint_ = state.draggingBendPoint;
+        bendPointDragOffset_ = state.bendPointDragOffset;
+        bendPointPreview_ = state.bendPointPreview;
+        draggingSnapPoint_ = state.draggingSnapPoint;
+        snapPointDragOffset_ = state.snapPointDragOffset;
+        snapPointDragStart_ = state.snapPointDragStart;
+        snappedCandidateIndex_ = state.snappedCandidateIndex;
+        hasSnapPreview_ = state.hasSnapPreview;
+        isPanning_ = state.isPanning;
+        emptyAreaPanStarted_ = state.emptyAreaPanStarted;
+    }
+
+    /// Update view transform from external source
+    void setViewTransform(const ViewTransform& view) {
+        panOffset_ = view.panOffset;
+        zoom_ = view.zoom;
+        offset_ = view.screenOffset;
+    }
+
+    /// Update render options from external source
+    void setRenderOptions(const RenderOptions& opts) {
+        showSnapPoints_ = opts.showSnapPoints;
+        showSnapIndices_ = opts.showSnapIndices;
+        showBlockedCells_ = opts.showBlockedCells;
+        showAStarDebug_ = opts.showAStarDebug;
+        // Note: gridSize_ is not updated from RenderOptions as it's a layout parameter
     }
 
     NodeId hoveredNode_ = INVALID_NODE;
@@ -2112,6 +1723,22 @@ private:
     void postToMainThread(std::function<void()> fn) {
         std::lock_guard<std::mutex> lock(queueMutex_);
         mainThreadQueue_.push(std::move(fn));
+    }
+
+    /// Wait for optimization to become idle (with timeout)
+    /// @param timeoutMs Timeout in milliseconds
+    /// @return true if idle, false if timeout
+    bool waitForOptimizationIdle(int timeoutMs) {
+        auto startTime = std::chrono::steady_clock::now();
+        while (routingCoordinator_->state() != RoutingState::Idle) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startTime).count();
+            if (elapsed >= timeoutMs) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return true;
     }
 
     void startAsyncOptimization(
