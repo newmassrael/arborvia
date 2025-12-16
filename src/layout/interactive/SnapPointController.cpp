@@ -56,6 +56,12 @@ SnapPointController::DragStartResult SnapPointController::startDrag(
 
     const NodeLayout& node = nodeIt->second;
 
+    // Point nodes have only one snap point (center) - dragging is meaningless
+    if (node.isPointNode()) {
+        result.reason = "Point nodes have fixed center connection";
+        return result;
+    }
+
     // Store drag state
     isDragging_ = true;
     draggedEdgeId_ = edgeId;

@@ -156,6 +156,9 @@ const ImU32 COLOR_SNAP_POINT_HOVER = IM_COL32(255, 200, 0, 255);
 const ImU32 COLOR_EDGE_SELECTED = IM_COL32(0, 200, 100, 255);
 const ImU32 COLOR_NODE_SELECTED = IM_COL32(100, 255, 100, 255);
 
+// Point node visual radius (used for both rendering and hit detection)
+constexpr float POINT_NODE_RADIUS = 10.0f;
+
 // Grid obstacle colors
 const ImU32 COLOR_BLOCKED_CELL = IM_COL32(255, 100, 100, 60);  // Red, semi-transparent
 
@@ -387,9 +390,21 @@ public:
         // Find hovered node
         hoveredNode_ = INVALID_NODE;
         for (const auto& [id, layout] : nodeLayouts_) {
-            Rect bounds = layout.bounds();
-            if (graphMouse.x >= bounds.x && graphMouse.x <= bounds.right() &&
-                graphMouse.y >= bounds.y && graphMouse.y <= bounds.bottom()) {
+            bool hit = false;
+            if (layout.isPointNode()) {
+                // Point nodes: use distance-based hit detection with visual radius
+                Point center = layout.center();
+                float dx = graphMouse.x - center.x;
+                float dy = graphMouse.y - center.y;
+                float distSq = dx * dx + dy * dy;
+                hit = (distSq <= POINT_NODE_RADIUS * POINT_NODE_RADIUS);
+            } else {
+                // Normal nodes: use bounds-based hit detection
+                Rect bounds = layout.bounds();
+                hit = (graphMouse.x >= bounds.x && graphMouse.x <= bounds.right() &&
+                       graphMouse.y >= bounds.y && graphMouse.y <= bounds.bottom());
+            }
+            if (hit) {
                 hoveredNode_ = id;
                 break;
             }
@@ -1086,7 +1101,7 @@ public:
 
             // Check if this is a point node (size = 0,0)
             // For point nodes, position IS the center (used for Initial, Final, History)
-            bool isPointNode = (layout.size.width < 1.0f && layout.size.height < 1.0f);
+            bool isPointNode = layout.isPointNode();
             
             ImVec2 p1 = worldToScreen(layout.position);
             ImVec2 p2 = worldToScreen({layout.position.x + layout.size.width,
@@ -1095,11 +1110,11 @@ public:
             // Get center and radius for circular nodes
             float centerX, centerY, radius;
             if (isPointNode) {
-                // Point node: position is center, use fixed radius
+                // Point node: position is center, use visual radius
                 ImVec2 centerScreen = worldToScreen(layout.position);
                 centerX = centerScreen.x;
                 centerY = centerScreen.y;
-                radius = 10.0f * zoom_;  // Fixed radius for point nodes
+                radius = POINT_NODE_RADIUS * zoom_;  // Scaled for screen space
             } else {
                 // Regular node: center is middle of bounding box
                 centerX = (p1.x + p2.x) / 2.0f;
@@ -1307,7 +1322,7 @@ public:
 
                 // Draw snap index label for source
                 // Skip for Point nodes (they only have one snap point, label would be redundant)
-                bool isSourcePointNode = (nodeLayout.size.width < 1.0f && nodeLayout.size.height < 1.0f);
+                bool isSourcePointNode = nodeLayout.isPointNode();
                 if (showSnapIndices_ && !isSourcePointNode) {
                     char label[32];
                     const char* edgeName = "";
@@ -1384,8 +1399,8 @@ public:
                 // Draw snap index label for target
                 // Skip for Point nodes (they only have one snap point, label would be redundant)
                 auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
-                bool isTargetPointNode = (tgtNodeIt != nodeLayouts_.end() && 
-                    tgtNodeIt->second.size.width < 1.0f && tgtNodeIt->second.size.height < 1.0f);
+                bool isTargetPointNode = (tgtNodeIt != nodeLayouts_.end() &&
+                    tgtNodeIt->second.isPointNode());
                 if (showSnapIndices_ && !isTargetPointNode) {
                     char label[32];
                     const char* edgeName = "";
