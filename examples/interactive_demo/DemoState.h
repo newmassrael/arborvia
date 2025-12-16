@@ -142,7 +142,6 @@ struct DemoState {
     // Controllers
     LayoutController* layoutController = nullptr;
     PathRoutingCoordinator* routingCoordinator = nullptr;
-    IConstraintValidator* constraintManager = nullptr;
     SnapPointController* snapController = nullptr;
 
     // State
@@ -151,6 +150,12 @@ struct DemoState {
     RenderOptions renderOptions;
     AStarDebugState astarDebug;
     std::vector<Rect> blockedRegions;
+
+    // SCXML test state
+    struct SCXMLState {
+        bool modeActive = false;
+        int currentTestIndex = -1;
+    } scxml;
 };
 
 }  // namespace arborvia

@@ -8,6 +8,8 @@
 #include "DemoColors.h"
 #include "DemoInputHandler.h"
 #include "DemoCommandProcessor.h"
+#include "DemoUIPanel.h"
+#include "LogCapture.h"
 
 #include <arborvia/arborvia.h>
 #include <arborvia/common/Logger.h>
@@ -51,103 +53,6 @@ using arborvia::test::scxml::ConvertOptions;
 #include <future>
 
 using namespace arborvia;
-
-// Log capture system for TCP polling
-class LogCapture {
-public:
-    static LogCapture& instance() {
-        static LogCapture inst;
-        return inst;
-    }
-
-    void install() {
-        if (!installed_) {
-            originalBuf_ = std::cout.rdbuf(&captureBuf_);
-            installed_ = true;
-        }
-    }
-
-    void uninstall() {
-        if (installed_) {
-            std::cout.rdbuf(originalBuf_);
-            installed_ = false;
-        }
-    }
-
-    std::string getAndClear() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::string result = buffer_.str();
-        buffer_.str("");
-        buffer_.clear();
-        return result;
-    }
-
-    std::string get() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return buffer_.str();
-    }
-
-    void clear() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        buffer_.str("");
-        buffer_.clear();
-    }
-
-    void append(const std::string& s) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        buffer_ << s;
-    }
-
-private:
-    LogCapture() : captureBuf_(buffer_, originalBuf_, mutex_) {}
-    ~LogCapture() { uninstall(); }
-
-    // Custom streambuf that captures output and also forwards to original
-    class CaptureStreamBuf : public std::streambuf {
-    public:
-        CaptureStreamBuf(std::ostringstream& buffer, std::streambuf*& original, std::mutex& mutex)
-            : buffer_(buffer), original_(original), mutex_(mutex) {}
-
-    protected:
-        int overflow(int c) override {
-            if (c != EOF) {
-                std::lock_guard<std::mutex> lock(mutex_);
-                buffer_.put(static_cast<char>(c));
-                if (original_) {
-                    original_->sputc(static_cast<char>(c));
-                }
-            }
-            return c;
-        }
-
-        std::streamsize xsputn(const char* s, std::streamsize n) override {
-            std::lock_guard<std::mutex> lock(mutex_);
-            buffer_.write(s, n);
-            if (original_) {
-                original_->sputn(s, n);
-            }
-            return n;
-        }
-
-        int sync() override {
-            if (original_) {
-                original_->pubsync();
-            }
-            return 0;
-        }
-
-    private:
-        std::ostringstream& buffer_;
-        std::streambuf*& original_;
-        std::mutex& mutex_;
-    };
-
-    std::ostringstream buffer_;
-    std::streambuf* originalBuf_ = nullptr;
-    CaptureStreamBuf captureBuf_;
-    mutable std::mutex mutex_;
-    bool installed_ = false;
-};
 
 // Use centralized colors and visual constants from DemoColors.h
 // Aliases for backward compatibility with existing render code
@@ -204,6 +109,15 @@ public:
         inputHandler_->setStartDragCallback([this](NodeId nodeId) {
             startNodeDrag(nodeId);
         });
+        inputHandler_->setEndDragCallback([this](NodeId nodeId) {
+            endNodeDrag(nodeId);
+        });
+        inputHandler_->setValidateDragCallback([this](NodeId nodeId, Point proposedPos) -> bool {
+            if (!constraintManager_) return true;
+            ConstraintContext ctx{nodeId, proposedPos, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
+            auto validation = constraintManager_->validate(ctx);
+            return validation.valid;
+        });
 
         // Set up command processor callbacks
         commandProcessor_->setGetLogCallback([](const std::string& pattern, int tailLines) {
@@ -251,9 +165,66 @@ public:
         });
         commandProcessor_->setClearLogCallback([]() {
             Logger::clearCapturedLogs();
+            LogCapture::instance().clear();
         });
         commandProcessor_->setWaitIdleCallback([this](int timeoutMs) {
             return waitForOptimizationIdle(timeoutMs);
+        });
+
+        // SCXML callbacks
+        commandProcessor_->setInitSCXMLCallback([this](const std::string& path) {
+            return initSCXML(path);
+        });
+        commandProcessor_->setLoadSCXMLTestCallback([this](int index) {
+            return loadSCXMLTest(static_cast<size_t>(index));
+        });
+        commandProcessor_->setNextTestCallback([this]() {
+            nextTest();
+        });
+        commandProcessor_->setPrevTestCallback([this]() {
+            prevTest();
+        });
+        commandProcessor_->setGetSCXMLTestCountCallback([this]() {
+            return static_cast<int>(getSCXMLTestCount());
+        });
+        commandProcessor_->setGetCurrentTestInfoCallback([this]() {
+            const auto* info = getCurrentTestInfo();
+            if (!info) {
+                return std::string("ERROR no test loaded");
+            }
+            std::ostringstream oss;
+            oss << "SCXML_INFO index=" << currentTestIndex_
+                << " id=" << info->id
+                << " file=" << info->file
+                << " desc=" << info->description;
+            return oss.str();
+        });
+
+        // Initialize UI panel
+        uiPanel_ = std::make_unique<DemoUIPanel>(manualManager_);
+        uiPanel_->setDoLayoutCallback([this]() { doLayout(); });
+        uiPanel_->setReRouteEdgesCallback([this]() { reRouteEdgesOnly(); });
+        uiPanel_->setSaveLayoutCallback([this](const std::string& path) { saveLayout(path); });
+        uiPanel_->setLoadLayoutCallback([this](const std::string& path) { loadLayout(path); });
+        uiPanel_->setLoadSCXMLTestCallback([this](size_t index) { loadSCXMLTest(index); });
+        uiPanel_->setNextTestCallback([this]() { nextTest(); });
+        uiPanel_->setPrevTestCallback([this]() { prevTest(); });
+        uiPanel_->setExitSCXMLModeCallback([this]() { exitSCXMLMode(); });
+        uiPanel_->setSetNodeTypeCallback([this](NodeId nodeId, NodeType newType) -> bool {
+            if (!layoutController_) return false;
+            layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+            auto result = layoutController_->setNodeType(nodeId, newType);
+            if (result.success) {
+                for (const auto& [id, nl] : layoutController_->nodeLayouts()) {
+                    nodeLayouts_[id] = nl;
+                }
+                for (const auto& [id, el] : layoutController_->edgeLayouts()) {
+                    edgeLayouts_[id] = el;
+                }
+                return true;
+            }
+            std::cout << "[Demo] Type conversion failed: " << result.reason << std::endl;
+            return false;
         });
     }
 
@@ -354,6 +325,16 @@ public:
         routingCoordinator_->onDragStart(affectedEdges_);
     }
 
+    /// End node drag operation (called when mouse is released)
+    void endNodeDrag(NodeId nodeId) {
+        // Signal drag end - coordinator will schedule optimization after delay
+        routingCoordinator_->onDragEnd({nodeId});
+        
+        // Clear drag-only resources
+        blockedRegions_.clear();
+        constraintManager_.reset();
+    }
+
     void doLayout() {
         SugiyamaLayout layout;
         layout.setOptions(layoutOptions_);
@@ -405,476 +386,29 @@ public:
         // Update routing coordinator for debounce timing (triggers optimization after delay)
         routingCoordinator_->update(SDL_GetTicks());
 
+        // Process input via extracted handler
         ImGuiIO& io = ImGui::GetIO();
-
-        // Handle zoom (mouse wheel) - works even when ImGui wants mouse for scroll
-        if (!io.WantCaptureMouse && io.MouseWheel != 0) {
-            // Zoom centered on mouse position
-            ImVec2 mousePos = io.MousePos;
-            Point worldBeforeZoom = screenToWorld(mousePos);
-
-            float zoomDelta = io.MouseWheel * 0.1f;
-            float oldZoom = zoom_;
-            zoom_ = std::clamp(zoom_ + zoomDelta, 0.1f, 5.0f);
-
-            // Adjust pan to keep mouse position fixed in world coordinates
-            if (zoom_ != oldZoom) {
-                Point worldAfterZoom = screenToWorld(mousePos);
-                panOffset_.x += worldAfterZoom.x - worldBeforeZoom.x;
-                panOffset_.y += worldAfterZoom.y - worldBeforeZoom.y;
-            }
-        }
-
-        // Handle pan (middle mouse drag - works anywhere)
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) && !io.WantCaptureMouse) {
-            panOffset_.x += io.MouseDelta.x / zoom_;
-            panOffset_.y += io.MouseDelta.y / zoom_;
-            isPanning_ = true;
-        } else if (!emptyAreaPanStarted_) {
-            isPanning_ = false;
-        }
-
-        // Skip other graph interaction if ImGui wants mouse or middle-mouse panning
-        if (io.WantCaptureMouse || (isPanning_ && !emptyAreaPanStarted_)) {
-            return;
-        }
-
-        ImVec2 mousePos = io.MousePos;
-
-        // Convert to graph coordinates (using pan/zoom transform)
-        Point graphMouse = screenToWorld(mousePos);
-
-        // Find hovered node
-        hoveredNode_ = INVALID_NODE;
-        for (const auto& [id, layout] : nodeLayouts_) {
-            bool hit = false;
-            if (layout.isPointNode()) {
-                // Point nodes: use distance-based hit detection with visual radius
-                Point center = layout.center();
-                float dx = graphMouse.x - center.x;
-                float dy = graphMouse.y - center.y;
-                float distSq = dx * dx + dy * dy;
-                hit = (distSq <= POINT_NODE_RADIUS * POINT_NODE_RADIUS);
-            } else {
-                // Normal nodes: use bounds-based hit detection
-                Rect bounds = layout.bounds();
-                hit = (graphMouse.x >= bounds.x && graphMouse.x <= bounds.right() &&
-                       graphMouse.y >= bounds.y && graphMouse.y <= bounds.bottom());
-            }
-            if (hit) {
-                hoveredNode_ = id;
-                break;
-            }
-        }
-
-        // Find hovered snap point (source/target connection points)
-        hoveredSnapPoint_.clear();
-        if (showSnapPoints_ && hoveredNode_ == INVALID_NODE && !draggingSnapPoint_.isValid()) {
-            constexpr float SNAP_HIT_RADIUS = 8.0f;
-            float closestDist = SNAP_HIT_RADIUS * SNAP_HIT_RADIUS;
-            for (const auto& [edgeId, layout] : edgeLayouts_) {
-                // Check source snap point
-                float dx = graphMouse.x - layout.sourcePoint.x;
-                float dy = graphMouse.y - layout.sourcePoint.y;
-                float distSq = dx * dx + dy * dy;
-                if (distSq < closestDist) {
-                    closestDist = distSq;
-                    hoveredSnapPoint_.edgeId = edgeId;
-                    hoveredSnapPoint_.isSource = true;
-                }
-                // Check target snap point
-                dx = graphMouse.x - layout.targetPoint.x;
-                dy = graphMouse.y - layout.targetPoint.y;
-                distSq = dx * dx + dy * dy;
-                if (distSq < closestDist) {
-                    closestDist = distSq;
-                    hoveredSnapPoint_.edgeId = edgeId;
-                    hoveredSnapPoint_.isSource = false;
-                }
-            }
-        }
-
-        // Find hovered bend point (manual mode feature - disabled)
-        hoveredBendPoint_.clear();
-        bendPointPreview_.clear();
-        if (false && hoveredNode_ == INVALID_NODE) {
-            for (const auto& [edgeId, layout] : edgeLayouts_) {
-                const auto& bps = manualManager_->getBendPoints(edgeId);
-                for (size_t i = 0; i < bps.size(); ++i) {
-                    float dx = graphMouse.x - bps[i].position.x;
-                    float dy = graphMouse.y - bps[i].position.y;
-                    if (dx * dx + dy * dy < 64.0f) {  // 8 pixel radius
-                        hoveredBendPoint_.edgeId = edgeId;
-                        hoveredBendPoint_.bendPointIndex = static_cast<int>(i);
-                        break;
-                    }
-                }
-                if (hoveredBendPoint_.isValid()) break;
-            }
-        }
-
-        // Find hovered edge and calculate bend point insertion preview
-        hoveredEdge_ = INVALID_EDGE;
-        if (hoveredNode_ == INVALID_NODE && !hoveredBendPoint_.isValid()) {
-            for (const auto& [id, layout] : edgeLayouts_) {
-                auto hitResult = LayoutUtils::hitTestEdge(graphMouse, layout, 8.0f);
-                if (hitResult.hit) {
-                    hoveredEdge_ = id;
-                    // Show insert preview if edge is selected (manual mode - disabled)
-                    if (false && id == selectedEdge_) {
-                        bendPointPreview_.edgeId = id;
-                        bendPointPreview_.insertIndex = hitResult.segmentIndex;
-                        bendPointPreview_.position = hitResult.closestPoint;
-                        bendPointPreview_.active = true;
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Handle snap point interaction (start drag)
-        if (hoveredSnapPoint_.isValid() && ImGui::IsMouseClicked(0)) {
-            draggingSnapPoint_ = hoveredSnapPoint_;
-            selectedEdge_ = hoveredSnapPoint_.edgeId;
-
-            // Use SnapPointController to start drag
-            auto startResult = snapController_.startDrag(
-                hoveredSnapPoint_.edgeId,
-                hoveredSnapPoint_.isSource,
-                nodeLayouts_,
-                edgeLayouts_,
-                gridSize_);
-
-            if (startResult.success) {
-                snapPointDragStart_ = startResult.originalPosition;
-                auto it = edgeLayouts_.find(hoveredSnapPoint_.edgeId);
-                if (it != edgeLayouts_.end()) {
-                    Point snapPos = hoveredSnapPoint_.isSource ?
-                        it->second.sourcePoint : it->second.targetPoint;
-                    snapPointDragOffset_ = {graphMouse.x - snapPos.x, graphMouse.y - snapPos.y};
-                }
-                snappedCandidateIndex_ = -1;
-                hasSnapPreview_ = false;
-            }
-        }
-
-        // Handle bend point interaction
-        else if (hoveredBendPoint_.isValid() && ImGui::IsMouseClicked(0)) {
-            // Start dragging bend point
-            selectedBendPoint_ = hoveredBendPoint_;
-            selectedEdge_ = hoveredBendPoint_.edgeId;
-            draggingBendPoint_ = hoveredBendPoint_;
-            const auto& bps = manualManager_->getBendPoints(draggingBendPoint_.edgeId);
-            bendPointDragOffset_ = {
-                graphMouse.x - bps[draggingBendPoint_.bendPointIndex].position.x,
-                graphMouse.y - bps[draggingBendPoint_.bendPointIndex].position.y
-            };
-        } else if (bendPointPreview_.active && ImGui::IsMouseClicked(0)) {
-            // Insert bend points to maintain orthogonal routing
-            EdgeId edgeId = bendPointPreview_.edgeId;
-            Point clickPos = bendPointPreview_.position;
-
-            const auto& edgeLayout = edgeLayouts_[edgeId];
-
-            // IMPORTANT: Capture current edge routing BEFORE adding bend points
-            // Otherwise addBendPoint() creates a config with default values (Bottom->Top)
-            // which would reset the edge routing to wrong values
-            if (!manualManager_->hasManualBendPoints(edgeId)) {
-                EdgeRoutingConfig routing;
-                routing.sourceEdge = edgeLayout.sourceEdge;
-                routing.targetEdge = edgeLayout.targetEdge;
-                // Compute snap indices from positions
-                auto srcNodeIt = nodeLayouts_.find(edgeLayout.from);
-                auto tgtNodeIt = nodeLayouts_.find(edgeLayout.to);
-                float gridSize = layoutOptions_.gridConfig.cellSize > 0 
-                    ? layoutOptions_.gridConfig.cellSize : 10.0f;
-                if (srcNodeIt != nodeLayouts_.end()) {
-                    routing.sourceSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-                        srcNodeIt->second, edgeLayout.sourceEdge, edgeLayout.sourcePoint, gridSize);
-                }
-                if (tgtNodeIt != nodeLayouts_.end()) {
-                    routing.targetSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
-                        tgtNodeIt->second, edgeLayout.targetEdge, edgeLayout.targetPoint, gridSize);
-                }
-                manualManager_->setEdgeRouting(edgeId, routing);
-            }
-
-            const auto& existingBps = manualManager_->getBendPoints(edgeId);
-
-            // Use library API to calculate bend point pair
-            auto bpResult = OrthogonalRouter::calculateBendPointPair(
-                edgeLayout, existingBps, clickPos, bendPointPreview_.insertIndex);
-
-            // Insert both points (convert Point to GridPoint)
-            manualManager_->addBendPoint(edgeId, bpResult.insertIndex, 
-                GridPoint::fromPixel(bpResult.first, gridSize_), gridSize_);
-            manualManager_->addBendPoint(edgeId, bpResult.insertIndex + 1, 
-                GridPoint::fromPixel(bpResult.second, gridSize_), gridSize_);
-
-            selectedBendPoint_.edgeId = edgeId;
-            selectedBendPoint_.bendPointIndex = static_cast<int>(bpResult.insertIndex) + 1;
-            doLayout();
-        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ != INVALID_NODE) {
-            // Handle click for node selection (drag starts after threshold)
-            selectedNode_ = hoveredNode_;
-            selectedEdge_ = INVALID_EDGE;
-            selectedBendPoint_.clear();
-            // Store click position for drag threshold detection
-            pendingNodeDrag_ = true;
-            nodeClickStart_ = {io.MousePos.x, io.MousePos.y};
-            auto& layout = nodeLayouts_[hoveredNode_];
-            dragOffset_ = {graphMouse.x - layout.position.x,
-                          graphMouse.y - layout.position.y};
-        } else if (ImGui::IsMouseClicked(0) && hoveredEdge_ != INVALID_EDGE) {
-            selectedEdge_ = hoveredEdge_;
-            selectedNode_ = INVALID_NODE;
-            selectedBendPoint_.clear();
-        } else if (ImGui::IsMouseClicked(0) && hoveredNode_ == INVALID_NODE && hoveredEdge_ == INVALID_EDGE && !hoveredBendPoint_.isValid() && !hoveredSnapPoint_.isValid()) {
-            // Left click on empty area - start potential pan
-            emptyAreaPanStarted_ = true;
-        }
-
-        // Handle pending node drag - check if threshold exceeded to start actual drag
-        if (pendingNodeDrag_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            float dx = io.MousePos.x - nodeClickStart_.x;
-            float dy = io.MousePos.y - nodeClickStart_.y;
-            float distance = std::sqrt(dx * dx + dy * dy);
-
-            if (distance > DRAG_THRESHOLD) {
-                pendingNodeDrag_ = false;
-                startNodeDrag(selectedNode_);
-            }
-        }
-
-        // Handle empty area pan (left-drag on empty)
-        if (emptyAreaPanStarted_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            panOffset_.x += io.MouseDelta.x / zoom_;
-            panOffset_.y += io.MouseDelta.y / zoom_;
-            isPanning_ = true;
-        }
-
-        if (ImGui::IsMouseReleased(0)) {
-            // Clear pending drag state (click without exceeding threshold = just selection)
-            pendingNodeDrag_ = false;
-
-            // Handle snap point drag release using SnapPointController
-            if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
-                Point dropPosition = {graphMouse.x - snapPointDragOffset_.x,
-                                      graphMouse.y - snapPointDragOffset_.y};
-
-                auto dropResult = snapController_.completeDrag(
-                    snappedCandidateIndex_,
-                    dropPosition,
-                    nodeLayouts_,
-                    edgeLayouts_,
-                    layoutOptions_);
-
-                if (!dropResult.success) {
-                    std::cout << "[SnapDrag] Failed: " << dropResult.reason << std::endl;
-                } else if (dropResult.swapEdgeId != INVALID_EDGE) {
-                    std::cout << "[SnapDrag] Swapped with edge " << dropResult.swapEdgeId << std::endl;
-                }
-            } else if (draggingSnapPoint_.isValid()) {
-                snapController_.cancelDrag();
-            }
-            draggingSnapPoint_.clear();
-            snappedCandidateIndex_ = -1;
-            hasSnapPreview_ = false;
-
-            // Handle bend point drag release
-            if (draggingBendPoint_.isValid()) {
+        DemoState state = getDemoState();
+        InputResult result = inputHandler_->processInput(state, io);
+        
+        // Sync back state changes
+        setInteractionState(state.interaction);
+        setViewTransform(state.view);
+        
+        // Handle requested actions
+        switch (result.action) {
+            case InputAction::DoLayout:
                 doLayout();
-            }
-            draggingBendPoint_.clear();
-
-            if (draggedNode_ != INVALID_NODE) {
-                auto& layout = nodeLayouts_[draggedNode_];
-                
-                // Use LayoutController for final validation with all constraints
-                if (layoutController_) {
-                    auto result = layoutController_->completeDrag(draggedNode_, layout.position);
-                    
-                    if (!result.success) {
-                        // Constraint validation failed - revert to original position
-                        layout.position = lastValidPosition_;
-                        manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
-                        std::cout << "[Demo] Drag rejected: " << result.reason << std::endl;
-                    } else {
-                        // Success - sync from controller's validated state
-                        for (const auto& [id, nodeLayout] : layoutController_->nodeLayouts()) {
-                            nodeLayouts_[id] = nodeLayout;
-                        }
-                        for (const auto& [id, edgeLayout] : layoutController_->edgeLayouts()) {
-                            edgeLayouts_[id] = edgeLayout;
-                        }
-                        manualManager_->setNodePosition(draggedNode_, result.actualPosition);
-                    }
-                } else {
-                    // Fallback: old behavior if controller not available
-                    if (isInvalidDragPosition_) {
-                        layout.position = lastValidPosition_;
-                        manualManager_->setNodePosition(draggedNode_, lastValidPosition_);
-                    }
-                    rerouteAffectedEdges();
-                }
-
-                // Signal drag end - coordinator will schedule optimization after delay
-                routingCoordinator_->onDragEnd({draggedNode_});
-            }
-            draggedNode_ = INVALID_NODE;
-            // Don't clear affectedEdges_ here when HideUntilDrop is active
-            // They will be cleared in onOptimizationComplete() after A* finishes
-            if (layoutOptions_.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
-                affectedEdges_.clear();
-            }
-            isInvalidDragPosition_ = false;
-            lastRoutedPosition_ = {-9999, -9999};  // Reset for next drag
-
-            // Handle empty area pan release
-            if (emptyAreaPanStarted_) {
-                if (!isPanning_) {
-                    // Was just a click (no drag) - deselect everything
-                    selectedNode_ = INVALID_NODE;
-                    selectedEdge_ = INVALID_EDGE;
-                    selectedBendPoint_.clear();
-                }
-                emptyAreaPanStarted_ = false;
-                isPanning_ = false;
-            }
-        }
-
-        // Handle snap point dragging - use SnapPointController for preview
-        if (draggingSnapPoint_.isValid() && ImGui::IsMouseDragging(0) && snapController_.isDragging()) {
-            Point dragPosition = {graphMouse.x - snapPointDragOffset_.x,
-                                  graphMouse.y - snapPointDragOffset_.y};
-
-            auto updateResult = snapController_.updateDrag(
-                dragPosition, nodeLayouts_, gridSize_);
-
-            snappedCandidateIndex_ = updateResult.snappedCandidateIndex;
-            hasSnapPreview_ = updateResult.hasValidPreview;
-        }
-        // Handle bend point dragging with orthogonal constraint
-        else if (draggingBendPoint_.isValid() && ImGui::IsMouseDragging(0)) {
-            EdgeId edgeId = draggingBendPoint_.edgeId;
-            int bpIdx = draggingBendPoint_.bendPointIndex;
-
-            // Get current bend points from manager (source of truth)
-            const auto& bps = manualManager_->getBendPoints(edgeId);
-            if (bpIdx >= static_cast<int>(bps.size())) {
-                draggingBendPoint_.clear();
-            } else {
-                // Get the edge layout for source/target points
-                const auto& edgeLayout = edgeLayouts_[edgeId];
-
-                // Determine prev point (source or previous bend)
-                Point prevPoint;
-                if (bpIdx == 0) {
-                    prevPoint = edgeLayout.sourcePoint;
-                } else {
-                    prevPoint = bps[bpIdx - 1].position;
-                }
-
-                // Determine next point (next bend or target)
-                Point nextPoint;
-                if (bpIdx == static_cast<int>(bps.size()) - 1) {
-                    nextPoint = edgeLayout.targetPoint;
-                } else {
-                    nextPoint = bps[bpIdx + 1].position;
-                }
-
-                Point currentPos = bps[bpIdx].position;
-                Point dragTarget = {graphMouse.x - bendPointDragOffset_.x,
-                                    graphMouse.y - bendPointDragOffset_.y};
-
-                bool isLastBend = (bpIdx == static_cast<int>(bps.size()) - 1);
-                bool hasNextBend = (bpIdx < static_cast<int>(bps.size()) - 1);
-
-                // Use library API for orthogonal drag constraint calculation
-                auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(
-                    prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
-
-                // Apply the calculated positions (convert Point to GridPoint)
-                if (dragResult.nextAdjusted) {
-                    manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx + 1), 
-                        GridPoint::fromPixel(dragResult.adjustedNextPos, gridSize_), gridSize_);
-                }
-                manualManager_->moveBendPoint(edgeId, static_cast<size_t>(bpIdx), 
-                    GridPoint::fromPixel(dragResult.newCurrentPos, gridSize_), gridSize_);
-
-                // Update edge layout immediately for visual feedback
-                auto it = edgeLayouts_.find(edgeId);
-                if (it != edgeLayouts_.end()) {
-                    if (bpIdx < static_cast<int>(it->second.bendPoints.size())) {
-                        it->second.bendPoints[bpIdx].position = dragResult.newCurrentPos;
-                    }
-                    if (dragResult.nextAdjusted && bpIdx + 1 < static_cast<int>(it->second.bendPoints.size())) {
-                        it->second.bendPoints[bpIdx + 1].position = dragResult.adjustedNextPos;
-                    }
-                }
-            }
-        } else if (draggedNode_ != INVALID_NODE && ImGui::IsMouseDragging(0)) {
-            // Update node position
-            auto& layout = nodeLayouts_[draggedNode_];
-            float newX = graphMouse.x - dragOffset_.x;
-            float newY = graphMouse.y - dragOffset_.y;
-
-            // Snap to grid if enabled
-            float gridSize = layoutOptions_.gridConfig.cellSize;
-            if (gridSize > 0.0f) {
-                newX = std::round(newX / gridSize) * gridSize;
-                newY = std::round(newY / gridSize) * gridSize;
-            }
-
-            // Early exit if position hasn't changed (prevents unnecessary work every frame)
-            constexpr float EPSILON = 0.001f;
-            Point proposedPosition = {newX, newY};
-            if (std::abs(proposedPosition.x - layout.position.x) < EPSILON &&
-                std::abs(proposedPosition.y - layout.position.y) < EPSILON) {
-                // Position unchanged - skip all processing
-                // This is critical because ImGui::IsMouseDragging returns true every frame while mouse button is held
-                return;
-            }
-
-            // Position changed - do full validation using ConstraintManager
-            LOG_DEBUG("[Demo::drag] graphMouse=({},{}) dragOffset=({},{}) newX={} newY={} proposedPosition=({},{})",
-                      graphMouse.x, graphMouse.y, dragOffset_.x, dragOffset_.y, newX, newY, proposedPosition.x, proposedPosition.y);
-
-            ConstraintContext ctx{draggedNode_, proposedPosition, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
-            auto validation = constraintManager_->validate(ctx);
-            LOG_DEBUG("[Demo::drag] validation result: valid={} failedConstraint={} reason={}",
-                      validation.valid, validation.failedConstraint, validation.reason);
-
-            // Always update position during drag (visual feedback)
-            layout.position.x = newX;
-            layout.position.y = newY;
-
-            if (validation.valid) {
-                // Valid position - save as last valid and re-route edges
-                isInvalidDragPosition_ = false;
-                lastValidPosition_ = proposedPosition;
-                manualManager_->setNodePosition(draggedNode_, layout.position);
-
-                // Re-route connected edges (position change already verified above)
-                // Skip rerouting in HideUntilDrop mode - edges will be calculated on drop
-                if (layoutOptions_.optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
-                    rerouteAffectedEdges();
-                    lastRoutedPosition_ = proposedPosition;
-                }
-            } else {
-                // Invalid position - show red, no edge re-routing
-                isInvalidDragPosition_ = true;
-            }
-        }
-
-        // Handle Delete key for bend point removal
-        if (selectedBendPoint_.isValid() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-            manualManager_->removeBendPoint(
-                selectedBendPoint_.edgeId,
-                static_cast<size_t>(selectedBendPoint_.bendPointIndex)
-            );
-            selectedBendPoint_.clear();
-            doLayout();
+                break;
+            case InputAction::RerouteEdges:
+                rerouteAffectedEdges();
+                break;
+            case InputAction::StartAsyncOptimization:
+                // This is typically handled via callbacks already
+                break;
+            case InputAction::None:
+            default:
+                break;
         }
     }
 
@@ -910,8 +444,8 @@ public:
         // Draw grid background
         DemoRenderer::drawGrid(drawList, view, io.DisplaySize.x, io.DisplaySize.y, gridSize_);
 
-        // Draw blocked cells (node obstacle areas)
-        if (options.showBlockedCells) {
+        // Draw blocked cells (node obstacle areas) - only during active drag
+        if (options.showBlockedCells && draggedNode_ != INVALID_NODE) {
             DemoRenderer::drawBlockedCells(drawList, view, blockedRegions_, gridSize_);
         }
 
@@ -955,9 +489,17 @@ public:
 
             // Draw snap points per node
             if (showSnapPoints_) {
+                // Hide snap points for affected edges:
+                // 1. In HideUntilDrop mode (edges hidden during drag)
+                // 2. When in invalid drag position (edges hidden to indicate error)
+                const std::vector<EdgeId>& hiddenEdges =
+                    (layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop ||
+                     isInvalidDragPosition_)
+                    ? affectedEdges_ : std::vector<EdgeId>{};
                 DemoRenderer::drawSnapPoints(drawList, fgDrawList, view, layout,
                                             edgeLayouts_, nodeLayouts_, options,
-                                            hoveredSnapPoint_, draggingSnapPoint_);
+                                            hoveredSnapPoint_, draggingSnapPoint_,
+                                            hiddenEdges);
             }
         }
 
@@ -973,376 +515,25 @@ public:
     }
 
     void renderUI() {
-        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_FirstUseEver);
-
-        ImGui::Begin("ArborVia Demo");
-
-        // Edge Routing Options
-        if (ImGui::TreeNode("Edge Routing Options")) {
-                bool changed = false;
-
-                if (ImGui::SliderFloat("Spacing", &layoutOptions_.channelRouting.channelSpacing, 5.0f, 30.0f)) {
-                    changed = true;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Spacing between parallel edge channels");
-                }
-
-                if (ImGui::SliderFloat("Offset", &layoutOptions_.channelRouting.channelOffset, 10.0f, 50.0f)) {
-                    changed = true;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Minimum offset from layer boundary");
-                }
-
-                ImGui::Checkbox("Center Single Edge", &layoutOptions_.channelRouting.centerSingleEdge);
-
-                // Self-loop direction
-                ImGui::Text("Self-Loop Direction:");
-                const char* loopDirs[] = {"Right", "Left", "Top", "Bottom", "Auto"};
-                int currentDir = static_cast<int>(layoutOptions_.channelRouting.selfLoop.preferredDirection);
-                if (ImGui::Combo("##LoopDir", &currentDir, loopDirs, 5)) {
-                    layoutOptions_.channelRouting.selfLoop.preferredDirection =
-                        static_cast<SelfLoopDirection>(currentDir);
-                    changed = true;
-                }
-
-                if (ImGui::SliderFloat("Loop Offset", &layoutOptions_.channelRouting.selfLoop.loopOffset, 10.0f, 50.0f)) {
-                    changed = true;
-                }
-
-                if (changed) {
-                    reRouteEdgesOnly();
-                }
-                ImGui::TreePop();
-            }
-
-        ImGui::Separator();
-        ImGui::Text("Drag nodes to see edge re-routing");
-        ImGui::Separator();
-        ImGui::Text("Nodes: %zu", graph_.nodeCount());
-        ImGui::Text("Edges: %zu", graph_.edgeCount());
-
-        if (draggedNode_ != INVALID_NODE) {
-            if (auto node = graph_.tryGetNode(draggedNode_)) {
-                ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1),
-                    "Dragging: %s", node->label.c_str());
-            }
-            ImGui::Text("Affected edges: %zu", affectedEdges_.size());
+        // Set SCXML loader on first call (after initSCXML may have been called)
+        if (scxmlLoader_ && uiPanel_) {
+            uiPanel_->setSCXMLLoader(scxmlLoader_.get());
         }
 
-        // Selected node info and type toggle
-        if (selectedNode_ != INVALID_NODE && draggedNode_ == INVALID_NODE) {
-            auto nodeIt = nodeLayouts_.find(selectedNode_);
-            if (nodeIt != nodeLayouts_.end()) {
-                const auto& layout = nodeIt->second;
-                auto graphNode = graph_.tryGetNode(selectedNode_);
-                
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1),
-                    "Selected: %s", graphNode ? graphNode->label.c_str() : "Unknown");
-                
-                bool isPoint = layout.isPointNode();
-                ImGui::Text("Type: %s", isPoint ? "Point (dot)" : "Normal (rect)");
-                ImGui::Text("Position: (%.0f, %.0f)", layout.position.x, layout.position.y);
-                if (!isPoint) {
-                    ImGui::Text("Size: %.0f x %.0f", layout.size.width, layout.size.height);
-                }
-                
-                // Node type toggle button
-                const char* buttonLabel = isPoint ? "To Normal Node" : "To Point Node";
-                if (ImGui::Button(buttonLabel)) {
-                    NodeType newType = isPoint ? NodeType::Regular : NodeType::Point;
-                    if (layoutController_) {
-                        layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
-                        auto result = layoutController_->setNodeType(selectedNode_, newType);
-                        if (result.success) {
-                            // Sync back from controller
-                            for (const auto& [id, nl] : layoutController_->nodeLayouts()) {
-                                nodeLayouts_[id] = nl;
-                            }
-                            for (const auto& [id, el] : layoutController_->edgeLayouts()) {
-                                edgeLayouts_[id] = el;
-                            }
-                            std::cout << "[Demo] Node " << selectedNode_ 
-                                      << " converted to " << (newType == NodeType::Point ? "Point" : "Normal") 
-                                      << std::endl;
-                        } else {
-                            std::cout << "[Demo] Type conversion failed: " << result.reason << std::endl;
-                        }
-                    }
-                }
-            }
-        }
+        DemoState state = getDemoState();
+        [[maybe_unused]] UIResult result = uiPanel_->render(state);
 
-        ImGui::Separator();
-        ImGui::Checkbox("Show Snap Points", &showSnapPoints_);
-        if (showSnapPoints_) {
-            ImGui::SameLine();
-            ImGui::Checkbox("Show Indices", &showSnapIndices_);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("T=Top, B=Bottom, L=Left, R=Right\nGreen=Outgoing, Red=Incoming");
-            }
-        }
-        ImGui::Checkbox("Show Blocked Cells", &showBlockedCells_);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Show no-drag zones while dragging (5 grid units margin)");
-        }
+        // Sync back state changes from UI
+        setViewTransform(state.view);
+        setRenderOptions(state.renderOptions);
 
-        // A* debug visualization
-        if (ImGui::Checkbox("Show A* Grid", &showAStarDebug_)) {
+        // Handle A* debug state update when checkbox changes
+        if (state.renderOptions.showAStarDebug != showAStarDebug_) {
+            showAStarDebug_ = state.renderOptions.showAStarDebug;
             if (showAStarDebug_) {
-                // Build obstacle map for visualization
-                debugObstacles_ = std::make_shared<ObstacleMap>();
-                debugObstacles_->buildFromNodes(nodeLayouts_, gridSize_);
-                // Add edge segments, excluding selected edge if any
-                debugObstacles_->addEdgeSegments(edgeLayouts_, selectedEdge_);
-
-                // Set start/goal from selected edge
-                if (selectedEdge_ != INVALID_EDGE) {
-                    auto it = edgeLayouts_.find(selectedEdge_);
-                    if (it != edgeLayouts_.end()) {
-                        astarStart_ = it->second.sourcePoint;
-                        astarGoal_ = it->second.targetPoint;
-                    }
-                } else {
-                    astarStart_ = {-1, -1};
-                    astarGoal_ = {-1, -1};
-                }
+                updateAStarDebugState();
             }
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Show A* pathfinding grid\nYellow=Node, Blue=H-Edge, Green=V-Edge");
-        }
-
-        // Pan/Zoom controls
-        ImGui::Separator();
-        ImGui::Text("View: %.0f%% zoom", zoom_ * 100);
-        ImGui::SameLine();
-        if (ImGui::Button("Reset View")) {
-            panOffset_ = {0, 0};
-            zoom_ = 1.0f;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Pan: Drag empty area or Middle mouse\nZoom: Mouse wheel");
-        }
-        ImGui::SliderFloat("Zoom", &zoom_, 0.1f, 5.0f, "%.1f");
-
-        // Snap point configuration for selected node (manual mode feature - disabled)
-        if (false && selectedNode_ != INVALID_NODE) {
-            auto selectedNode = graph_.tryGetNode(selectedNode_);
-            if (!selectedNode) {
-                selectedNode_ = INVALID_NODE;
-                ImGui::End();
-                return;
-            }
-
-            ImGui::Separator();
-            ImGui::Text("Snap Points: %s", selectedNode->label.c_str());
-
-            SnapPointConfig config = manualManager_->getSnapConfig(selectedNode_);
-            bool changed = false;
-
-            if (ImGui::SliderInt("Top", &config.topCount, 1, 5)) changed = true;
-            if (ImGui::SliderInt("Bottom", &config.bottomCount, 1, 5)) changed = true;
-            if (ImGui::SliderInt("Left", &config.leftCount, 1, 5)) changed = true;
-            if (ImGui::SliderInt("Right", &config.rightCount, 1, 5)) changed = true;
-
-            if (changed) {
-                manualManager_->setSnapConfig(selectedNode_, config);
-                doLayout();
-            }
-        }
-
-        // Edge routing configuration for selected edge (manual mode feature - disabled)
-        if (false && selectedEdge_ != INVALID_EDGE) {
-            auto edgeOpt = graph_.tryGetEdge(selectedEdge_);
-            if (!edgeOpt) {
-                selectedEdge_ = INVALID_EDGE;
-                ImGui::End();
-                return;
-            }
-            const EdgeData& edgeData = *edgeOpt;
-
-            auto fromNode = graph_.tryGetNode(edgeData.from);
-            auto toNode = graph_.tryGetNode(edgeData.to);
-            if (!fromNode || !toNode) {
-                selectedEdge_ = INVALID_EDGE;
-                ImGui::End();
-                return;
-            }
-
-            ImGui::Separator();
-            ImGui::Text("Edge: %s -> %s",
-                fromNode->label.c_str(),
-                toNode->label.c_str());
-            if (!edgeData.label.empty()) {
-                ImGui::Text("Label: %s", edgeData.label.c_str());
-            }
-
-            EdgeRoutingConfig routing = manualManager_->getEdgeRouting(selectedEdge_);
-            bool routingChanged = false;
-
-            // Source edge selection
-            ImGui::Text("Source Edge:");
-            const char* edgeNames[] = {"Top", "Bottom", "Left", "Right"};
-            int srcEdge = static_cast<int>(routing.sourceEdge);
-            if (ImGui::Combo("##SrcEdge", &srcEdge, edgeNames, 4)) {
-                routing.sourceEdge = static_cast<NodeEdge>(srcEdge);
-                routing.sourceSnapIndex = 0;  // Reset index when edge changes
-                routingChanged = true;
-            }
-
-            // Source snap point index
-            SnapPointConfig srcConfig = manualManager_->getSnapConfig(edgeData.from);
-            int srcMaxSnap = srcConfig.getCount(routing.sourceEdge) - 1;
-            if (srcMaxSnap > 0) {
-                if (ImGui::SliderInt("Src Snap", &routing.sourceSnapIndex, 0, srcMaxSnap)) {
-                    routingChanged = true;
-                }
-            }
-
-            // Target edge selection
-            ImGui::Text("Target Edge:");
-            int tgtEdge = static_cast<int>(routing.targetEdge);
-            if (ImGui::Combo("##TgtEdge", &tgtEdge, edgeNames, 4)) {
-                routing.targetEdge = static_cast<NodeEdge>(tgtEdge);
-                routing.targetSnapIndex = 0;  // Reset index when edge changes
-                routingChanged = true;
-            }
-
-            // Target snap point index
-            SnapPointConfig tgtConfig = manualManager_->getSnapConfig(edgeData.to);
-            int tgtMaxSnap = tgtConfig.getCount(routing.targetEdge) - 1;
-            if (tgtMaxSnap > 0) {
-                if (ImGui::SliderInt("Tgt Snap", &routing.targetSnapIndex, 0, tgtMaxSnap)) {
-                    routingChanged = true;
-                }
-            }
-
-            if (routingChanged) {
-                manualManager_->setEdgeRouting(selectedEdge_, routing);
-                doLayout();
-            }
-
-            // Bend point management UI
-            ImGui::Separator();
-            ImGui::Text("Bend Points:");
-
-            const auto& bps = manualManager_->getBendPoints(selectedEdge_);
-            if (bps.empty()) {
-                ImGui::TextDisabled("None (auto routing)");
-                ImGui::TextDisabled("Click on edge to add");
-            } else {
-                ImGui::Text("Count: %zu", bps.size());
-                for (size_t i = 0; i < bps.size(); ++i) {
-                    ImGui::PushID(static_cast<int>(i));
-                    bool isSelected = (selectedBendPoint_.edgeId == selectedEdge_ &&
-                                      selectedBendPoint_.bendPointIndex == static_cast<int>(i));
-                    if (isSelected) {
-                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                            "[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
-                    } else {
-                        ImGui::Text("[%zu] (%.0f, %.0f)", i, bps[i].position.x, bps[i].position.y);
-                    }
-                    ImGui::PopID();
-                }
-                if (ImGui::Button("Clear All Bends")) {
-                    manualManager_->clearBendPoints(selectedEdge_);
-                    selectedBendPoint_.clear();
-                    doLayout();
-                }
-            }
-
-            if (selectedBendPoint_.isValid() && selectedBendPoint_.edgeId == selectedEdge_) {
-                ImGui::Text("Selected: [%d]", selectedBendPoint_.bendPointIndex);
-                ImGui::TextDisabled("Press Delete to remove");
-            }
-        }
-
-        // SCXML Test Visualization Section
-        ImGui::Separator();
-        if (scxmlLoader_ && scxmlLoader_->getTestCount() > 0) {
-            if (ImGui::CollapsingHeader("SCXML Tests", ImGuiTreeNodeFlags_DefaultOpen)) {
-                // Current test info
-                if (scxmlModeActive_ && currentTestIndex_ >= 0) {
-                    const auto* testInfo = getCurrentTestInfo();
-                    if (testInfo) {
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Test %s", testInfo->id.c_str());
-                        ImGui::TextWrapped("%s", testInfo->file.c_str());
-                        if (!testInfo->description.empty()) {
-                            ImGui::TextWrapped("%s", testInfo->description.c_str());
-                        }
-                    }
-                    ImGui::Text("Index: %d / %zu", currentTestIndex_ + 1, scxmlLoader_->getTestCount());
-                } else {
-                    ImGui::TextDisabled("No test loaded");
-                    ImGui::Text("Tests available: %zu", scxmlLoader_->getTestCount());
-                }
-
-                // Navigation buttons
-                ImGui::Spacing();
-                if (ImGui::Button("Prev")) {
-                    prevTest();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Next")) {
-                    nextTest();
-                }
-                ImGui::SameLine();
-                if (scxmlModeActive_) {
-                    if (ImGui::Button("Exit SCXML")) {
-                        exitSCXMLMode();
-                    }
-                } else {
-                    if (ImGui::Button("Load First")) {
-                        loadSCXMLTest(0);
-                    }
-                }
-
-                // Test selection combo
-                ImGui::Spacing();
-                if (ImGui::BeginCombo("Select Test", currentTestIndex_ >= 0 ?
-                    scxmlLoader_->getTest(static_cast<size_t>(currentTestIndex_))->id.c_str() : "None")) {
-                    for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
-                        const auto* info = scxmlLoader_->getTest(i);
-                        bool isSelected = (static_cast<int>(i) == currentTestIndex_);
-                        std::string label = info->id + " - " + info->file;
-                        if (ImGui::Selectable(label.c_str(), isSelected)) {
-                            loadSCXMLTest(i);
-                        }
-                        if (isSelected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-            }
-        } else {
-            ImGui::TextDisabled("SCXML tests not loaded");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Place SCXML tests in resources/scxml/");
-            }
-        }
-
-        ImGui::Separator();
-        if (ImGui::Button("Reset Layout")) {
-            manualManager_->clearManualState();
-            doLayout();
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Save")) {
-            saveLayout("layout.json");
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Load")) {
-            loadLayout("layout.json");
-        }
-
-        ImGui::End();
     }
 
 private:
@@ -1358,6 +549,7 @@ private:
     // Extracted components for separation of concerns
     std::unique_ptr<DemoInputHandler> inputHandler_;
     std::unique_ptr<DemoCommandProcessor> commandProcessor_;
+    std::unique_ptr<DemoUIPanel> uiPanel_;
 
     Point offset_ = {0, 0};
     float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
@@ -1449,7 +641,6 @@ private:
         // Controllers (non-owning pointers)
         state.layoutController = layoutController_.get();
         state.routingCoordinator = routingCoordinator_.get();
-        state.constraintManager = constraintManager_.get();
         state.snapController = &snapController_;
         
         // View transform
@@ -1499,6 +690,10 @@ private:
         
         // Blocked regions
         state.blockedRegions = blockedRegions_;
+
+        // SCXML state
+        state.scxml.modeActive = scxmlModeActive_;
+        state.scxml.currentTestIndex = currentTestIndex_;
         
         return state;
     }
@@ -1514,7 +709,13 @@ private:
         hoveredSnapPoint_ = state.hoveredSnapPoint;
         draggedNode_ = state.draggedNode;
         dragOffset_ = state.dragOffset;
-        affectedEdges_ = state.affectedEdges;
+        // affectedEdges_ sync rules:
+        // - For node drag: set by startNodeDrag() callback, cleared by onOptimizationComplete()
+        // - For snap point drag: sync from state when drag ends (detected by draggingSnapPoint transition)
+        if (draggingSnapPoint_.isValid() && !state.draggingSnapPoint.isValid()) {
+            // Snap point drag just ended - sync affectedEdges for optimization
+            affectedEdges_ = state.affectedEdges;
+        }
         isInvalidDragPosition_ = state.isInvalidDragPosition;
         lastValidPosition_ = state.lastValidPosition;
         lastRoutedPosition_ = state.lastRoutedPosition;
@@ -1599,9 +800,7 @@ private:
     // External command server
     CommandServer commandServer_;
     int port_;
-    bool paused_ = false;
-    std::string pauseMessage_;
-    bool shouldQuit_ = false;
+
 
     // Async optimization state
     std::queue<std::function<void()>> mainThreadQueue_;
@@ -1625,13 +824,19 @@ public:
     void processCommands() {
         while (commandServer_.hasCommand()) {
             Command cmd = commandServer_.popCommand();
-            processCommand(cmd);
+            
+            // Create state view and process via commandProcessor_
+            DemoState state = getDemoState();
+            if (commandProcessor_->processCommand(cmd, state)) {
+                // Sync back interaction state changes
+                setInteractionState(state.interaction);
+            }
         }
     }
 
-    bool isPaused() const { return paused_; }
-    const std::string& pauseMessage() const { return pauseMessage_; }
-    bool shouldQuit() const { return shouldQuit_; }
+    bool isPaused() const { return commandProcessor_->isPaused(); }
+    const std::string& pauseMessage() const { return commandProcessor_->pauseMessage(); }
+    bool shouldQuit() const { return commandProcessor_->shouldQuit(); }
     int port() const { return port_; }
 
     // SCXML test visualization methods
@@ -1808,702 +1013,6 @@ private:
                   << ", edges=" << result.size() << ")" << std::endl;
     }
 
-    void processCommand(const Command& cmd) {
-        if (cmd.name == "drag" && cmd.args.size() >= 3) {
-            // drag <node_id> <dx> <dy> - uses LayoutController API with validation
-            NodeId nodeId = std::stoi(cmd.args[0]);
-            float dx = std::stof(cmd.args[1]);
-            float dy = std::stof(cmd.args[2]);
-
-            if (nodeLayouts_.count(nodeId)) {
-                Point proposedPos = {
-                    nodeLayouts_[nodeId].position.x + dx,
-                    nodeLayouts_[nodeId].position.y + dy
-                };
-
-                // Sync controller state and use LayoutController for move
-                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
-                auto result = layoutController_->moveNode(nodeId, proposedPos);
-
-                if (result.success) {
-                    // Sync layouts from controller
-                    for (const auto& [id, layout] : layoutController_->nodeLayouts()) {
-                        nodeLayouts_[id] = layout;
-                    }
-                    for (const auto& [id, layout] : layoutController_->edgeLayouts()) {
-                        edgeLayouts_[id] = layout;
-                    }
-                    // Collect ALL edges for A* optimization (same as GUI drag)
-                    std::vector<EdgeId> allEdges;
-                    allEdges.reserve(edgeLayouts_.size());
-                    for (const auto& [edgeId, layout] : edgeLayouts_) {
-                        allEdges.push_back(edgeId);
-                    }
-                    // Trigger A* optimization callback (same as GUI drag end)
-                    routingCoordinator_->onDragStart(allEdges);
-                    routingCoordinator_->onDragEnd({nodeId});
-                    commandServer_.sendResponse("OK drag " + std::to_string(nodeId));
-                } else {
-                    commandServer_.sendResponse("BLOCKED " + result.reason);
-                }
-            } else {
-                commandServer_.sendResponse("ERROR node not found");
-            }
-        }
-        else if (cmd.name == "set_pos" && cmd.args.size() >= 3) {
-            // set_pos <node_id> <x> <y> - simulates full drag-drop cycle with A* optimization
-            NodeId nodeId = std::stoi(cmd.args[0]);
-            float x = std::stof(cmd.args[1]);
-            float y = std::stof(cmd.args[2]);
-
-            if (nodeLayouts_.count(nodeId)) {
-                Point proposedPos = {x, y};
-
-                // Collect affected edges before move
-                std::vector<EdgeId> affected;
-                for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    if (layout.from == nodeId || layout.to == nodeId) {
-                        affected.push_back(edgeId);
-                    }
-                }
-
-                // Simulate drag start
-                routingCoordinator_->onDragStart(affected);
-
-                // Sync controller state and use LayoutController for move
-                layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
-                auto result = layoutController_->moveNode(nodeId, proposedPos);
-
-                if (result.success) {
-                    // Sync layouts from controller
-                    for (const auto& [id, layout] : layoutController_->nodeLayouts()) {
-                        nodeLayouts_[id] = layout;
-                    }
-                    for (const auto& [id, layout] : layoutController_->edgeLayouts()) {
-                        edgeLayouts_[id] = layout;
-                    }
-                    // Update affectedEdges_ for coordinator callback
-                    affectedEdges_ = affected;
-
-                    // Trigger drag end - this schedules A* optimization
-                    routingCoordinator_->onDragEnd({nodeId});
-
-                    commandServer_.sendResponse("OK set_pos " + std::to_string(nodeId));
-                } else {
-                    routingCoordinator_->cancelPendingOptimization();
-                    commandServer_.sendResponse("BLOCKED " + result.reason);
-                }
-            } else {
-                commandServer_.sendResponse("ERROR node not found");
-            }
-        }
-        else if (cmd.name == "test_snap_drag" && cmd.args.size() >= 4) {
-            // test_snap_drag <edge_id> <is_source:0|1> <dx> <dy> - Snap point drag simulation
-            EdgeId edgeId = std::stoi(cmd.args[0]);
-            bool isSource = std::stoi(cmd.args[1]) != 0;
-            float dx = std::stof(cmd.args[2]);
-            float dy = std::stof(cmd.args[3]);
-
-            if (edgeLayouts_.count(edgeId)) {
-                std::cout << "\n========== TEST_SNAP_DRAG START ==========" << std::endl;
-                std::cout << "[test_snap_drag] Edge " << edgeId << " isSource=" << isSource
-                          << " delta=(" << dx << "," << dy << ")" << std::endl;
-
-                EdgeLayout& layout = edgeLayouts_[edgeId];
-                Point currentPos = isSource ? layout.sourcePoint : layout.targetPoint;
-                NodeEdge currentEdge = isSource ? layout.sourceEdge : layout.targetEdge;
-                // Compute snap index from position
-                NodeId nodeId = isSource ? layout.from : layout.to;
-                int currentSnapIdx = 0;
-                auto nodeIt = nodeLayouts_.find(nodeId);
-                if (nodeIt != nodeLayouts_.end()) {
-                    currentSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                        nodeIt->second, currentEdge, currentPos, gridSize_);
-                }
-
-                std::cout << "[test_snap_drag] BEFORE:" << std::endl;
-                std::cout << "  snapPoint=(" << currentPos.x << "," << currentPos.y << ")"
-                          << " snapIndex=" << currentSnapIdx
-                          << " nodeEdge=" << static_cast<int>(currentEdge) << std::endl;
-
-                // Log all edge layouts BEFORE (positions only, snapIdx computed from position)
-                std::cout << "[test_snap_drag] All edge layouts BEFORE:" << std::endl;
-                for (const auto& [eid, elayout] : edgeLayouts_) {
-                    std::cout << "  Edge " << eid << ": src=(" << elayout.sourcePoint.x
-                              << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
-                              << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
-                }
-
-                Point newPos = {currentPos.x + dx, currentPos.y + dy};
-                std::cout << "[test_snap_drag] newPos=(" << newPos.x << "," << newPos.y << ")" << std::endl;
-
-                std::cout << "[test_snap_drag] Calling LayoutUtils::moveSnapPoint()..." << std::endl;
-                auto result = LayoutUtils::moveSnapPoint(
-                    edgeId, isSource, newPos,
-                    nodeLayouts_, edgeLayouts_, graph_, layoutOptions_);
-
-                std::cout << "[test_snap_drag] Result: success=" << result.success
-                          << " reason=" << result.reason << std::endl;
-
-                if (result.success) {
-                    EdgeLayout& afterLayout = edgeLayouts_[edgeId];
-                    Point afterPos = isSource ? afterLayout.sourcePoint : afterLayout.targetPoint;
-                    NodeEdge afterEdge = isSource ? afterLayout.sourceEdge : afterLayout.targetEdge;
-                    // Compute snap index from position
-                    NodeId afterNodeId = isSource ? afterLayout.from : afterLayout.to;
-                    int afterSnapIdx = 0;
-                    auto afterNodeIt = nodeLayouts_.find(afterNodeId);
-                    if (afterNodeIt != nodeLayouts_.end()) {
-                        afterSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                            afterNodeIt->second, afterEdge, afterPos, gridSize_);
-                    }
-
-                    std::cout << "[test_snap_drag] AFTER:" << std::endl;
-                    std::cout << "  snapPoint=(" << afterPos.x << "," << afterPos.y << ")"
-                              << " snapIndex=" << afterSnapIdx
-                              << " nodeEdge=" << static_cast<int>(afterEdge) << std::endl;
-                    std::cout << "  actualPosition=(" << result.actualPosition.x << "," << result.actualPosition.y << ")"
-                              << " newEdge=" << static_cast<int>(result.newEdge) << std::endl;
-                    std::cout << "  redistributedEdges=" << result.redistributedEdges.size() << std::endl;
-                }
-
-                // Log all edge layouts AFTER (positions only, snapIdx computed from position)
-                std::cout << "[test_snap_drag] All edge layouts AFTER:" << std::endl;
-                for (const auto& [eid, elayout] : edgeLayouts_) {
-                    std::cout << "  Edge " << eid << ": src=(" << elayout.sourcePoint.x
-                              << "," << elayout.sourcePoint.y << ") tgt=(" << elayout.targetPoint.x
-                              << "," << elayout.targetPoint.y << ") bends=" << elayout.bendPoints.size() << std::endl;
-                }
-
-                std::cout << "========== TEST_SNAP_DRAG END ==========\n" << std::endl;
-                commandServer_.sendResponse(result.success ? "OK test_snap_drag" : "FAILED " + result.reason);
-            } else {
-                commandServer_.sendResponse("ERROR edge not found");
-            }
-        }
-        else if (cmd.name == "test_snap_preview" && cmd.args.size() >= 4) {
-            // test_snap_preview <edge_id> <is_source:0|1> <dx> <dy>
-            // Test snap point drag PREVIEW (not final drop)
-            EdgeId edgeId = std::stoi(cmd.args[0]);
-            bool isSource = std::stoi(cmd.args[1]) != 0;
-            float dx = std::stof(cmd.args[2]);
-            float dy = std::stof(cmd.args[3]);
-
-            if (edgeLayouts_.count(edgeId)) {
-                std::cout << "\n========== TEST_SNAP_PREVIEW START ==========" << std::endl;
-                std::cout << "[test_snap_preview] Edge " << edgeId << " isSource=" << isSource
-                          << " delta=(" << dx << "," << dy << ")" << std::endl;
-
-                EdgeLayout& layout = edgeLayouts_[edgeId];
-                Point currentPos = isSource ? layout.sourcePoint : layout.targetPoint;
-                std::cout << "[test_snap_preview] Current snap pos=(" << currentPos.x << "," << currentPos.y << ")" << std::endl;
-
-                // Start drag
-                auto startResult = snapController_.startDrag(
-                    edgeId, isSource, nodeLayouts_, edgeLayouts_, gridSize_);
-
-                if (startResult.success) {
-                    std::cout << "[test_snap_preview] startDrag SUCCESS, candidates=" << startResult.candidates.size() << std::endl;
-
-                    // Update drag to target position
-                    Point targetPos = {currentPos.x + dx, currentPos.y + dy};
-                    std::cout << "[test_snap_preview] Target pos=(" << targetPos.x << "," << targetPos.y << ")" << std::endl;
-
-                    auto updateResult = snapController_.updateDrag(targetPos, nodeLayouts_, gridSize_);
-                    std::cout << "[test_snap_preview] updateDrag: snappedIdx=" << updateResult.snappedCandidateIndex
-                              << " hasValidPreview=" << updateResult.hasValidPreview << std::endl;
-
-                    // Log preview layout
-                    const auto& preview = snapController_.getPreviewLayout();
-                    std::cout << "[test_snap_preview] Preview layout:" << std::endl;
-                    std::cout << "  src=(" << preview.sourcePoint.x << "," << preview.sourcePoint.y << ")" << std::endl;
-                    std::cout << "  tgt=(" << preview.targetPoint.x << "," << preview.targetPoint.y << ")" << std::endl;
-                    std::cout << "  bends=" << preview.bendPoints.size() << std::endl;
-
-                    // Check orthogonality
-                    auto points = preview.allPoints();
-                    std::cout << "[test_snap_preview] All points:" << std::endl;
-                    for (size_t i = 0; i < points.size(); ++i) {
-                        std::cout << "  [" << i << "]: (" << points[i].x << "," << points[i].y << ")" << std::endl;
-                    }
-                    std::cout << "[test_snap_preview] Orthogonality check:" << std::endl;
-                    bool allOrthogonal = true;
-                    for (size_t i = 1; i < points.size(); ++i) {
-                        float segDx = points[i].x - points[i-1].x;
-                        float segDy = points[i].y - points[i-1].y;
-                        bool isOrtho = (std::abs(segDx) < 0.1f || std::abs(segDy) < 0.1f);
-                        std::cout << "  [" << (i-1) << "->" << i << "]: dx=" << segDx << " dy=" << segDy
-                                  << " orthogonal=" << (isOrtho ? "YES" : "NO") << std::endl;
-                        if (!isOrtho) allOrthogonal = false;
-                    }
-
-                    // Cancel drag (don't complete)
-                    snapController_.cancelDrag();
-                    std::cout << "[test_snap_preview] Drag cancelled" << std::endl;
-
-                    std::cout << "========== TEST_SNAP_PREVIEW END ==========\n" << std::endl;
-                    commandServer_.sendResponse(allOrthogonal ? "OK all_orthogonal" : "FAILED diagonal_detected");
-                } else {
-                    std::cout << "[test_snap_preview] startDrag FAILED: " << startResult.reason << std::endl;
-                    std::cout << "========== TEST_SNAP_PREVIEW END ==========\n" << std::endl;
-                    commandServer_.sendResponse("FAILED " + startResult.reason);
-                }
-            } else {
-                commandServer_.sendResponse("ERROR edge not found");
-            }
-        }
-        else if (cmd.name == "test_coop_reroute" && cmd.args.size() >= 1) {
-            // test_coop_reroute <edge_id> - Test cooperative rerouting for single edge
-            // New algorithm: find my path, identify blocking edges that overlap (not cross),
-            // reroute blocking edges with my path as obstacle to force them around
-            EdgeId edgeId = std::stoi(cmd.args[0]);
-
-            if (edgeLayouts_.count(edgeId)) {
-                std::cout << "\n========== TEST_COOP_REROUTE START ==========" << std::endl;
-                std::cout << "[coop_reroute] Edge " << edgeId << std::endl;
-
-                const EdgeLayout& currentLayout = edgeLayouts_[edgeId];
-                std::cout << "[coop_reroute] BEFORE: src=(" << currentLayout.sourcePoint.x 
-                          << "," << currentLayout.sourcePoint.y << ") srcEdge=" 
-                          << static_cast<int>(currentLayout.sourceEdge) << std::endl;
-                std::cout << "[coop_reroute] BEFORE: tgt=(" << currentLayout.targetPoint.x 
-                          << "," << currentLayout.targetPoint.y << ") tgtEdge=" 
-                          << static_cast<int>(currentLayout.targetEdge) << std::endl;
-                std::cout << "[coop_reroute] BEFORE: bendPoints=" << currentLayout.bendPoints.size() << std::endl;
-
-                // Build other layouts (excluding this edge)
-                std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
-                for (const auto& [eid, layout] : edgeLayouts_) {
-                    if (eid != edgeId) {
-                        otherLayouts[eid] = layout;
-                    }
-                }
-
-                // Create cooperative rerouter
-                CooperativeRerouter rerouter(nullptr, gridSize_);
-                auto result = rerouter.rerouteWithCooperation(edgeId, currentLayout, otherLayouts, nodeLayouts_);
-
-                std::cout << "[coop_reroute] Result: success=" << result.success 
-                          << " attempts=" << result.attempts
-                          << " reroutedEdges=" << result.reroutedEdges.size() << std::endl;
-
-                if (result.success) {
-                    std::cout << "[coop_reroute] AFTER: src=(" << result.layout.sourcePoint.x 
-                              << "," << result.layout.sourcePoint.y << ") srcEdge=" 
-                              << static_cast<int>(result.layout.sourceEdge) << std::endl;
-                    std::cout << "[coop_reroute] AFTER: tgt=(" << result.layout.targetPoint.x 
-                              << "," << result.layout.targetPoint.y << ") tgtEdge=" 
-                              << static_cast<int>(result.layout.targetEdge) << std::endl;
-                    std::cout << "[coop_reroute] AFTER: bendPoints=" << result.layout.bendPoints.size() << std::endl;
-                    
-                    // Apply the result (my layout)
-                    edgeLayouts_[edgeId] = result.layout;
-                    std::cout << "[coop_reroute] My layout applied." << std::endl;
-
-                    // Apply rerouted blocking edges
-                    for (const auto& reroutedLayout : result.reroutedEdges) {
-                        edgeLayouts_[reroutedLayout.id] = reroutedLayout;
-                        std::cout << "[coop_reroute] Blocking edge " << reroutedLayout.id 
-                                  << " rerouted." << std::endl;
-                    }
-
-                    // Also update otherLayouts back to edgeLayouts_ (they may have been modified)
-                    for (const auto& [eid, layout] : otherLayouts) {
-                        edgeLayouts_[eid] = layout;
-                    }
-                } else {
-                    std::cout << "[coop_reroute] Failed: " << result.failureReason << std::endl;
-                }
-
-                std::cout << "========== TEST_COOP_REROUTE END ==========\n" << std::endl;
-                commandServer_.sendResponse(result.success ? "OK test_coop_reroute" : "FAILED " + result.failureReason);
-            } else {
-                commandServer_.sendResponse("ERROR edge not found");
-            }
-        }
-        else if (cmd.name == "test_coop_pair" && cmd.args.size() >= 2) {
-            // test_coop_pair <edge_id_a> <edge_id_b> - Check if two edges have segment overlap
-            // This is now a simple overlap check, not rerouting
-            EdgeId edgeIdA = std::stoi(cmd.args[0]);
-            EdgeId edgeIdB = std::stoi(cmd.args[1]);
-
-            if (edgeLayouts_.count(edgeIdA) && edgeLayouts_.count(edgeIdB)) {
-                std::cout << "\n========== TEST_COOP_PAIR START ==========" << std::endl;
-                std::cout << "[coop_pair] Checking overlap between edges " << edgeIdA << " and " << edgeIdB << std::endl;
-
-                const EdgeLayout& layoutA = edgeLayouts_[edgeIdA];
-                const EdgeLayout& layoutB = edgeLayouts_[edgeIdB];
-
-                bool hasOverlap = CooperativeRerouter::hasSegmentOverlap(layoutA, layoutB);
-
-                std::cout << "[coop_pair] Result: hasOverlap=" << (hasOverlap ? "true" : "false") << std::endl;
-                std::cout << "[coop_pair] (Cross intersections allowed, parallel segment overlaps forbidden)" << std::endl;
-
-                std::cout << "========== TEST_COOP_PAIR END ==========\n" << std::endl;
-                commandServer_.sendResponse(hasOverlap ? "OVERLAP" : "NO_OVERLAP");
-            } else {
-                commandServer_.sendResponse("ERROR one or both edges not found");
-            }
-        }
-        else if (cmd.name == "test_drag" && cmd.args.size() >= 3) {
-            // test_drag <node_id> <dx> <dy> - Full drag simulation with detailed logging
-            NodeId nodeId = std::stoi(cmd.args[0]);
-            float dx = std::stof(cmd.args[1]);
-            float dy = std::stof(cmd.args[2]);
-
-            if (nodeLayouts_.count(nodeId)) {
-                std::cout << "\n========== TEST_DRAG START ==========" << std::endl;
-                std::cout << "[test_drag] Node " << nodeId << " delta=(" << dx << "," << dy << ")" << std::endl;
-
-                // Log BEFORE state
-                std::cout << "[test_drag] BEFORE node position: ("
-                          << nodeLayouts_[nodeId].position.x << ","
-                          << nodeLayouts_[nodeId].position.y << ")" << std::endl;
-                std::cout << "[test_drag] BEFORE edge layouts:" << std::endl;
-                for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    std::cout << "  Edge " << edgeId << ": src=(" << layout.sourcePoint.x
-                              << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
-                              << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
-                }
-
-                Point proposedPos = {
-                    nodeLayouts_[nodeId].position.x + dx,
-                    nodeLayouts_[nodeId].position.y + dy
-                };
-                std::cout << "[test_drag] Proposed position: (" << proposedPos.x << "," << proposedPos.y << ")" << std::endl;
-
-                // Collect affected edges
-                std::vector<EdgeId> affected;
-                for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    if (layout.from == nodeId || layout.to == nodeId) {
-                        affected.push_back(edgeId);
-                    }
-                }
-                std::cout << "[test_drag] Affected edges: " << affected.size() << std::endl;
-
-                // Simulate drag start
-                std::cout << "[test_drag] Calling onDragStart()..." << std::endl;
-                routingCoordinator_->onDragStart(affected);
-                std::cout << "[test_drag] routingCoordinator state after onDragStart: "
-                          << static_cast<int>(routingCoordinator_->state()) << std::endl;
-
-                // Actually move the node (bypass moveNode validation for testing)
-                nodeLayouts_[nodeId].position = proposedPos;
-                std::cout << "[test_drag] Node position updated" << std::endl;
-
-                // Save affectedEdges_ for callback
-                affectedEdges_ = affected;
-
-                // Trigger drag end
-                std::cout << "[test_drag] Calling onDragEnd()..." << std::endl;
-                std::cout << "[test_drag] dragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.dragAlgorithm)
-                          << " postDragAlgorithm=" << static_cast<int>(layoutOptions_.optimizationOptions.postDragAlgorithm) << std::endl;
-                routingCoordinator_->onDragEnd({nodeId});
-                std::cout << "[test_drag] routingCoordinator state after onDragEnd: "
-                          << static_cast<int>(routingCoordinator_->state()) << std::endl;
-
-                // Force update() to trigger callback (debounceDelay=0)
-                routingCoordinator_->update(SDL_GetTicks());
-
-                // Log AFTER state (positions only, snapIdx computed from position)
-                std::cout << "[test_drag] AFTER edge layouts:" << std::endl;
-                for (const auto& [edgeId, layout] : edgeLayouts_) {
-                    std::cout << "  Edge " << edgeId << ": src=(" << layout.sourcePoint.x
-                              << "," << layout.sourcePoint.y << ") tgt=(" << layout.targetPoint.x
-                              << "," << layout.targetPoint.y << ") bends=" << layout.bendPoints.size() << std::endl;
-                }
-                std::cout << "========== TEST_DRAG END ==========\n" << std::endl;
-
-                commandServer_.sendResponse("OK test_drag " + std::to_string(nodeId));
-            } else {
-                commandServer_.sendResponse("ERROR node not found");
-            }
-        }
-        else if (cmd.name == "pause") {
-            paused_ = true;
-            pauseMessage_ = cmd.args.empty() ? "Paused by external command" : cmd.args[0];
-            commandServer_.sendResponse("OK paused");
-        }
-        else if (cmd.name == "resume") {
-            paused_ = false;
-            pauseMessage_.clear();
-            commandServer_.sendResponse("OK resumed");
-        }
-        else if (cmd.name == "get_state") {
-            // Return current node positions and edge info (brief)
-            std::ostringstream oss;
-            oss << "STATE nodes=" << nodeLayouts_.size() << " edges=" << edgeLayouts_.size();
-            for (const auto& [id, layout] : nodeLayouts_) {
-                oss << " n" << id << "=(" << layout.position.x << "," << layout.position.y << ")";
-            }
-            commandServer_.sendResponse(oss.str());
-        }
-        else if (cmd.name == "get_layout") {
-            // Return full layout as JSON (same as save format)
-            LayoutResult currentResult;
-            for (const auto& [id, layout] : nodeLayouts_) {
-                currentResult.setNodeLayout(id, layout);
-            }
-            for (const auto& [id, layout] : edgeLayouts_) {
-                currentResult.setEdgeLayout(id, layout);
-            }
-            currentResult.setLayerCount(layoutResult_.layerCount());
-
-            std::string layoutJson = LayoutSerializer::toJson(currentResult);
-            commandServer_.sendResponse(layoutJson);
-        }
-        else if (cmd.name == "check_penetration") {
-            // Use ConstraintGateway for centralized constraint checking
-            ConstraintGateway gateway;
-            auto results = gateway.validateAll(edgeLayouts_, nodeLayouts_, gridSize_);
-
-            std::ostringstream oss;
-            oss << "VIOLATIONS";
-            int totalCount = 0;
-
-            for (const auto& [edgeId, result] : results) {
-                for (const auto& violation : result.violations) {
-                    totalCount++;
-                    oss << " e" << edgeId << ":";
-                    switch (violation.type) {
-                        case ConstraintViolationType::NodePenetration:
-                            oss << "NodePen";
-                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
-                            break;
-                        case ConstraintViolationType::DirectionalSourcePenetration:
-                            oss << "SrcPen";
-                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
-                            break;
-                        case ConstraintViolationType::DirectionalTargetPenetration:
-                            oss << "TgtPen";
-                            if (violation.nodeId) oss << "->n" << *violation.nodeId;
-                            break;
-                        case ConstraintViolationType::Orthogonality:
-                            oss << "Diagonal";
-                            if (violation.segmentIndex >= 0) oss << "[" << violation.segmentIndex << "]";
-                            break;
-                        case ConstraintViolationType::SegmentOverlap:
-                            oss << "Overlap";
-                            if (violation.otherEdgeId) oss << "->e" << *violation.otherEdgeId;
-                            break;
-                    }
-                }
-            }
-            oss << " count=" << totalCount;
-            commandServer_.sendResponse(oss.str());
-        }
-        else if (cmd.name == "get_log") {
-            // Return captured logs with optional filtering and pagination
-            // Usage: get_log [pattern] [tail_lines]
-            // Examples:
-            //   get_log                    - all logs (max 200 lines)
-            //   get_log SnapCalc           - lines containing "SnapCalc"
-            //   get_log SnapCalc 50        - last 50 lines containing "SnapCalc"
-            //   get_log * 100              - last 100 lines (all patterns)
-            
-            std::string pattern = "";
-            size_t tailLines = 200;  // Default max lines
-            
-            if (!cmd.args.empty()) {
-                pattern = cmd.args[0];
-                if (pattern == "*") pattern = "";  // Wildcard means no filter
-            }
-            if (cmd.args.size() >= 2) {
-                tailLines = static_cast<size_t>(std::stoi(cmd.args[1]));
-            }
-            
-            // Get logs from library API
-            auto loggerLogs = Logger::getCapturedLogs(pattern, tailLines);
-            
-            // Also get cout logs and filter
-            std::string coutLogs = LogCapture::instance().get();
-            std::vector<std::string> coutLines;
-            std::istringstream iss(coutLogs);
-            std::string line;
-            while (std::getline(iss, line)) {
-                if (pattern.empty() || line.find(pattern) != std::string::npos) {
-                    coutLines.push_back(line);
-                }
-            }
-            
-            // Combine and apply tail limit
-            std::vector<std::string> allLines;
-            allLines.insert(allLines.end(), loggerLogs.begin(), loggerLogs.end());
-            allLines.insert(allLines.end(), coutLines.begin(), coutLines.end());
-            
-            if (allLines.size() > tailLines) {
-                allLines.erase(allLines.begin(), allLines.begin() + (allLines.size() - tailLines));
-            }
-            
-            if (allLines.empty()) {
-                commandServer_.sendResponse("LOG_EMPTY");
-            } else {
-                // Build response with line count info
-                std::ostringstream result;
-                result << "LOG [" << allLines.size() << " lines]\\n";
-                for (const auto& l : allLines) {
-                    for (char c : l) {
-                        if (c == '\n') {
-                            result << "\\n";
-                        } else {
-                            result << c;
-                        }
-                    }
-                    result << "\\n";
-                }
-                commandServer_.sendResponse(result.str());
-            }
-        }
-        else if (cmd.name == "clear_log") {
-            // Clear both log buffers
-            Logger::clearCapturedLogs();
-            LogCapture::instance().clear();
-            commandServer_.sendResponse("OK cleared");
-        }
-        else if (cmd.name == "wait_idle") {
-            // Wait until optimization is complete (with timeout)
-            int timeoutMs = 5000;  // Default 5 seconds
-            if (!cmd.args.empty()) {
-                timeoutMs = std::stoi(cmd.args[0]);
-            }
-            
-            auto startTime = std::chrono::steady_clock::now();
-            while (routingCoordinator_->state() != RoutingState::Idle) {
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - startTime).count();
-                if (elapsed >= timeoutMs) {
-                    commandServer_.sendResponse("TIMEOUT state=" + 
-                        std::to_string(static_cast<int>(routingCoordinator_->state())));
-                    return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-            commandServer_.sendResponse("OK idle");
-        }
-        else if (cmd.name == "get_state_full") {
-            // Extended state including optimization status
-            std::ostringstream oss;
-            oss << "STATE nodes=" << nodeLayouts_.size()
-                << " edges=" << edgeLayouts_.size()
-                << " routing=" << static_cast<int>(routingCoordinator_->state())
-                << " pending=" << (routingCoordinator_->isPendingOptimization() ? "yes" : "no");
-            commandServer_.sendResponse(oss.str());
-        }
-        else if (cmd.name == "astar_viz") {
-            // Enable A* visualization, optionally for specific edge
-            showAStarDebug_ = true;
-            debugEdgeId_ = INVALID_EDGE;
-
-            if (!cmd.args.empty()) {
-                debugEdgeId_ = std::stoi(cmd.args[0]);
-            }
-
-            // Build obstacle map
-            debugObstacles_ = std::make_shared<ObstacleMap>();
-            debugObstacles_->buildFromNodes(nodeLayouts_, gridSize_);
-            debugObstacles_->addEdgeSegments(edgeLayouts_, debugEdgeId_);
-
-            // Set start/goal from specified edge
-            if (debugEdgeId_ != INVALID_EDGE) {
-                auto it = edgeLayouts_.find(debugEdgeId_);
-                if (it != edgeLayouts_.end()) {
-                    astarStart_ = it->second.sourcePoint;
-                    astarGoal_ = it->second.targetPoint;
-                }
-            } else {
-                astarStart_ = {-1, -1};
-                astarGoal_ = {-1, -1};
-            }
-
-            std::ostringstream oss;
-            oss << "OK astar_viz edge=" << debugEdgeId_
-                << " grid=" << debugObstacles_->width() << "x" << debugObstacles_->height();
-            commandServer_.sendResponse(oss.str());
-        }
-        else if (cmd.name == "astar_viz_off") {
-            showAStarDebug_ = false;
-            debugObstacles_.reset();
-            commandServer_.sendResponse("OK astar_viz_off");
-        }
-        else if (cmd.name == "scxml_load" && !cmd.args.empty()) {
-            // Load SCXML test by index or ID
-            if (!scxmlLoader_) {
-                commandServer_.sendResponse("ERROR SCXML not initialized");
-            } else {
-                bool success = false;
-                // Try as numeric index first
-                try {
-                    size_t index = std::stoul(cmd.args[0]);
-                    success = loadSCXMLTest(index);
-                } catch (...) {
-                    // Try as test ID
-                    for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
-                        if (scxmlLoader_->getTest(i)->id == cmd.args[0]) {
-                            success = loadSCXMLTest(i);
-                            break;
-                        }
-                    }
-                }
-                if (success) {
-                    commandServer_.sendResponse("OK scxml_load " + std::to_string(currentTestIndex_));
-                } else {
-                    commandServer_.sendResponse("ERROR test not found: " + cmd.args[0]);
-                }
-            }
-        }
-        else if (cmd.name == "scxml_next") {
-            if (!scxmlLoader_) {
-                commandServer_.sendResponse("ERROR SCXML not initialized");
-            } else {
-                nextTest();
-                commandServer_.sendResponse("OK scxml_next " + std::to_string(currentTestIndex_));
-            }
-        }
-        else if (cmd.name == "scxml_prev") {
-            if (!scxmlLoader_) {
-                commandServer_.sendResponse("ERROR SCXML not initialized");
-            } else {
-                prevTest();
-                commandServer_.sendResponse("OK scxml_prev " + std::to_string(currentTestIndex_));
-            }
-        }
-        else if (cmd.name == "scxml_list") {
-            if (!scxmlLoader_) {
-                commandServer_.sendResponse("ERROR SCXML not initialized");
-            } else {
-                std::ostringstream oss;
-                oss << "SCXML_TESTS count=" << scxmlLoader_->getTestCount() << "\\n";
-                for (size_t i = 0; i < scxmlLoader_->getTestCount(); ++i) {
-                    const auto* info = scxmlLoader_->getTest(i);
-                    oss << i << ": " << info->id << " - " << info->file << "\\n";
-                }
-                commandServer_.sendResponse(oss.str());
-            }
-        }
-        else if (cmd.name == "scxml_info") {
-            if (!scxmlLoader_) {
-                commandServer_.sendResponse("ERROR SCXML not initialized");
-            } else if (currentTestIndex_ < 0) {
-                commandServer_.sendResponse("SCXML_INFO none loaded");
-            } else {
-                const auto* info = getCurrentTestInfo();
-                std::ostringstream oss;
-                oss << "SCXML_INFO index=" << currentTestIndex_
-                    << " id=" << info->id
-                    << " file=" << info->file
-                    << " nodes=" << graph_.nodeCount()
-                    << " edges=" << graph_.edgeCount();
-                commandServer_.sendResponse(oss.str());
-            }
-        }
-        else if (cmd.name == "quit") {
-            commandServer_.sendResponse("OK bye");
-            shouldQuit_ = true;
-        }
-        else {
-            commandServer_.sendResponse("ERROR unknown command: " + cmd.name);
-        }
-    }
 };
 
 int main(int argc, char* argv[]) {

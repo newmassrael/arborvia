@@ -31,6 +31,8 @@ public:
     using DoLayoutCallback = std::function<void()>;
     using RerouteEdgesCallback = std::function<void()>;
     using StartDragCallback = std::function<void(NodeId)>;
+    using EndDragCallback = std::function<void(NodeId)>;  // Called when drag ends (mouse release)
+    using ValidateDragCallback = std::function<bool(NodeId, Point)>;  // Returns true if valid position
 
     /// Constructor
     /// @param manualManager Manual layout manager for bend point operations
@@ -40,6 +42,8 @@ public:
     void setDoLayoutCallback(DoLayoutCallback cb) { doLayoutCallback_ = std::move(cb); }
     void setRerouteEdgesCallback(RerouteEdgesCallback cb) { rerouteEdgesCallback_ = std::move(cb); }
     void setStartDragCallback(StartDragCallback cb) { startDragCallback_ = std::move(cb); }
+    void setEndDragCallback(EndDragCallback cb) { endDragCallback_ = std::move(cb); }
+    void setValidateDragCallback(ValidateDragCallback cb) { validateDragCallback_ = std::move(cb); }
 
     /// Process input and update state
     /// @param state Current demo state (will be modified)
@@ -74,6 +78,8 @@ private:
     DoLayoutCallback doLayoutCallback_;
     RerouteEdgesCallback rerouteEdgesCallback_;
     StartDragCallback startDragCallback_;
+    EndDragCallback endDragCallback_;
+    ValidateDragCallback validateDragCallback_;
 
     // Constants
     static constexpr float SNAP_HIT_RADIUS = 8.0f;

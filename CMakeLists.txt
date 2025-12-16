@@ -211,6 +211,7 @@ if(ARBORVIA_BUILD_EXAMPLES)
         examples/interactive_demo/DemoRenderer.cpp
         examples/interactive_demo/DemoInputHandler.cpp
         examples/interactive_demo/DemoCommandProcessor.cpp
+        examples/interactive_demo/DemoUIPanel.cpp
         tests/infrastructure/scxml/SCXMLGraph.cpp
         tests/infrastructure/scxml/SCXMLConverter.cpp
         tests/infrastructure/scxml/SCXMLTestLoader.cpp

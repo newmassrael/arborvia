@@ -58,7 +58,8 @@ public:
                               const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
                               const RenderOptions& options,
                               const HoveredSnapPoint& hoveredSnapPoint,
-                              const HoveredSnapPoint& draggingSnapPoint);
+                              const HoveredSnapPoint& draggingSnapPoint,
+                              const std::vector<EdgeId>& hiddenEdges = {});
 
     /// Draw snap index label
     static void drawSnapIndexLabel(ImDrawList* drawList, const ViewTransform& view,

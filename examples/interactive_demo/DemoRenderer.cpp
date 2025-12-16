@@ -406,8 +406,13 @@ void DemoRenderer::drawSnapPoints(ImDrawList* drawList, ImDrawList* fgDrawList,
                                   const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
                                   const RenderOptions& options,
                                   const HoveredSnapPoint& hoveredSnapPoint,
-                                  const HoveredSnapPoint& draggingSnapPoint) {
+                                  const HoveredSnapPoint& draggingSnapPoint,
+                                  const std::vector<EdgeId>& hiddenEdges) {
     for (const auto& [edgeId, edgeLayout] : edgeLayouts) {
+        // Skip hidden edges (e.g., affected edges in HideUntilDrop mode)
+        if (std::find(hiddenEdges.begin(), hiddenEdges.end(), edgeId) != hiddenEdges.end()) {
+            continue;
+        }
         // Source point on this node (outgoing - green)
         if (edgeLayout.from == nodeLayout.id) {
             ImVec2 screenPos = view.worldToScreen(edgeLayout.sourcePoint);

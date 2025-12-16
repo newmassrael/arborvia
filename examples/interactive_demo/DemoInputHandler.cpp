@@ -149,14 +149,12 @@ void DemoInputHandler::updateHoveredSnapPoint(DemoState& state, const Point& gra
     }
 }
 
-void DemoInputHandler::updateHoveredBendPoint(DemoState& state, const Point& graphMouse) {
+void DemoInputHandler::updateHoveredBendPoint(DemoState& state, [[maybe_unused]] const Point& graphMouse) {
     state.interaction.hoveredBendPoint.clear();
     state.interaction.bendPointPreview.clear();
 
     // Bend point editing disabled in current version
-    if (false && state.interaction.hoveredNode == INVALID_NODE) {
-        // TODO: Implement bend point hover detection when needed
-    }
+    // graphMouse will be used when bend point hover detection is implemented
 }
 
 void DemoInputHandler::updateHoveredEdge(DemoState& state, const Point& graphMouse) {
@@ -325,6 +323,7 @@ void DemoInputHandler::handleDragThreshold(DemoState& state, const ImGuiIO& io) 
 
     if (distance > InteractionState::DRAG_THRESHOLD) {
         interaction.pendingNodeDrag = false;
+        interaction.draggedNode = interaction.selectedNode;
         if (startDragCallback_) {
             startDragCallback_(interaction.selectedNode);
         }
@@ -341,7 +340,7 @@ void DemoInputHandler::handleEmptyAreaPan(DemoState& state, const ImGuiIO& io) {
     }
 }
 
-void DemoInputHandler::handleMouseRelease(DemoState& state, const ImGuiIO& io, const Point& graphMouse) {
+void DemoInputHandler::handleMouseRelease(DemoState& state, [[maybe_unused]] const ImGuiIO& io, const Point& graphMouse) {
     if (!ImGui::IsMouseReleased(0)) return;
 
     auto& interaction = state.interaction;
@@ -390,6 +389,12 @@ void DemoInputHandler::handleMouseRelease(DemoState& state, const ImGuiIO& io, c
                 nodeIt->second.position = interaction.lastValidPosition;
             }
         }
+        
+        // Signal drag end - triggers A* optimization via coordinator
+        if (endDragCallback_) {
+            endDragCallback_(interaction.draggedNode);
+        }
+        
         interaction.draggedNode = INVALID_NODE;
 
         // Clear affected edges when not in HideUntilDrop mode
@@ -413,7 +418,7 @@ void DemoInputHandler::handleMouseRelease(DemoState& state, const ImGuiIO& io, c
     }
 }
 
-void DemoInputHandler::handleSnapPointDrag(DemoState& state, const ImGuiIO& io, const Point& graphMouse) {
+void DemoInputHandler::handleSnapPointDrag(DemoState& state, [[maybe_unused]] const ImGuiIO& io, const Point& graphMouse) {
     auto& interaction = state.interaction;
 
     if (!interaction.draggingSnapPoint.isValid() || !ImGui::IsMouseDragging(0)) {
@@ -436,7 +441,7 @@ void DemoInputHandler::handleSnapPointDrag(DemoState& state, const ImGuiIO& io, 
     interaction.hasSnapPreview = updateResult.hasValidPreview;
 }
 
-void DemoInputHandler::handleBendPointDrag(DemoState& state, const ImGuiIO& io, const Point& graphMouse) {
+void DemoInputHandler::handleBendPointDrag(DemoState& state, [[maybe_unused]] const ImGuiIO& io, const Point& graphMouse) {
     auto& interaction = state.interaction;
 
     if (!interaction.draggingBendPoint.isValid() || !ImGui::IsMouseDragging(0)) {
@@ -497,7 +502,7 @@ void DemoInputHandler::handleBendPointDrag(DemoState& state, const ImGuiIO& io, 
     }
 }
 
-void DemoInputHandler::handleNodeDrag(DemoState& state, const ImGuiIO& io, const Point& graphMouse) {
+void DemoInputHandler::handleNodeDrag(DemoState& state, [[maybe_unused]] const ImGuiIO& io, const Point& graphMouse) {
     auto& interaction = state.interaction;
 
     if (interaction.draggedNode == INVALID_NODE || !ImGui::IsMouseDragging(0)) {
@@ -527,44 +532,32 @@ void DemoInputHandler::handleNodeDrag(DemoState& state, const ImGuiIO& io, const
         return;
     }
 
-    // Validate using constraint manager
-    if (state.constraintManager) {
-        ConstraintContext ctx{
-            interaction.draggedNode,
-            proposedPosition,
-            *state.nodeLayouts,
-            *state.edgeLayouts,
-            state.graph,
-            state.renderOptions.gridSize
-        };
-        auto validation = state.constraintManager->validate(ctx);
+    // Always update position during drag (visual feedback)
+    layout.position.x = newX;
+    layout.position.y = newY;
 
-        // Always update position during drag (visual feedback)
-        layout.position.x = newX;
-        layout.position.y = newY;
+    // Validate using callback (avoids dangling pointer issue with cached constraintManager)
+    bool isValid = true;
+    if (validateDragCallback_) {
+        isValid = validateDragCallback_(interaction.draggedNode, proposedPosition);
+    }
 
-        if (validation.valid) {
-            interaction.isInvalidDragPosition = false;
-            interaction.lastValidPosition = proposedPosition;
-            manualManager_->setNodePosition(interaction.draggedNode, layout.position);
+    if (isValid) {
+        interaction.isInvalidDragPosition = false;
+        interaction.lastValidPosition = proposedPosition;
+        manualManager_->setNodePosition(interaction.draggedNode, layout.position);
 
-            // Re-route in non-HideUntilDrop modes
-            if (state.layoutOptions->optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
-                if (rerouteEdgesCallback_) rerouteEdgesCallback_();
-                interaction.lastRoutedPosition = proposedPosition;
-            }
-        } else {
-            interaction.isInvalidDragPosition = true;
+        // Re-route in non-HideUntilDrop modes
+        if (state.layoutOptions->optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
+            if (rerouteEdgesCallback_) rerouteEdgesCallback_();
+            interaction.lastRoutedPosition = proposedPosition;
         }
     } else {
-        // No constraint manager - just update position
-        layout.position.x = newX;
-        layout.position.y = newY;
-        manualManager_->setNodePosition(interaction.draggedNode, layout.position);
+        interaction.isInvalidDragPosition = true;
     }
 }
 
-void DemoInputHandler::handleKeyboard(DemoState& state, const ImGuiIO& io) {
+void DemoInputHandler::handleKeyboard(DemoState& state, [[maybe_unused]] const ImGuiIO& io) {
     auto& interaction = state.interaction;
 
     // Delete key for bend point removal
