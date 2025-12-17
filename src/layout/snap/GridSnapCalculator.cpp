@@ -431,25 +431,4 @@ Point GridSnapCalculator::computeSnapPointFromRatio(
     }
 }
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
-
-void GridSnapCalculator::distributePositionsQuantized(
-    int start,
-    int end,
-    int count,
-    std::vector<int>& outPositions)
-{
-    if (count <= 0) return;
-    int length = end - start;
-    int divisor = count + 1;
-
-    for (int i = 0; i < count; ++i) {
-        // Integer division with rounding: (a * b + divisor/2) / divisor
-        int gridPos = start + (length * (i + 1) * 2 + divisor) / (2 * divisor);
-        outPositions.push_back(gridPos);
-    }
-}
-
 }  // namespace arborvia

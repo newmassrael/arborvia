@@ -209,27 +209,6 @@ public:
         float ratio,
         float gridSize);
 
-    // =========================================================================
-    // Utility Functions
-    // =========================================================================
-
-    /**
-     * @brief Distribute positions evenly in grid coordinates using integer arithmetic.
-     *
-     * Uses integer division with rounding to avoid floating-point accumulation errors.
-     * Preserves symmetry when distributing snap points.
-     *
-     * @param start Start of range in grid units
-     * @param end End of range in grid units
-     * @param count Number of positions to distribute
-     * @param outPositions Output vector for grid positions
-     */
-    static void distributePositionsQuantized(
-        int start,
-        int end,
-        int count,
-        std::vector<int>& outPositions);
-
 private:
     // =========================================================================
     // Corner Exclusion Helpers (Single Source of Truth)

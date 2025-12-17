@@ -109,22 +109,6 @@ public:
     /// @return Relative position (0.0 to 1.0)
     static float calculatePosition(int localIdx, int count, const SnapRange& range);
 
-    /// Calculate grid-aligned positions for snap points with minimum spacing
-    /// Ensures no two snap points occupy the same grid cell
-    /// @param edgeLength Length of the node edge in pixels
-    /// @param count Number of snap points needed
-    /// @param gridSize Size of grid cell in pixels
-    /// @param minSpacing Minimum spacing between snap points (default: gridSize)
-    /// @return Vector of pixel positions along the edge (relative to edge start)
-    static std::vector<float> calculateGridAlignedPositions(
-        float edgeLength, int count, float gridSize, float minSpacing = 0.0f);
-
-    /// Calculate required length for snap points with minimum spacing
-    /// @param count Number of snap points
-    /// @param gridSize Size of grid cell
-    /// @return Minimum required length in pixels
-    static float calculateRequiredLength(int count, float gridSize);
-
     // === Connection Analysis ===
 
     /// Build connection map for all node edges from edge layouts
