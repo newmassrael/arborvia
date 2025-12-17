@@ -37,10 +37,11 @@ NodeId SCXMLGraph::addParallelState(const std::string& id, Size size) {
     return nodeId;
 }
 
-NodeId SCXMLGraph::addFinalState(const std::string& id) {
+NodeId SCXMLGraph::addFinalState(const std::string& id, Size size) {
     NodeData data;
-    data.size = {0.0f, 0.0f};  // Point node - position is center
-    data.label = "";  // No label for final state
+    data.size = size;
+    // Use id as label for regular nodes, empty for point nodes
+    data.label = (size.width > 0 || size.height > 0) ? id : "";
     
     NodeId nodeId = CompoundGraph::addNode(data);
     

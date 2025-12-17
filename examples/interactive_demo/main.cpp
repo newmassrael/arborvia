@@ -221,10 +221,54 @@ public:
                 for (const auto& [id, el] : layoutController_->edgeLayouts()) {
                     edgeLayouts_[id] = el;
                 }
+                
+                // Update graph label when converting Point → Regular
+                if (newType == NodeType::Regular) {
+                    // Use SCXML ID if available, otherwise use node ID
+                    std::string label;
+                    if (scxmlGraph_) {
+                        label = scxmlGraph_->getScxmlId(nodeId);
+                    }
+                    if (label.empty()) {
+                        label = "Node " + std::to_string(static_cast<int>(nodeId));
+                    }
+                    graph_.getNode(nodeId).label = label;
+                } else {
+                    // Point nodes don't show label
+                    graph_.getNode(nodeId).label = "";
+                }
+                
                 return true;
             }
             std::cout << "[Demo] Type conversion failed: " << result.reason << std::endl;
             return false;
+        });
+        
+        // Check if a node can be converted to Point (only Final allowed)
+        uiPanel_->setCanConvertToPointCallback([this](NodeId nodeId) -> bool {
+            if (!scxmlGraph_) {
+                return false;  // Non-SCXML graphs: no point conversion allowed
+            }
+            
+            auto nodeType = scxmlGraph_->getNodeType(nodeId);
+            using SCXMLNodeType = test::scxml::SCXMLNodeType;
+            
+            // Only Final can toggle between Point and Regular
+            return nodeType == SCXMLNodeType::Final;
+        });
+        
+        // Check if a node can be converted to Regular (only Final allowed)
+        uiPanel_->setCanConvertToRegularCallback([this](NodeId nodeId) -> bool {
+            if (!scxmlGraph_) {
+                return true;  // Non-SCXML graphs: allow conversion
+            }
+            
+            auto nodeType = scxmlGraph_->getNodeType(nodeId);
+            using SCXMLNodeType = test::scxml::SCXMLNodeType;
+            
+            // Only Final can toggle between Point and Regular
+            // Initial/History must remain as Point
+            return nodeType == SCXMLNodeType::Final;
         });
     }
 

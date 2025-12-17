@@ -25,8 +25,9 @@ public:
     NodeId addParallelState(const std::string& id, Size size = {120.0f, 60.0f});
     
     /// Add a final state
-    /// Add a final state (rendered as double circle, size ignored - point node)
-    NodeId addFinalState(const std::string& id);
+    /// When size is {0,0} (default), creates a point node (double circle)
+    /// When size is non-zero, creates a regular node with id as label
+    NodeId addFinalState(const std::string& id, Size size = {0.0f, 0.0f});
     
     /// Add an initial pseudo-state (visual marker for initial attribute)
     NodeId addInitialPseudo(const std::string& parentId);

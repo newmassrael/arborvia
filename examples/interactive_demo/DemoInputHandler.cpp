@@ -525,10 +525,10 @@ void DemoInputHandler::handleNodeDrag(DemoState& state, [[maybe_unused]] const I
 
     Point proposedPosition = {newX, newY};
 
-    // Skip if position hasn't changed significantly
+    // Skip if position hasn't changed significantly (avoid redundant computation)
     constexpr float POS_CHANGE_THRESHOLD = 0.1f;
-    if (std::abs(proposedPosition.x - interaction.lastRoutedPosition.x) < POS_CHANGE_THRESHOLD &&
-        std::abs(proposedPosition.y - interaction.lastRoutedPosition.y) < POS_CHANGE_THRESHOLD) {
+    if (std::abs(proposedPosition.x - interaction.lastValidPosition.x) < POS_CHANGE_THRESHOLD &&
+        std::abs(proposedPosition.y - interaction.lastValidPosition.y) < POS_CHANGE_THRESHOLD) {
         return;
     }
 
@@ -550,8 +550,8 @@ void DemoInputHandler::handleNodeDrag(DemoState& state, [[maybe_unused]] const I
         // Re-route in non-HideUntilDrop modes
         if (state.layoutOptions->optimizationOptions.dragAlgorithm != DragAlgorithm::HideUntilDrop) {
             if (rerouteEdgesCallback_) rerouteEdgesCallback_();
-            interaction.lastRoutedPosition = proposedPosition;
         }
+        interaction.lastRoutedPosition = proposedPosition;
     } else {
         interaction.isInvalidDragPosition = true;
     }

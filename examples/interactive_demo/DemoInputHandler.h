@@ -84,7 +84,7 @@ private:
     // Constants
     static constexpr float SNAP_HIT_RADIUS = 8.0f;
     static constexpr float BEND_HIT_RADIUS = 6.0f;
-    static constexpr float POINT_NODE_RADIUS = 6.0f;
+    static constexpr float POINT_NODE_RADIUS = 14.0f;  // Larger than visual radius (10) for easier selection
 };
 
 }  // namespace arborvia

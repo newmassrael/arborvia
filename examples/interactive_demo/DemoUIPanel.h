@@ -43,6 +43,8 @@ public:
     using PrevTestCallback = std::function<void()>;
     using ExitSCXMLModeCallback = std::function<void()>;
     using SetNodeTypeCallback = std::function<bool(NodeId, NodeType)>;
+    using CanConvertToPointCallback = std::function<bool(NodeId)>;
+    using CanConvertToRegularCallback = std::function<bool(NodeId)>;
 
     /// Constructor
     explicit DemoUIPanel(std::shared_ptr<ManualLayoutManager> manualManager);
@@ -57,6 +59,8 @@ public:
     void setPrevTestCallback(PrevTestCallback cb) { prevTestCallback_ = std::move(cb); }
     void setExitSCXMLModeCallback(ExitSCXMLModeCallback cb) { exitSCXMLModeCallback_ = std::move(cb); }
     void setSetNodeTypeCallback(SetNodeTypeCallback cb) { setNodeTypeCallback_ = std::move(cb); }
+    void setCanConvertToPointCallback(CanConvertToPointCallback cb) { canConvertToPointCallback_ = std::move(cb); }
+    void setCanConvertToRegularCallback(CanConvertToRegularCallback cb) { canConvertToRegularCallback_ = std::move(cb); }
 
     /// Set SCXML loader reference for test list display
     void setSCXMLLoader(test::scxml::SCXMLTestLoader* loader) { scxmlLoader_ = loader; }
@@ -90,6 +94,8 @@ private:
     PrevTestCallback prevTestCallback_;
     ExitSCXMLModeCallback exitSCXMLModeCallback_;
     SetNodeTypeCallback setNodeTypeCallback_;
+    CanConvertToPointCallback canConvertToPointCallback_;
+    CanConvertToRegularCallback canConvertToRegularCallback_;
 };
 
 }  // namespace arborvia

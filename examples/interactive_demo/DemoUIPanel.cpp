@@ -122,13 +122,48 @@ void DemoUIPanel::renderSelectedNodeInfo(DemoState& state) {
     }
 
     // Node type toggle button
-    const char* buttonLabel = isPoint ? "To Normal Node" : "To Point Node";
-    if (ImGui::Button(buttonLabel) && setNodeTypeCallback_) {
-        NodeType newType = isPoint ? NodeType::Regular : NodeType::Point;
-        if (setNodeTypeCallback_(state.interaction.selectedNode, newType)) {
-            std::cout << "[Demo] Node " << state.interaction.selectedNode
-                      << " converted to " << (newType == NodeType::Point ? "Point" : "Normal")
-                      << std::endl;
+    // Point → Regular: only Final can convert (Initial/History must stay Point)
+    // Regular → Point: only Final can convert (State/Compound/Parallel must stay Regular)
+    bool canConvertToRegular = !isPoint || (canConvertToRegularCallback_ && 
+                                             canConvertToRegularCallback_(state.interaction.selectedNode));
+    bool canConvertToPoint = isPoint || (canConvertToPointCallback_ && 
+                                          canConvertToPointCallback_(state.interaction.selectedNode));
+    
+    if (isPoint) {
+        // Point node - check if can convert to Regular
+        if (canConvertToRegular) {
+            if (ImGui::Button("To Normal Node") && setNodeTypeCallback_) {
+                if (setNodeTypeCallback_(state.interaction.selectedNode, NodeType::Regular)) {
+                    std::cout << "[Demo] Node " << state.interaction.selectedNode
+                              << " converted to Normal" << std::endl;
+                }
+            }
+        } else {
+            // Initial/History - cannot convert
+            ImGui::BeginDisabled();
+            ImGui::Button("To Normal Node");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Initial/History nodes must remain Point");
+            }
+        }
+    } else {
+        // Regular node - check if can convert to Point
+        if (canConvertToPoint) {
+            if (ImGui::Button("To Point Node") && setNodeTypeCallback_) {
+                if (setNodeTypeCallback_(state.interaction.selectedNode, NodeType::Point)) {
+                    std::cout << "[Demo] Node " << state.interaction.selectedNode
+                              << " converted to Point" << std::endl;
+                }
+            }
+        } else {
+            // State/Compound/Parallel - cannot convert
+            ImGui::BeginDisabled();
+            ImGui::Button("To Point Node");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Only Final nodes can be Point");
+            }
         }
     }
 }

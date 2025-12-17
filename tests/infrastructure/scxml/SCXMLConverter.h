@@ -20,8 +20,8 @@ struct ConvertOptions {
     float defaultStateWidth = 120.0f;
     float defaultStateHeight = 60.0f;
     
-    /// Size for final states
-    float finalStateSize = 40.0f;
+    /// Size for final states (0 = point node, >0 = regular node with label)
+    float finalStateSize = 0.0f;
     
     /// Size for initial pseudo-states
     float initialPseudoSize = 20.0f;
