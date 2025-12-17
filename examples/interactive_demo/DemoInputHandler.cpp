@@ -3,6 +3,7 @@
 #include <arborvia/layout/util/LayoutUtils.h>
 #include <arborvia/layout/api/IConstraintValidator.h>
 #include <arborvia/layout/api/IDragConstraint.h>
+#include <arborvia/common/Logger.h>
 #include "../../src/layout/snap/GridSnapCalculator.h"
 #include "../../src/layout/routing/OrthogonalRouter.h"
 #include <cmath>
@@ -199,13 +200,17 @@ void DemoInputHandler::handleClicks(DemoState& state, const ImGuiIO& io, const P
 
             // Start snap drag using controller
             if (state.snapController) {
-                state.snapController->startDrag(
+                auto dragResult = state.snapController->startDrag(
                     interaction.draggingSnapPoint.edgeId,
                     interaction.draggingSnapPoint.isSource,
                     *state.nodeLayouts,
                     *state.edgeLayouts,
                     state.renderOptions.gridSize
                 );
+                // If drag start failed, clear the dragging state
+                if (!dragResult.success) {
+                    interaction.draggingSnapPoint.clear();
+                }
             }
         }
         return;
@@ -349,27 +354,29 @@ void DemoInputHandler::handleMouseRelease(DemoState& state, [[maybe_unused]] con
     interaction.pendingNodeDrag = false;
 
     // Handle snap point drag release
-    if (interaction.draggingSnapPoint.isValid() && state.snapController && state.snapController->isDragging()) {
-        Point dropPosition = {
-            graphMouse.x - interaction.snapPointDragOffset.x,
-            graphMouse.y - interaction.snapPointDragOffset.y
-        };
+    if (interaction.draggingSnapPoint.isValid()) {
+        if (state.snapController && state.snapController->isDragging()) {
+            Point dropPosition = {
+                graphMouse.x - interaction.snapPointDragOffset.x,
+                graphMouse.y - interaction.snapPointDragOffset.y
+            };
 
-        auto dropResult = state.snapController->completeDrag(
-            interaction.snappedCandidateIndex,
-            dropPosition,
-            *state.nodeLayouts,
-            *state.edgeLayouts,
-            *state.layoutOptions);
+            auto dropResult = state.snapController->completeDrag(
+                interaction.snappedCandidateIndex,
+                dropPosition,
+                *state.nodeLayouts,
+                *state.edgeLayouts,
+                *state.layoutOptions);
 
-        if (dropResult.success) {
-            // Clear affected edges for optimization
-            interaction.affectedEdges.clear();
-            for (EdgeId edgeId : dropResult.affectedEdges) {
-                interaction.affectedEdges.push_back(edgeId);
+            if (dropResult.success) {
+                // DO NOT add to affectedEdges - bend points are already regenerated in completeDrag()
+                // Adding them would cause them to be hidden if HideUntilDrop mode is active
+                LOG_DEBUG("[SNAP-DROP] completeDrag success: {} edges affected, bendPoints already regenerated",
+                          dropResult.affectedEdges.size());
             }
         }
-
+        // Always clear snap drag state when draggingSnapPoint is valid
+        // This handles edge cases where controller state got out of sync
         interaction.draggingSnapPoint.clear();
         interaction.snappedCandidateIndex = -1;
         interaction.hasSnapPreview = false;
@@ -418,7 +425,7 @@ void DemoInputHandler::handleMouseRelease(DemoState& state, [[maybe_unused]] con
     }
 }
 
-void DemoInputHandler::handleSnapPointDrag(DemoState& state, [[maybe_unused]] const ImGuiIO& io, const Point& graphMouse) {
+void DemoInputHandler::handleSnapPointDrag(DemoState& state, const ImGuiIO& io, const Point& graphMouse) {
     auto& interaction = state.interaction;
 
     if (!interaction.draggingSnapPoint.isValid() || !ImGui::IsMouseDragging(0)) {
@@ -426,6 +433,11 @@ void DemoInputHandler::handleSnapPointDrag(DemoState& state, [[maybe_unused]] co
     }
 
     if (!state.snapController || !state.snapController->isDragging()) {
+        return;
+    }
+
+    // Skip if mouse hasn't moved (avoid redundant A* calculations)
+    if (io.MouseDelta.x == 0.0f && io.MouseDelta.y == 0.0f) {
         return;
     }
 

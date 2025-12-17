@@ -516,7 +516,14 @@ public:
             // Skip logic for edge visibility
             if (isAffected && interaction.isInvalidDragPosition) continue;
             if (isAffected && layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop) continue;
-            if (interaction.draggingSnapPoint.isValid() && interaction.draggingSnapPoint.edgeId == id && interaction.hasSnapPreview) continue;
+
+            // Check if this edge should be hidden for snap preview
+            bool shouldHideForSnapPreview = interaction.draggingSnapPoint.isValid() &&
+                                            interaction.draggingSnapPoint.edgeId == id &&
+                                            interaction.hasSnapPreview;
+            if (shouldHideForSnapPreview) {
+                continue;
+            }
 
             bool isSelected = (id == interaction.selectedEdge);
             bool isHovered = (id == interaction.hoveredEdge);
@@ -556,14 +563,14 @@ public:
             }
         }
 
-        // Draw snap point candidates during drag
+        // Draw snap point candidates during drag (use foreground so visible over UI panel)
         if (interaction.draggingSnapPoint.isValid() && snapController_.isDragging()) {
-            DemoRenderer::drawSnapCandidates(drawList, view, snapController_, interaction.snappedCandidateIndex);
+            DemoRenderer::drawSnapCandidates(fgDrawList, view, snapController_, interaction.snappedCandidateIndex);
         }
 
-        // Draw A* path preview during snap point drag
+        // Draw A* path preview during snap point drag (use foreground so visible over UI panel)
         if (interaction.hasSnapPreview && interaction.draggingSnapPoint.isValid()) {
-            DemoRenderer::drawSnapPreviewPath(drawList, view, snapController_);
+            DemoRenderer::drawSnapPreviewPath(fgDrawList, view, snapController_);
         }
     }
 

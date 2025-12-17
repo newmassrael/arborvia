@@ -1,6 +1,7 @@
 #include "DemoRenderer.h"
 #include "DemoColors.h"
 #include "../../src/layout/snap/GridSnapCalculator.h"
+#include <arborvia/common/Logger.h>
 
 // SCXML types for node visualization
 #include "SCXMLGraph.h"
@@ -562,6 +563,7 @@ void DemoRenderer::drawSnapPreviewPath(ImDrawList* drawList, const ViewTransform
     float thickness = Visuals::SNAP_PREVIEW_THICKNESS * view.zoom;
 
     auto points = controller.getPreviewLayout().allPoints();
+
     for (size_t i = 1; i < points.size(); ++i) {
         ImVec2 p1 = view.worldToScreen(points[i-1]);
         ImVec2 p2 = view.worldToScreen(points[i]);
