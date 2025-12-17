@@ -29,6 +29,7 @@
 
 // SCXML test infrastructure
 #include "SCXMLManager.h"
+#include "AsyncOptimizer.h"
 
 using arborvia::test::scxml::TestInfo;
 
@@ -82,12 +83,23 @@ public:
         routingCoordinator_->setListener(this);
         routingCoordinator_->setAsyncMode(true);  // Enable async optimization
         
+        // Initialize async optimizer
+        asyncOptimizer_ = std::make_unique<AsyncOptimizer>(routingCoordinator_);
+        asyncOptimizer_->setGetSnapshotCallback([this]() {
+            return AsyncOptimizer::LayoutSnapshot{edgeLayouts_, nodeLayouts_, layoutOptions_};
+        });
+        asyncOptimizer_->setApplyResultCallback([this](const auto& result) {
+            for (const auto& [id, layout] : result) {
+                edgeLayouts_[id] = layout;
+            }
+        });
+
         // Sync callback (used internally, not for async result delivery)
         routingCoordinator_->setOptimizationCallback(
-            [this](const std::vector<EdgeId>& affectedEdges,
+            [this](const std::vector<EdgeId>& /*affectedEdges*/,
                    const std::unordered_set<NodeId>& movedNodes) {
             // In async mode, this callback triggers async optimization start
-            startAsyncOptimization(affectedEdges, movedNodes);
+            asyncOptimizer_->startOptimization(movedNodes);
         });
 
         setupGraph();
@@ -173,7 +185,7 @@ public:
             LogCapture::instance().clear();
         });
         commandProcessor_->setWaitIdleCallback([this](int timeoutMs) {
-            return waitForOptimizationIdle(timeoutMs);
+            return asyncOptimizer_->waitForIdle(timeoutMs);
         });
 
         // SCXML callbacks
@@ -272,8 +284,8 @@ public:
 
     ~InteractiveDemo() {
         // Ensure all async tasks complete before destroying this
-        if (executor_) {
-            executor_->shutdown();
+        if (asyncOptimizer_) {
+            asyncOptimizer_->shutdown();
         }
     }
 
@@ -633,10 +645,8 @@ private:
     int port_;
 
 
-    // Async optimization state
-    std::queue<std::function<void()>> mainThreadQueue_;
-    std::mutex queueMutex_;
-    std::unique_ptr<ITaskExecutor> executor_ = std::make_unique<JThreadExecutor>();
+    // Async optimizer
+    std::unique_ptr<AsyncOptimizer> asyncOptimizer_;
 
     // SCXML test manager
     std::unique_ptr<SCXMLManager> scxmlManager_;
@@ -690,106 +700,10 @@ public:
 
     // Process async optimization results (call from main loop)
     void processMainThreadQueue() {
-        std::queue<std::function<void()>> toProcess;
-        {
-            std::lock_guard<std::mutex> lock(queueMutex_);
-            std::swap(toProcess, mainThreadQueue_);
-        }
-        while (!toProcess.empty()) {
-            toProcess.front()();
-            toProcess.pop();
+        if (asyncOptimizer_) {
+            asyncOptimizer_->processMainThreadQueue();
         }
     }
-
-private:
-    void postToMainThread(std::function<void()> fn) {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        mainThreadQueue_.push(std::move(fn));
-    }
-
-    /// Wait for optimization to become idle (with timeout)
-    /// @param timeoutMs Timeout in milliseconds
-    /// @return true if idle, false if timeout
-    bool waitForOptimizationIdle(int timeoutMs) {
-        auto startTime = std::chrono::steady_clock::now();
-        while (routingCoordinator_->state() != RoutingState::Idle) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - startTime).count();
-            if (elapsed >= timeoutMs) {
-                return false;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        return true;
-    }
-
-    void startAsyncOptimization(
-        const std::vector<EdgeId>& /*affectedEdges*/,
-        const std::unordered_set<NodeId>& movedNodes)
-    {
-        // Get current generation for this optimization
-        uint64_t gen = routingCoordinator_->currentGeneration();
-
-        // Snapshot current state
-        auto snapshotEdges = edgeLayouts_;
-        auto snapshotNodes = nodeLayouts_;
-        auto options = layoutOptions_;
-
-        // Collect all edges for optimization
-        std::vector<EdgeId> allEdges;
-        allEdges.reserve(snapshotEdges.size());
-        for (const auto& [edgeId, layout] : snapshotEdges) {
-            allEdges.push_back(edgeId);
-        }
-
-        std::cout << "[Async] Starting optimization gen=" << gen
-                  << " edges=" << allEdges.size()
-                  << " movedNodes=" << movedNodes.size() << std::endl;
-
-        // Start async optimization via executor
-        executor_->submit([this, gen, allEdges, snapshotEdges, snapshotNodes, options, movedNodes]() {
-            // Worker thread: run optimization on snapshot
-            auto workingEdges = snapshotEdges;
-
-            LayoutUtils::updateEdgePositions(
-                workingEdges, snapshotNodes, allEdges,
-                options, movedNodes);
-
-            // Post result to main thread
-            postToMainThread([this, gen, workingEdges = std::move(workingEdges)]() {
-                onAsyncOptimizationComplete(workingEdges, gen);
-            });
-        });
-    }
-
-    void onAsyncOptimizationComplete(
-        const std::unordered_map<EdgeId, EdgeLayout>& result,
-        uint64_t generation)
-    {
-        // Check if result is still valid
-        if (!routingCoordinator_->canApplyResult(generation)) {
-            std::cout << "[Async] Result discarded (gen=" << generation 
-                      << ", current=" << routingCoordinator_->currentGeneration() 
-                      << ", state=" << static_cast<int>(routingCoordinator_->state())
-                      << ")" << std::endl;
-            return;
-        }
-        
-        // Apply result
-        std::vector<EdgeId> optimizedEdges;
-        optimizedEdges.reserve(result.size());
-        for (const auto& [id, layout] : result) {
-            edgeLayouts_[id] = layout;
-            optimizedEdges.push_back(id);
-        }
-        
-        // Notify listener (this clears affectedEdges_ via onOptimizationComplete)
-        routingCoordinator_->notifyOptimizationComplete(optimizedEdges);
-        
-        std::cout << "[Async] Result applied (gen=" << generation 
-                  << ", edges=" << result.size() << ")" << std::endl;
-    }
-
 };
 
 int main(int argc, char* argv[]) {

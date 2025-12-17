@@ -213,6 +213,7 @@ if(ARBORVIA_BUILD_EXAMPLES)
         examples/interactive_demo/DemoCommandProcessor.cpp
         examples/interactive_demo/DemoUIPanel.cpp
         examples/interactive_demo/SCXMLManager.cpp
+        examples/interactive_demo/AsyncOptimizer.cpp
         tests/infrastructure/scxml/SCXMLGraph.cpp
         tests/infrastructure/scxml/SCXMLConverter.cpp
         tests/infrastructure/scxml/SCXMLTestLoader.cpp
