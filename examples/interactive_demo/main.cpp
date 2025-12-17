@@ -79,8 +79,9 @@ public:
         , commandServer_(port)
         , port_(port)
     {
-        // Enable grid by default
-        layoutOptions_.gridConfig.cellSize = gridSize_;
+        // Enable grid by default (use state_.renderOptions.gridSize as source of truth)
+        state_.renderOptions.gridSize = 20.0f;
+        layoutOptions_.gridConfig.cellSize = state_.renderOptions.gridSize;
 
         // Configure routing coordinator with async mode
         routingCoordinator_->setDebounceDelay(0);  // Immediate A* after drop (no delay)
@@ -96,7 +97,17 @@ public:
         });
 
         setupGraph();
-        doLayout();
+
+        // Initialize centralized state pointers BEFORE doLayout()
+        // (doLayout sets state_.layoutController and state_.view.screenOffset)
+        state_.graph = &graph_;
+        state_.nodeLayouts = &nodeLayouts_;
+        state_.edgeLayouts = &edgeLayouts_;
+        state_.layoutOptions = &layoutOptions_;
+        state_.routingCoordinator = routingCoordinator_.get();
+        state_.snapController = &snapController_;
+
+        doLayout();  // Sets state_.layoutController and state_.view.screenOffset
 
         // Initialize extracted components
         inputHandler_ = std::make_unique<DemoInputHandler>(manualManager_);
@@ -114,7 +125,7 @@ public:
         });
         inputHandler_->setValidateDragCallback([this](NodeId nodeId, Point proposedPos) -> bool {
             if (!constraintManager_) return true;
-            ConstraintContext ctx{nodeId, proposedPos, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
+            ConstraintContext ctx{nodeId, proposedPos, nodeLayouts_, edgeLayouts_, &graph_, state_.renderOptions.gridSize};
             auto validation = constraintManager_->validate(ctx);
             return validation.valid;
         });
@@ -193,7 +204,7 @@ public:
                 return std::string("ERROR no test loaded");
             }
             std::ostringstream oss;
-            oss << "SCXML_INFO index=" << currentTestIndex_
+            oss << "SCXML_INFO index=" << state_.scxml.currentTestIndex
                 << " id=" << info->id
                 << " file=" << info->file
                 << " desc=" << info->description;
@@ -283,7 +294,7 @@ public:
     void onOptimizationComplete(const std::vector<EdgeId>& optimizedEdges) override {
         std::cout << "Optimization complete: " << optimizedEdges.size() << " edges re-routed" << std::endl;
         // Clear affected edges now that optimization is complete - edges become visible
-        affectedEdges_.clear();
+        state_.interaction.affectedEdges.clear();
     }
 
     void saveLayout(const std::string& path) {
@@ -343,13 +354,13 @@ public:
 
     /// Start node drag operation (called when drag threshold is exceeded)
     void startNodeDrag(NodeId nodeId) {
-        draggedNode_ = nodeId;
-        auto& layout = nodeLayouts_[draggedNode_];
-        affectedEdges_ = graph_.getConnectedEdges(draggedNode_);
+        state_.interaction.draggedNode = nodeId;
+        auto& layout = nodeLayouts_[state_.interaction.draggedNode];
+        state_.interaction.affectedEdges = graph_.getConnectedEdges(state_.interaction.draggedNode);
 
         // Initialize drag constraint state
-        lastValidPosition_ = layout.position;
-        isInvalidDragPosition_ = false;
+        state_.interaction.lastValidPosition = layout.position;
+        state_.interaction.isInvalidDragPosition = false;
 
         // Create constraint manager for drag validation
         LOG_DEBUG("[Demo::startNodeDrag] Creating constraint manager");
@@ -357,8 +368,8 @@ public:
         constraintManager_ = ConstraintFactory::create(defaultConfig);
 
         // Pre-calculate blocked regions for visualization
-        ConstraintContext ctx{draggedNode_, layout.position, nodeLayouts_, edgeLayouts_, &graph_, gridSize_};
-        blockedRegions_ = constraintManager_->getAllBlockedRegions(ctx);
+        ConstraintContext ctx{state_.interaction.draggedNode, layout.position, nodeLayouts_, edgeLayouts_, &graph_, state_.renderOptions.gridSize};
+        state_.blockedRegions = constraintManager_->getAllBlockedRegions(ctx);
 
         // Sync LayoutController state before drag
         if (layoutController_) {
@@ -366,7 +377,7 @@ public:
         }
 
         // Notify coordinator that drag started
-        routingCoordinator_->onDragStart(affectedEdges_);
+        routingCoordinator_->onDragStart(state_.interaction.affectedEdges);
     }
 
     /// End node drag operation (called when mouse is released)
@@ -375,7 +386,7 @@ public:
         routingCoordinator_->onDragEnd({nodeId});
         
         // Clear drag-only resources
-        blockedRegions_.clear();
+        state_.blockedRegions.clear();
         constraintManager_.reset();
     }
 
@@ -398,9 +409,10 @@ public:
         // Initialize LayoutController with current state
         layoutController_ = std::make_unique<LayoutController>(graph_, layoutOptions_);
         layoutController_->initializeFrom(nodeLayouts_, edgeLayouts_);
+        state_.layoutController = layoutController_.get();
 
         // Offset for centering
-        offset_ = {100.0f, 50.0f};
+        state_.view.screenOffset = {100.0f, 50.0f};
     }
 
     // Re-route edges only, preserving current node positions
@@ -432,12 +444,9 @@ public:
 
         // Process input via extracted handler
         ImGuiIO& io = ImGui::GetIO();
-        DemoState state = getDemoState();
-        InputResult result = inputHandler_->processInput(state, io);
+        InputResult result = inputHandler_->processInput(state_, io);
         
-        // Sync back state changes
-        setInteractionState(state.interaction);
-        setViewTransform(state.view);
+        // State changes are applied directly via state_ reference
         
         // Handle requested actions
         switch (result.action) {
@@ -471,8 +480,8 @@ public:
             case PostDragAlgorithm::Geometric: algoName = "Geometric"; break;
         }
         std::cout << "[rerouteAffectedEdges] Processing " << allEdges.size()
-                  << " edges with " << algoName << " (draggedNode=" << draggedNode_ << ")" << std::endl;
-        std::unordered_set<NodeId> movedNodes = {draggedNode_};
+                  << " edges with " << algoName << " (draggedNode=" << state_.interaction.draggedNode << ")" << std::endl;
+        std::unordered_set<NodeId> movedNodes = {state_.interaction.draggedNode};
         LayoutUtils::updateEdgePositions(
             edgeLayouts_, nodeLayouts_, allEdges,
             layoutOptions_, movedNodes);
@@ -480,80 +489,81 @@ public:
 
     void render(ImDrawList* drawList) {
         // Get state for DemoRenderer calls
-        ViewTransform view = getViewTransform();
-        RenderOptions options = getRenderOptions();
+        const ViewTransform& view = state_.view;
+        const RenderOptions& options = state_.renderOptions;
+        const InteractionState& interaction = state_.interaction;
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
 
         // Draw grid background
-        DemoRenderer::drawGrid(drawList, view, io.DisplaySize.x, io.DisplaySize.y, gridSize_);
+        DemoRenderer::drawGrid(drawList, view, io.DisplaySize.x, io.DisplaySize.y, options.gridSize);
 
         // Draw blocked cells (node obstacle areas) - only during active drag
-        if (options.showBlockedCells && draggedNode_ != INVALID_NODE) {
-            DemoRenderer::drawBlockedCells(drawList, view, blockedRegions_, gridSize_);
+        if (options.showBlockedCells && interaction.draggedNode != INVALID_NODE) {
+            DemoRenderer::drawBlockedCells(drawList, view, state_.blockedRegions, options.gridSize);
         }
 
         // Draw A* debug visualization
         if (options.showAStarDebug) {
             updateAStarDebugState();
-            DemoRenderer::drawAStarDebug(drawList, view, getAStarDebugState(), gridSize_);
+            DemoRenderer::drawAStarDebug(drawList, view, state_.astarDebug, options.gridSize);
         }
 
         // Draw edges
         for (const auto& [id, layout] : edgeLayouts_) {
-            bool isAffected = std::find(affectedEdges_.begin(), affectedEdges_.end(), id)
-                             != affectedEdges_.end();
+            bool isAffected = std::find(interaction.affectedEdges.begin(), interaction.affectedEdges.end(), id)
+                             != interaction.affectedEdges.end();
 
             // Skip logic for edge visibility
-            if (isAffected && isInvalidDragPosition_) continue;
+            if (isAffected && interaction.isInvalidDragPosition) continue;
             if (isAffected && layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop) continue;
-            if (draggingSnapPoint_.isValid() && draggingSnapPoint_.edgeId == id && hasSnapPreview_) continue;
+            if (interaction.draggingSnapPoint.isValid() && interaction.draggingSnapPoint.edgeId == id && interaction.hasSnapPreview) continue;
 
-            bool isSelected = (id == selectedEdge_);
-            bool isHovered = (id == hoveredEdge_);
+            bool isSelected = (id == interaction.selectedEdge);
+            bool isHovered = (id == interaction.hoveredEdge);
             const EdgeData* edgeData = &graph_.getEdge(id);
 
             DemoRenderer::drawEdge(drawList, view, layout, edgeData, isSelected, isHovered, isAffected);
         }
 
         // Draw bend point insertion preview
-        DemoRenderer::drawBendPointPreview(drawList, view, bendPointPreview_);
+        DemoRenderer::drawBendPointPreview(drawList, view, interaction.bendPointPreview);
 
         // Draw nodes
         for (const auto& [id, layout] : nodeLayouts_) {
-            bool isSelected = (id == selectedNode_);
-            bool isHovered = (id == hoveredNode_);
-            bool isDragged = (id == draggedNode_);
+            bool isSelected = (id == interaction.selectedNode);
+            bool isHovered = (id == interaction.hoveredNode);
+            bool isDragged = (id == interaction.draggedNode);
             const NodeData* nodeData = &graph_.getNode(id);
-            test::scxml::SCXMLGraph* scxmlGraph = scxmlModeActive_ ? scxmlGraph_.get() : nullptr;
+            test::scxml::SCXMLGraph* scxmlGraph = state_.scxml.modeActive ? scxmlGraph_.get() : nullptr;
 
             DemoRenderer::drawNode(drawList, view, id, layout, nodeData,
-                                   isSelected, isHovered, isDragged, isInvalidDragPosition_,
+                                   isSelected, isHovered, isDragged, interaction.isInvalidDragPosition,
                                    scxmlGraph);
 
             // Draw snap points per node
-            if (showSnapPoints_) {
+            if (options.showSnapPoints) {
                 // Hide snap points for affected edges:
                 // 1. In HideUntilDrop mode (edges hidden during drag)
                 // 2. When in invalid drag position (edges hidden to indicate error)
                 const std::vector<EdgeId>& hiddenEdges =
                     (layoutOptions_.optimizationOptions.dragAlgorithm == DragAlgorithm::HideUntilDrop ||
-                     isInvalidDragPosition_)
-                    ? affectedEdges_ : std::vector<EdgeId>{};
+                     interaction.isInvalidDragPosition)
+                    ? interaction.affectedEdges : std::vector<EdgeId>{};
                 DemoRenderer::drawSnapPoints(drawList, fgDrawList, view, layout,
                                             edgeLayouts_, nodeLayouts_, options,
-                                            hoveredSnapPoint_, draggingSnapPoint_,
+                                            interaction.hoveredSnapPoint, interaction.draggingSnapPoint,
                                             hiddenEdges);
             }
         }
 
         // Draw snap point candidates during drag
-        if (draggingSnapPoint_.isValid() && snapController_.isDragging()) {
-            DemoRenderer::drawSnapCandidates(drawList, view, snapController_, snappedCandidateIndex_);
+        if (interaction.draggingSnapPoint.isValid() && snapController_.isDragging()) {
+            DemoRenderer::drawSnapCandidates(drawList, view, snapController_, interaction.snappedCandidateIndex);
         }
 
         // Draw A* path preview during snap point drag
-        if (hasSnapPreview_ && draggingSnapPoint_.isValid()) {
+        if (interaction.hasSnapPreview && interaction.draggingSnapPoint.isValid()) {
             DemoRenderer::drawSnapPreviewPath(drawList, view, snapController_);
         }
     }
@@ -564,17 +574,15 @@ public:
             uiPanel_->setSCXMLLoader(scxmlLoader_.get());
         }
 
-        DemoState state = getDemoState();
-        [[maybe_unused]] UIResult result = uiPanel_->render(state);
+        // UI modifies state_ directly through reference
+        [[maybe_unused]] UIResult result = uiPanel_->render(state_);
 
-        // Sync back state changes from UI
-        setViewTransform(state.view);
-        setRenderOptions(state.renderOptions);
+        // State changes are applied directly via state_ reference
 
         // Handle A* debug state update when checkbox changes
-        if (state.renderOptions.showAStarDebug != showAStarDebug_) {
-            showAStarDebug_ = state.renderOptions.showAStarDebug;
-            if (showAStarDebug_) {
+        if (state_.renderOptions.showAStarDebug != prevShowAStarDebug_) {
+            prevShowAStarDebug_ = state_.renderOptions.showAStarDebug;
+            if (state_.renderOptions.showAStarDebug) {
                 updateAStarDebugState();
             }
         }
@@ -595,251 +603,43 @@ private:
     std::unique_ptr<DemoCommandProcessor> commandProcessor_;
     std::unique_ptr<DemoUIPanel> uiPanel_;
 
-    Point offset_ = {0, 0};
-    float gridSize_ = 20.0f;  // Grid cell size (0 = disabled)
-
-    // Pan/Zoom state
-    Point panOffset_ = {0, 0};  // Pan offset in world coordinates
-    float zoom_ = 1.0f;         // Zoom level (1.0 = 100%)
-    bool isPanning_ = false;           // Currently panning
-    bool emptyAreaPanStarted_ = false; // Left-click started on empty area (potential pan)
-
-    // Coordinate transformation helpers
-    ImVec2 worldToScreen(const Point& world) const {
-        return {
-            (world.x + panOffset_.x) * zoom_ + offset_.x,
-            (world.y + panOffset_.y) * zoom_ + offset_.y
-        };
-    }
-
-    Point screenToWorld(const ImVec2& screen) const {
-        return {
-            (screen.x - offset_.x) / zoom_ - panOffset_.x,
-            (screen.y - offset_.y) / zoom_ - panOffset_.y
-        };
-    }
-
-    float worldToScreenScale(float worldSize) const {
-        return worldSize * zoom_;
-    }
-
-    /// Get current view transform for DemoRenderer calls
-    ViewTransform getViewTransform() const {
-        ViewTransform vt;
-        vt.panOffset = panOffset_;
-        vt.zoom = zoom_;
-        vt.screenOffset = offset_;
-        return vt;
-    }
-
-    /// Get render options for DemoRenderer calls
-    RenderOptions getRenderOptions() const {
-        RenderOptions opts;
-        opts.showSnapPoints = showSnapPoints_;
-        opts.showSnapIndices = showSnapIndices_;
-        opts.showBlockedCells = showBlockedCells_;
-        opts.showAStarDebug = showAStarDebug_;
-        opts.gridSize = gridSize_;
-        return opts;
-    }
-
-    /// Get A* debug state for DemoRenderer calls
-    AStarDebugState getAStarDebugState() const {
-        AStarDebugState debug;
-        debug.debugEdgeId = debugEdgeId_;
-        debug.obstacles = debugObstacles_;
-        debug.start = astarStart_;
-        debug.goal = astarGoal_;
-        return debug;
-    }
+    // Centralized state (single source of truth)
+    DemoState state_;
 
     /// Update A* debug state (obstacle map, start/goal points)
     void updateAStarDebugState() {
         // Rebuild obstacle map every frame to reflect current state
-        debugObstacles_ = std::make_shared<ObstacleMap>();
-        debugObstacles_->buildFromNodes(nodeLayouts_, gridSize_);
-        debugObstacles_->addEdgeSegments(edgeLayouts_, debugEdgeId_);
+        state_.astarDebug.obstacles = std::make_shared<ObstacleMap>();
+        state_.astarDebug.obstacles->buildFromNodes(nodeLayouts_, state_.renderOptions.gridSize);
+        state_.astarDebug.obstacles->addEdgeSegments(edgeLayouts_, state_.astarDebug.debugEdgeId);
 
         // Update start/goal from selected or debug edge
-        EdgeId targetEdge = (debugEdgeId_ != INVALID_EDGE) ? debugEdgeId_ : selectedEdge_;
+        EdgeId targetEdge = (state_.astarDebug.debugEdgeId != INVALID_EDGE) 
+            ? state_.astarDebug.debugEdgeId 
+            : state_.interaction.selectedEdge;
         if (targetEdge != INVALID_EDGE) {
             auto it = edgeLayouts_.find(targetEdge);
             if (it != edgeLayouts_.end()) {
-                astarStart_ = it->second.sourcePoint;
-                astarGoal_ = it->second.targetPoint;
+                state_.astarDebug.start = it->second.sourcePoint;
+                state_.astarDebug.goal = it->second.targetPoint;
             }
         }
     }
 
     /// Get DemoState for passing to extracted components (DemoInputHandler, etc.)
-    /// Note: This creates a view into InteractiveDemo's state, not a copy.
-    DemoState getDemoState() {
-        DemoState state;
-        
-        // Core data (non-owning pointers)
-        state.graph = &graph_;
-        state.nodeLayouts = &nodeLayouts_;
-        state.edgeLayouts = &edgeLayouts_;
-        state.layoutOptions = &layoutOptions_;
-        
-        // Controllers (non-owning pointers)
-        state.layoutController = layoutController_.get();
-        state.routingCoordinator = routingCoordinator_.get();
-        state.snapController = &snapController_;
-        
-        // View transform
-        state.view.panOffset = panOffset_;
-        state.view.zoom = zoom_;
-        state.view.screenOffset = offset_;
-        
-        // Interaction state
-        state.interaction.selectedNode = selectedNode_;
-        state.interaction.selectedEdge = selectedEdge_;
-        state.interaction.selectedBendPoint = selectedBendPoint_;
-        state.interaction.hoveredNode = hoveredNode_;
-        state.interaction.hoveredEdge = hoveredEdge_;
-        state.interaction.hoveredBendPoint = hoveredBendPoint_;
-        state.interaction.hoveredSnapPoint = hoveredSnapPoint_;
-        state.interaction.draggedNode = draggedNode_;
-        state.interaction.dragOffset = dragOffset_;
-        state.interaction.affectedEdges = affectedEdges_;
-        state.interaction.isInvalidDragPosition = isInvalidDragPosition_;
-        state.interaction.lastValidPosition = lastValidPosition_;
-        state.interaction.lastRoutedPosition = lastRoutedPosition_;
-        state.interaction.pendingNodeDrag = pendingNodeDrag_;
-        state.interaction.nodeClickStart = nodeClickStart_;
-        state.interaction.draggingBendPoint = draggingBendPoint_;
-        state.interaction.bendPointDragOffset = bendPointDragOffset_;
-        state.interaction.bendPointPreview = bendPointPreview_;
-        state.interaction.draggingSnapPoint = draggingSnapPoint_;
-        state.interaction.snapPointDragOffset = snapPointDragOffset_;
-        state.interaction.snapPointDragStart = snapPointDragStart_;
-        state.interaction.snappedCandidateIndex = snappedCandidateIndex_;
-        state.interaction.hasSnapPreview = hasSnapPreview_;
-        state.interaction.isPanning = isPanning_;
-        state.interaction.emptyAreaPanStarted = emptyAreaPanStarted_;
-        
-        // Render options
-        state.renderOptions.showSnapPoints = showSnapPoints_;
-        state.renderOptions.showSnapIndices = showSnapIndices_;
-        state.renderOptions.showBlockedCells = showBlockedCells_;
-        state.renderOptions.showAStarDebug = showAStarDebug_;
-        state.renderOptions.gridSize = gridSize_;
-        
-        // A* debug state
-        state.astarDebug.debugEdgeId = debugEdgeId_;
-        state.astarDebug.obstacles = debugObstacles_;
-        state.astarDebug.start = astarStart_;
-        state.astarDebug.goal = astarGoal_;
-        
-        // Blocked regions
-        state.blockedRegions = blockedRegions_;
-
-        // SCXML state
-        state.scxml.modeActive = scxmlModeActive_;
-        state.scxml.currentTestIndex = currentTestIndex_;
-        
-        return state;
+    /// Returns reference to internal state_ (single source of truth).
+    DemoState& getDemoState() {
+        return state_;
     }
-
-    /// Update interaction state from external source (for extracted components)
-    void setInteractionState(const InteractionState& state) {
-        selectedNode_ = state.selectedNode;
-        selectedEdge_ = state.selectedEdge;
-        selectedBendPoint_ = state.selectedBendPoint;
-        hoveredNode_ = state.hoveredNode;
-        hoveredEdge_ = state.hoveredEdge;
-        hoveredBendPoint_ = state.hoveredBendPoint;
-        hoveredSnapPoint_ = state.hoveredSnapPoint;
-        draggedNode_ = state.draggedNode;
-        dragOffset_ = state.dragOffset;
-        // affectedEdges_ sync rules:
-        // - For node drag: set by startNodeDrag() callback, cleared by onOptimizationComplete()
-        // - For snap point drag: sync from state when drag ends (detected by draggingSnapPoint transition)
-        if (draggingSnapPoint_.isValid() && !state.draggingSnapPoint.isValid()) {
-            // Snap point drag just ended - sync affectedEdges for optimization
-            affectedEdges_ = state.affectedEdges;
-        }
-        isInvalidDragPosition_ = state.isInvalidDragPosition;
-        lastValidPosition_ = state.lastValidPosition;
-        lastRoutedPosition_ = state.lastRoutedPosition;
-        pendingNodeDrag_ = state.pendingNodeDrag;
-        nodeClickStart_ = state.nodeClickStart;
-        draggingBendPoint_ = state.draggingBendPoint;
-        bendPointDragOffset_ = state.bendPointDragOffset;
-        bendPointPreview_ = state.bendPointPreview;
-        draggingSnapPoint_ = state.draggingSnapPoint;
-        snapPointDragOffset_ = state.snapPointDragOffset;
-        snapPointDragStart_ = state.snapPointDragStart;
-        snappedCandidateIndex_ = state.snappedCandidateIndex;
-        hasSnapPreview_ = state.hasSnapPreview;
-        isPanning_ = state.isPanning;
-        emptyAreaPanStarted_ = state.emptyAreaPanStarted;
-    }
-
-    /// Update view transform from external source
-    void setViewTransform(const ViewTransform& view) {
-        panOffset_ = view.panOffset;
-        zoom_ = view.zoom;
-        offset_ = view.screenOffset;
-    }
-
-    /// Update render options from external source
-    void setRenderOptions(const RenderOptions& opts) {
-        showSnapPoints_ = opts.showSnapPoints;
-        showSnapIndices_ = opts.showSnapIndices;
-        showBlockedCells_ = opts.showBlockedCells;
-        showAStarDebug_ = opts.showAStarDebug;
-        // Note: gridSize_ is not updated from RenderOptions as it's a layout parameter
-    }
-
-    NodeId hoveredNode_ = INVALID_NODE;
-    NodeId draggedNode_ = INVALID_NODE;
-    NodeId selectedNode_ = INVALID_NODE;
-    EdgeId hoveredEdge_ = INVALID_EDGE;
-    EdgeId selectedEdge_ = INVALID_EDGE;
-    Point dragOffset_ = {0, 0};
-    std::vector<EdgeId> affectedEdges_;
-    bool showSnapPoints_ = true;
-    bool showSnapIndices_ = true;
-    bool showBlockedCells_ = true;  // Show node obstacle areas in red
-
-    // Drag threshold detection (distinguish click from drag)
-    static constexpr float DRAG_THRESHOLD = 5.0f;  // Pixels before drag starts
-    bool pendingNodeDrag_ = false;                 // Clicked but not yet dragging
-    Point nodeClickStart_ = {0, 0};               // Screen position at click
-
-    // Drag constraint state
-    bool isInvalidDragPosition_ = false;      // Current drag position is invalid
-    Point lastValidPosition_ = {0, 0};        // Last known valid position during drag
-    Point lastRoutedPosition_ = {-9999, -9999};  // Last position where edges were routed
-    std::unique_ptr<IConstraintValidator> constraintManager_;  // Constraint validator for drag validation
-    std::vector<Rect> blockedRegions_;  // Pre-calculated blocked regions for visualization
-
-    // Bend point interaction state
-    HoveredBendPoint hoveredBendPoint_;
-    HoveredBendPoint selectedBendPoint_;
-    HoveredBendPoint draggingBendPoint_;
-    Point bendPointDragOffset_ = {0, 0};
-    BendPointPreview bendPointPreview_;
-
-    // Snap point interaction state
-    HoveredSnapPoint hoveredSnapPoint_;
-    HoveredSnapPoint draggingSnapPoint_;
-    Point snapPointDragOffset_ = {0, 0};
-    Point snapPointDragStart_ = {0, 0};  // Original snap point position at drag start
 
     // Snap point controller (handles drag preview, swap, etc.)
     SnapPointController snapController_;
-    int snappedCandidateIndex_ = -1;                  // Currently snapped candidate (cached for rendering)
-    bool hasSnapPreview_ = false;                      // Whether preview is valid
 
-    // A* debug visualization state
-    bool showAStarDebug_ = false;               // 'A' key toggles
-    EdgeId debugEdgeId_ = INVALID_EDGE;         // Edge to debug (-1 = selected edge)
-    std::shared_ptr<ObstacleMap> debugObstacles_;  // Current obstacle map for visualization
-    Point astarStart_ = {-1, -1};               // A* start point
-    Point astarGoal_ = {-1, -1};                // A* goal point
+    // Constraint validator for drag validation (created on drag start, cleared on drag end)
+    std::unique_ptr<IConstraintValidator> constraintManager_;
+
+    // A* debug state change tracking
+    bool prevShowAStarDebug_ = false;
 
     // External command server
     CommandServer commandServer_;
@@ -854,8 +654,6 @@ private:
     // SCXML test visualization state
     std::unique_ptr<SCXMLTestLoader> scxmlLoader_;
     std::unique_ptr<SCXMLGraph> scxmlGraph_;
-    int currentTestIndex_ = -1;
-    bool scxmlModeActive_ = false;
     std::string scxmlBasePath_;
 
 public:
@@ -869,12 +667,8 @@ public:
         while (commandServer_.hasCommand()) {
             Command cmd = commandServer_.popCommand();
             
-            // Create state view and process via commandProcessor_
-            DemoState state = getDemoState();
-            if (commandProcessor_->processCommand(cmd, state)) {
-                // Sync back interaction state changes
-                setInteractionState(state.interaction);
-            }
+            // Process command - state changes are applied directly via state_ reference
+            commandProcessor_->processCommand(cmd, state_);
         }
     }
 
@@ -912,8 +706,8 @@ public:
 
         // Replace the current graph with SCXMLGraph
         scxmlGraph_ = std::move(newGraph);
-        currentTestIndex_ = static_cast<int>(index);
-        scxmlModeActive_ = true;
+        state_.scxml.currentTestIndex = static_cast<int>(index);
+        state_.scxml.modeActive = true;
 
         // Copy to main graph_ and do layout
         graph_ = *scxmlGraph_;
@@ -925,34 +719,34 @@ public:
 
     void nextTest() {
         if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
-        size_t next = (currentTestIndex_ < 0) ? 0 :
-                      static_cast<size_t>((currentTestIndex_ + 1) % static_cast<int>(scxmlLoader_->getTestCount()));
+        size_t next = (state_.scxml.currentTestIndex < 0) ? 0 :
+                      static_cast<size_t>((state_.scxml.currentTestIndex + 1) % static_cast<int>(scxmlLoader_->getTestCount()));
         loadSCXMLTest(next);
     }
 
     void prevTest() {
         if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
-        size_t prev = (currentTestIndex_ <= 0) ?
+        size_t prev = (state_.scxml.currentTestIndex <= 0) ?
                       scxmlLoader_->getTestCount() - 1 :
-                      static_cast<size_t>(currentTestIndex_ - 1);
+                      static_cast<size_t>(state_.scxml.currentTestIndex - 1);
         loadSCXMLTest(prev);
     }
 
     void exitSCXMLMode() {
-        scxmlModeActive_ = false;
+        state_.scxml.modeActive = false;
         scxmlGraph_.reset();
-        currentTestIndex_ = -1;
+        state_.scxml.currentTestIndex = -1;
         // Restore default graph
         graph_ = Graph();
         setupGraph();
         doLayout();
     }
 
-    bool isSCXMLModeActive() const { return scxmlModeActive_; }
+    bool isSCXMLModeActive() const { return state_.scxml.modeActive; }
     size_t getSCXMLTestCount() const { return scxmlLoader_ ? scxmlLoader_->getTestCount() : 0; }
     const TestInfo* getCurrentTestInfo() const {
-        if (!scxmlLoader_ || currentTestIndex_ < 0) return nullptr;
-        return scxmlLoader_->getTest(static_cast<size_t>(currentTestIndex_));
+        if (!scxmlLoader_ || state_.scxml.currentTestIndex < 0) return nullptr;
+        return scxmlLoader_->getTest(static_cast<size_t>(state_.scxml.currentTestIndex));
     }
 
     // Process async optimization results (call from main loop)
