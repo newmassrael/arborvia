@@ -110,8 +110,10 @@ struct InteractionState {
     bool hasSnapPreview = false;
 
     // Pan state
+    // isPanning: true when any pan operation is active (middle mouse OR left-click drag on empty area)
+    // leftClickPanPending: true when left-click on empty area started (may become pan if dragged)
     bool isPanning = false;
-    bool emptyAreaPanStarted = false;
+    bool leftClickPanPending = false;
 };
 
 /// Rendering options

@@ -32,7 +32,9 @@ InputResult DemoInputHandler::processInput(DemoState& state, const ImGuiIO& io) 
     handlePan(state, io);
 
     // Skip other graph interaction if ImGui wants mouse or middle-mouse panning
-    if (io.WantCaptureMouse || (state.interaction.isPanning && !state.interaction.emptyAreaPanStarted)) {
+    // (left-click pan still allows hover updates for better UX)
+    bool isMiddleMousePanning = state.interaction.isPanning && !state.interaction.leftClickPanPending;
+    if (io.WantCaptureMouse || isMiddleMousePanning) {
         return result;
     }
 
@@ -88,7 +90,9 @@ void DemoInputHandler::handlePan(DemoState& state, const ImGuiIO& io) {
         state.view.panOffset.x += io.MouseDelta.x / state.view.zoom;
         state.view.panOffset.y += io.MouseDelta.y / state.view.zoom;
         state.interaction.isPanning = true;
-    } else if (!state.interaction.emptyAreaPanStarted) {
+    } else if (!state.interaction.leftClickPanPending) {
+        // Only clear isPanning if no left-click pan is pending
+        // (prevents clearing during left-click pan operation)
         state.interaction.isPanning = false;
     }
 }
@@ -306,12 +310,12 @@ void DemoInputHandler::handleClicks(DemoState& state, const ImGuiIO& io, const P
         return;
     }
 
-    // Empty area click - start potential pan
+    // Empty area click - start potential pan (will become actual pan if dragged)
     if (interaction.hoveredNode == INVALID_NODE &&
         interaction.hoveredEdge == INVALID_EDGE &&
         !interaction.hoveredBendPoint.isValid() &&
         !interaction.hoveredSnapPoint.isValid()) {
-        interaction.emptyAreaPanStarted = true;
+        interaction.leftClickPanPending = true;
     }
 }
 
@@ -338,7 +342,7 @@ void DemoInputHandler::handleDragThreshold(DemoState& state, const ImGuiIO& io) 
 void DemoInputHandler::handleEmptyAreaPan(DemoState& state, const ImGuiIO& io) {
     auto& interaction = state.interaction;
 
-    if (interaction.emptyAreaPanStarted && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    if (interaction.leftClickPanPending && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         state.view.panOffset.x += io.MouseDelta.x / state.view.zoom;
         state.view.panOffset.y += io.MouseDelta.y / state.view.zoom;
         interaction.isPanning = true;
@@ -410,16 +414,21 @@ void DemoInputHandler::handleMouseRelease(DemoState& state, [[maybe_unused]] con
         }
         interaction.isInvalidDragPosition = false;
         interaction.lastRoutedPosition = {-9999, -9999};
+    }
 
-        // Handle empty area pan release
-        if (interaction.emptyAreaPanStarted) {
-            if (!interaction.isPanning) {
-                // Was just a click - deselect everything
-                interaction.selectedNode = INVALID_NODE;
-                interaction.selectedEdge = INVALID_EDGE;
-                interaction.selectedBendPoint.clear();
-            }
-            interaction.emptyAreaPanStarted = false;
+    // Handle left-click pan release (must be outside draggedNode block!)
+    if (interaction.leftClickPanPending) {
+        if (!interaction.isPanning) {
+            // Was just a click (no drag) - deselect everything
+            interaction.selectedNode = INVALID_NODE;
+            interaction.selectedEdge = INVALID_EDGE;
+            interaction.selectedBendPoint.clear();
+        }
+        interaction.leftClickPanPending = false;
+        
+        // Only clear isPanning if middle mouse is not still dragging
+        // (prevents 1-frame glitch when both mouse buttons are used)
+        if (!ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
             interaction.isPanning = false;
         }
     }
