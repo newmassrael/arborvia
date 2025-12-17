@@ -28,15 +28,9 @@
 #include <arborvia/core/TaskExecutor.h>
 
 // SCXML test infrastructure
-#include "SCXMLTestLoader.h"
-#include "SCXMLGraph.h"
-#include "SCXMLTypes.h"
+#include "SCXMLManager.h"
 
-using arborvia::test::scxml::SCXMLTestLoader;
-using arborvia::test::scxml::SCXMLGraph;
-using arborvia::test::scxml::SCXMLNodeType;
 using arborvia::test::scxml::TestInfo;
-using arborvia::test::scxml::ConvertOptions;
 
 #include <unordered_map>
 #include <unordered_set>
@@ -211,6 +205,19 @@ public:
             return oss.str();
         });
 
+        // Initialize SCXML manager (before UI panel callbacks that use it)
+        scxmlManager_ = std::make_unique<SCXMLManager>(state_.scxml);
+        scxmlManager_->setOnTestLoadedCallback([this](Graph& graph) {
+            graph_ = graph;
+            manualManager_->clearManualState();
+            doLayout();
+        });
+        scxmlManager_->setOnModeExitCallback([this]() {
+            graph_ = Graph();
+            setupGraph();
+            doLayout();
+        });
+
         // Initialize UI panel
         uiPanel_ = std::make_unique<DemoUIPanel>(manualManager_);
         uiPanel_->setDoLayoutCallback([this]() { doLayout(); });
@@ -236,10 +243,7 @@ public:
                 // Update graph label when converting Point → Regular
                 if (newType == NodeType::Regular) {
                     // Use SCXML ID if available, otherwise use node ID
-                    std::string label;
-                    if (scxmlGraph_) {
-                        label = scxmlGraph_->getScxmlId(nodeId);
-                    }
+                    std::string label = scxmlManager_ ? scxmlManager_->getScxmlId(nodeId) : "";
                     if (label.empty()) {
                         label = "Node " + std::to_string(static_cast<int>(nodeId));
                     }
@@ -257,29 +261,12 @@ public:
         
         // Check if a node can be converted to Point (only Final allowed)
         uiPanel_->setCanConvertToPointCallback([this](NodeId nodeId) -> bool {
-            if (!scxmlGraph_) {
-                return false;  // Non-SCXML graphs: no point conversion allowed
-            }
-            
-            auto nodeType = scxmlGraph_->getNodeType(nodeId);
-            using SCXMLNodeType = test::scxml::SCXMLNodeType;
-            
-            // Only Final can toggle between Point and Regular
-            return nodeType == SCXMLNodeType::Final;
+            return scxmlManager_->canConvertToPoint(nodeId);
         });
-        
+
         // Check if a node can be converted to Regular (only Final allowed)
         uiPanel_->setCanConvertToRegularCallback([this](NodeId nodeId) -> bool {
-            if (!scxmlGraph_) {
-                return true;  // Non-SCXML graphs: allow conversion
-            }
-            
-            auto nodeType = scxmlGraph_->getNodeType(nodeId);
-            using SCXMLNodeType = test::scxml::SCXMLNodeType;
-            
-            // Only Final can toggle between Point and Regular
-            // Initial/History must remain as Point
-            return nodeType == SCXMLNodeType::Final;
+            return scxmlManager_->canConvertToRegular(nodeId);
         });
     }
 
@@ -535,7 +522,7 @@ public:
             bool isHovered = (id == interaction.hoveredNode);
             bool isDragged = (id == interaction.draggedNode);
             const NodeData* nodeData = &graph_.getNode(id);
-            test::scxml::SCXMLGraph* scxmlGraph = state_.scxml.modeActive ? scxmlGraph_.get() : nullptr;
+            test::scxml::SCXMLGraph* scxmlGraph = state_.scxml.modeActive && scxmlManager_ ? scxmlManager_->getCurrentGraph() : nullptr;
 
             DemoRenderer::drawNode(drawList, view, id, layout, nodeData,
                                    isSelected, isHovered, isDragged, interaction.isInvalidDragPosition,
@@ -570,8 +557,8 @@ public:
 
     void renderUI() {
         // Set SCXML loader on first call (after initSCXML may have been called)
-        if (scxmlLoader_ && uiPanel_) {
-            uiPanel_->setSCXMLLoader(scxmlLoader_.get());
+        if (scxmlManager_ && scxmlManager_->getLoader() && uiPanel_) {
+            uiPanel_->setSCXMLLoader(scxmlManager_->getLoader());
         }
 
         // UI modifies state_ directly through reference
@@ -651,10 +638,8 @@ private:
     std::mutex queueMutex_;
     std::unique_ptr<ITaskExecutor> executor_ = std::make_unique<JThreadExecutor>();
 
-    // SCXML test visualization state
-    std::unique_ptr<SCXMLTestLoader> scxmlLoader_;
-    std::unique_ptr<SCXMLGraph> scxmlGraph_;
-    std::string scxmlBasePath_;
+    // SCXML test manager
+    std::unique_ptr<SCXMLManager> scxmlManager_;
 
 public:
     // Start command server
@@ -677,76 +662,30 @@ public:
     bool shouldQuit() const { return commandProcessor_->shouldQuit(); }
     int port() const { return port_; }
 
-    // SCXML test visualization methods
+    // SCXML wrapper methods (delegate to SCXMLManager)
     bool initSCXML(const std::string& basePath) {
-        scxmlBasePath_ = basePath;
-        scxmlLoader_ = std::make_unique<SCXMLTestLoader>(basePath);
-        if (!scxmlLoader_->loadIndex()) {
-            std::cerr << "Failed to load SCXML test index from " << basePath << std::endl;
-            scxmlLoader_.reset();
-            return false;
-        }
-        std::cout << "Loaded " << scxmlLoader_->getTestCount() << " SCXML tests from " << basePath << std::endl;
-        return true;
+        return scxmlManager_ && scxmlManager_->init(basePath);
     }
-
     bool loadSCXMLTest(size_t index) {
-        if (!scxmlLoader_ || index >= scxmlLoader_->getTestCount()) {
-            return false;
-        }
-
-        auto newGraph = scxmlLoader_->loadGraph(index);
-        if (!newGraph) {
-            std::cerr << "Failed to load SCXML test " << index << std::endl;
-            return false;
-        }
-
-        const auto* testInfo = scxmlLoader_->getTest(index);
-        std::cout << "Loading SCXML test " << testInfo->id << ": " << testInfo->file << std::endl;
-
-        // Replace the current graph with SCXMLGraph
-        scxmlGraph_ = std::move(newGraph);
-        state_.scxml.currentTestIndex = static_cast<int>(index);
-        state_.scxml.modeActive = true;
-
-        // Copy to main graph_ and do layout
-        graph_ = *scxmlGraph_;
-        manualManager_->clearManualState();
-        doLayout();
-
-        return true;
+        return scxmlManager_ && scxmlManager_->loadTest(index);
     }
-
     void nextTest() {
-        if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
-        size_t next = (state_.scxml.currentTestIndex < 0) ? 0 :
-                      static_cast<size_t>((state_.scxml.currentTestIndex + 1) % static_cast<int>(scxmlLoader_->getTestCount()));
-        loadSCXMLTest(next);
+        if (scxmlManager_) scxmlManager_->nextTest();
     }
-
     void prevTest() {
-        if (!scxmlLoader_ || scxmlLoader_->getTestCount() == 0) return;
-        size_t prev = (state_.scxml.currentTestIndex <= 0) ?
-                      scxmlLoader_->getTestCount() - 1 :
-                      static_cast<size_t>(state_.scxml.currentTestIndex - 1);
-        loadSCXMLTest(prev);
+        if (scxmlManager_) scxmlManager_->prevTest();
     }
-
     void exitSCXMLMode() {
-        state_.scxml.modeActive = false;
-        scxmlGraph_.reset();
-        state_.scxml.currentTestIndex = -1;
-        // Restore default graph
-        graph_ = Graph();
-        setupGraph();
-        doLayout();
+        if (scxmlManager_) scxmlManager_->exitMode();
     }
-
-    bool isSCXMLModeActive() const { return state_.scxml.modeActive; }
-    size_t getSCXMLTestCount() const { return scxmlLoader_ ? scxmlLoader_->getTestCount() : 0; }
+    bool isSCXMLModeActive() const {
+        return scxmlManager_ && scxmlManager_->isModeActive();
+    }
+    size_t getSCXMLTestCount() const {
+        return scxmlManager_ ? scxmlManager_->getTestCount() : 0;
+    }
     const TestInfo* getCurrentTestInfo() const {
-        if (!scxmlLoader_ || state_.scxml.currentTestIndex < 0) return nullptr;
-        return scxmlLoader_->getTest(static_cast<size_t>(state_.scxml.currentTestIndex));
+        return scxmlManager_ ? scxmlManager_->getCurrentTestInfo() : nullptr;
     }
 
     // Process async optimization results (call from main loop)
