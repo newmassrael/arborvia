@@ -2215,8 +2215,9 @@ TEST(EdgeRoutingTransitionTest, SegmentDirection_MaintainedAfterDrag) {
     EdgeId e6 = graph.addEdge(error, idle, "reset");
 
     LayoutOptions options;
-    options.defaultNodeSize = {200.0f, 100.0f};
-    options.setNodeSpacing(100.0f, 100.0f);
+    options.defaultNodeWidthGrids = 10;   // 10 * 20 = 200
+    options.defaultNodeHeightGrids = 5;   // 5 * 20 = 100
+    options.setNodeSpacingGrids(5, 5);
     options.setGridCellSize(20.0f);
 
     SugiyamaLayout layout(options);
@@ -4465,7 +4466,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_StartAndPause_NoOverlap) {
     SugiyamaLayout layoutAlgo;
     LayoutOptions options;
     options.setGridCellSize(20.0f);
-    options.setNodeSpacing(100.0f, 100.0f);
+    options.setNodeSpacingGrids(5, 5);
     layoutAlgo.setOptions(options);
     
     LayoutResult result = layoutAlgo.layout(graph);
@@ -4571,7 +4572,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_ResetAndPause_NoOverlap) {
     SugiyamaLayout layoutAlgo;
     LayoutOptions options;
     options.setGridCellSize(20.0f);
-    options.setNodeSpacing(100.0f, 100.0f);
+    options.setNodeSpacingGrids(5, 5);
     layoutAlgo.setOptions(options);
     
     LayoutResult result = layoutAlgo.layout(graph);
@@ -4667,7 +4668,7 @@ TEST(EdgeRoutingTransitionTest, RandomDrag_NoEdgeOverlaps) {
     SugiyamaLayout layoutAlgo;
     LayoutOptions options;
     options.setGridCellSize(20.0f);
-    options.setNodeSpacing(100.0f, 100.0f);
+    options.setNodeSpacingGrids(5, 5);
     layoutAlgo.setOptions(options);
     
     LayoutResult result = layoutAlgo.layout(graph);

@@ -23,20 +23,24 @@ enum class SelfLoopDirection {
     Auto     // Automatically choose best direction
 };
 
-/// Configuration for self-loop routing
+/// Configuration for self-loop routing (grid-based)
 struct SelfLoopConfig {
     SelfLoopDirection preferredDirection = SelfLoopDirection::Auto;
-    float loopOffset = 20.0f;       // Distance from node edge
-    float stackSpacing = 15.0f;     // Spacing between multiple self-loops
+    int loopOffsetGrids = 1;       // Distance from node edge (grid units)
+    int stackSpacingGrids = 1;     // Spacing between multiple self-loops (grid units)
 };
 
-/// Configuration for channel-based edge routing
+/// Configuration for channel-based edge routing (grid-based)
 struct ChannelRoutingOptions {
-    float channelSpacing = 15.0f;     // Spacing between parallel channels
-    float channelOffset = 25.0f;      // Minimum offset from layer boundary
+    int channelSpacingGrids = 1;      // Spacing between parallel channels (grid units)
+    int channelOffsetGrids = 1;       // Minimum offset from layer boundary (grid units)
     bool centerSingleEdge = true;     // Center edge when only one in channel region
     int maxChannelsPerRegion = 10;    // Maximum channels per region
     SelfLoopConfig selfLoop;          // Self-loop configuration
+    
+    // Helper methods to get pixel values (for backward compatibility)
+    float channelSpacing(float gridSize) const { return channelSpacingGrids * gridSize; }
+    float channelOffset(float gridSize) const { return channelOffsetGrids * gridSize; }
 };
 
 /// Configuration for grid-based coordinates
@@ -82,7 +86,7 @@ enum class NodeAlignment {
     BottomRight
 };
 
-/// Scoring weights for edge routing optimization
+/// Scoring weights for edge routing optimization (grid-based)
 /// Higher scores indicate worse routing choices (lower is better)
 /// Used by AStarEdgeOptimizer to evaluate edge combinations
 struct ScoringWeights {
@@ -92,8 +96,8 @@ struct ScoringWeights {
     int nodeCollision = 10000;      ///< Path passes through a node
     int pathIntersection = 1000;    ///< Path intersects another edge
     int detourBonus = -5000;        ///< Bonus for detour paths (negative = good)
-    float minSnapDistance = 60.0f;  ///< Minimum distance between snap points (pixels)
-    float minSegmentLength = 20.0f; ///< Minimum segment length before turn
+    int minSnapDistanceGrids = 3;   ///< Minimum distance between snap points (grid units)
+    int minSegmentLengthGrids = 1;  ///< Minimum segment length before turn (grid units)
 };
 
 /// Algorithm selection for real-time drag feedback
@@ -169,22 +173,23 @@ enum class CrossingMinimization {
     BarycenterHeuristic // Fast, good results
 };
 
-/// Layer assignment strategy
-/// Options for controlling layout behavior
+/// Options for controlling layout behavior (grid-based)
+/// All spacing/sizing values are in grid units (integers)
+/// Actual pixel values = gridUnits * gridConfig.cellSize
 struct LayoutOptions {
     // General layout direction
     Direction direction = Direction::TopToBottom;
 
-    // Spacing
-    float nodeSpacingHorizontal = 100.0f;  // Space between nodes in same layer (5 grid units @ 20px)
-    float nodeSpacingVertical = 100.0f;    // Space between layers (5 grid units @ 20px)
+    // Spacing (grid units)
+    int nodeSpacingHorizontalGrids = 5;  // Space between nodes in same layer
+    int nodeSpacingVerticalGrids = 5;    // Space between layers
 
-    // Compound node settings
-    float compoundPadding = 20.0f;        // Padding inside compound nodes
-    float parallelSpacing = 30.0f;        // Space between parallel regions
+    // Compound node settings (grid units)
+    int compoundPaddingGrids = 1;        // Padding inside compound nodes
+    int parallelSpacingGrids = 2;        // Space between parallel regions
 
     // Edge routing (channel-based orthogonal routing)
-    float edgeBendRadius = 5.0f;          // Radius for rounded bends
+    float edgeBendRadius = 5.0f;          // Radius for rounded bends (pixels, for visual smoothness)
     ChannelRoutingOptions channelRouting; // Channel routing options
 
     // Algorithm settings
@@ -194,8 +199,9 @@ struct LayoutOptions {
     // Crossing minimization iterations
     int crossingMinimizationPasses = 4;
 
-    // Default node size when not specified
-    Size defaultNodeSize = {100.0f, 50.0f};
+    // Default node size (grid units)
+    int defaultNodeWidthGrids = 5;   // 5 * 20 = 100px
+    int defaultNodeHeightGrids = 3;  // 3 * 20 = 60px
 
     // Auto mode: dynamically generate snap points based on connection count
     bool autoSnapPoints = true;
@@ -214,20 +220,34 @@ struct LayoutOptions {
     // Separate from constraints - optimization runs after constraint validation passes
     OptimizationOptions optimizationOptions;
 
-    // Builder pattern for convenient configuration
+    // Helper methods to get pixel values
+    float nodeSpacingHorizontal() const { return nodeSpacingHorizontalGrids * gridConfig.cellSize; }
+    float nodeSpacingVertical() const { return nodeSpacingVerticalGrids * gridConfig.cellSize; }
+    float compoundPadding() const { return compoundPaddingGrids * gridConfig.cellSize; }
+    float parallelSpacing() const { return parallelSpacingGrids * gridConfig.cellSize; }
+    Size defaultNodeSize() const { 
+        return {defaultNodeWidthGrids * gridConfig.cellSize, 
+                defaultNodeHeightGrids * gridConfig.cellSize}; 
+    }
+    float channelSpacing() const { return channelRouting.channelSpacingGrids * gridConfig.cellSize; }
+    float channelOffset() const { return channelRouting.channelOffsetGrids * gridConfig.cellSize; }
+    float minSnapDistance() const { return optimizationOptions.scoringWeights.minSnapDistanceGrids * gridConfig.cellSize; }
+    float minSegmentLength() const { return optimizationOptions.scoringWeights.minSegmentLengthGrids * gridConfig.cellSize; }
+
+    // Builder pattern for convenient configuration (grid units)
     LayoutOptions& setDirection(Direction d) { direction = d; return *this; }
-    LayoutOptions& setNodeSpacing(float h, float v) {
-        nodeSpacingHorizontal = h;
-        nodeSpacingVertical = v;
+    LayoutOptions& setNodeSpacingGrids(int h, int v) {
+        nodeSpacingHorizontalGrids = h;
+        nodeSpacingVerticalGrids = v;
         return *this;
     }
-    LayoutOptions& setCompoundPadding(float p) { compoundPadding = p; return *this; }
-    LayoutOptions& setChannelSpacing(float spacing) {
-        channelRouting.channelSpacing = spacing;
+    LayoutOptions& setCompoundPaddingGrids(int p) { compoundPaddingGrids = p; return *this; }
+    LayoutOptions& setChannelSpacingGrids(int spacing) {
+        channelRouting.channelSpacingGrids = spacing;
         return *this;
     }
-    LayoutOptions& setChannelOffset(float offset) {
-        channelRouting.channelOffset = offset;
+    LayoutOptions& setChannelOffsetGrids(int offset) {
+        channelRouting.channelOffsetGrids = offset;
         return *this;
     }
     LayoutOptions& setSelfLoopDirection(SelfLoopDirection dir) {

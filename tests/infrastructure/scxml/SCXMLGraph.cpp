@@ -37,11 +37,16 @@ NodeId SCXMLGraph::addParallelState(const std::string& id, Size size) {
     return nodeId;
 }
 
-NodeId SCXMLGraph::addFinalState(const std::string& id, Size size) {
+NodeId SCXMLGraph::addFinalState(const std::string& id, NodeType nodeType, Size size) {
     NodeData data;
-    data.size = size;
-    // Use id as label for regular nodes, empty for point nodes
-    data.label = (size.width > 0 || size.height > 0) ? id : "";
+    data.nodeType = nodeType;
+    if (nodeType == NodeType::Point) {
+        data.size = {0.0f, 0.0f};
+        data.label = "";
+    } else {
+        data.size = size;
+        data.label = id;
+    }
     
     NodeId nodeId = CompoundGraph::addNode(data);
     
@@ -61,8 +66,9 @@ NodeId SCXMLGraph::addInitialPseudo(const std::string& parentId) {
     }
     
     NodeData data;
-    data.size = {0.0f, 0.0f};  // Point node - position is center
-    data.label = "";  // No label for initial pseudo-state
+    data.nodeType = NodeType::Point;
+    data.size = {0.0f, 0.0f};
+    data.label = "";
     
     NodeId nodeId = CompoundGraph::addNode(data);
     
@@ -77,8 +83,9 @@ NodeId SCXMLGraph::addInitialPseudo(const std::string& parentId) {
 
 NodeId SCXMLGraph::addHistoryState(const std::string& id, bool deep) {
     NodeData data;
-    data.size = {0.0f, 0.0f};  // Point node - position is center
-    data.label = "";  // Label drawn in rendering
+    data.nodeType = NodeType::Point;
+    data.size = {0.0f, 0.0f};
+    data.label = "";
     
     NodeId nodeId = CompoundGraph::addNode(data);
     

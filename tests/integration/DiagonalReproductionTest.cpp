@@ -40,8 +40,8 @@ protected:
 
         // Setup layout options (same as interactive demo)
         options_.direction = Direction::TopToBottom;
-        options_.nodeSpacingHorizontal = 100.0f;
-        options_.nodeSpacingVertical = 100.0f;
+        options_.nodeSpacingHorizontalGrids = 5;
+        options_.nodeSpacingVerticalGrids = 5;
         options_.gridConfig.cellSize = 20.0f;
         options_.autoSnapPoints = true;
 

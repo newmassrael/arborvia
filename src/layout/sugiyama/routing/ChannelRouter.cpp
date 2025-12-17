@@ -260,8 +260,8 @@ float ChannelRouter::computeChannelY(
             return gridCenter * gridSize;
         }
 
-        // Offset in grid units (convert from pixel offset)
-        int gridOffset = static_cast<int>(std::round(opts.channelOffset / gridSize));
+        // Offset in grid units (already stored as grid units)
+        int gridOffset = opts.channelOffsetGrids;
         int usableLength = gridLength - 2 * gridOffset;
         if (usableLength < 0) {
             usableLength = gridLength;
@@ -293,20 +293,20 @@ float ChannelRouter::computeChannelY(
     }
 
     // Compute usable height (excluding offset margins)
-    float usableHeight = regionHeight - 2 * opts.channelOffset;
+    float usableHeight = regionHeight - 2 * opts.channelOffset(gridSize);
     if (usableHeight < 0) {
         usableHeight = regionHeight;  // Fall back if region too small
     }
 
     // Compute spacing between channels
-    float spacing = opts.channelSpacing;
+    float spacing = opts.channelSpacing(gridSize);
     if (count > 1) {
         float maxSpacing = usableHeight / static_cast<float>(count - 1);
         spacing = std::min(spacing, maxSpacing);
     }
 
     // Compute channel Y position
-    float startY = region.regionStart + opts.channelOffset;
+    float startY = region.regionStart + opts.channelOffset(gridSize);
     if (usableHeight < regionHeight) {
         startY = region.regionStart + (regionHeight - (count - 1) * spacing) / 2.0f;
     }

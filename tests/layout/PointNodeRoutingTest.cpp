@@ -149,7 +149,9 @@ TEST_F(PointNodeRoutingTest, Test144_SideEdgeToPointNode_TargetPointAtCenter) {
     SCXMLTestLoader loader(resourcePath_);
     ASSERT_TRUE(loader.loadIndex()) << loader.getLastError();
 
-    auto graph = loader.loadGraphById("144");
+    ConvertOptions opts;
+    opts.finalNodeType = NodeType::Point;  // These tests require Point node for "fail"
+    auto graph = loader.loadGraphById("144", opts);
     ASSERT_NE(graph, nullptr) << loader.getLastError();
 
     // fail 노드 확인
@@ -229,7 +231,9 @@ TEST_F(PointNodeRoutingTest, Test144_AllEdgesToPointNode_MustBeOrthogonal) {
     SCXMLTestLoader loader(resourcePath_);
     ASSERT_TRUE(loader.loadIndex()) << loader.getLastError();
 
-    auto graph = loader.loadGraphById("144");
+    ConvertOptions opts;
+    opts.finalNodeType = NodeType::Point;  // These tests require Point node for "fail"
+    auto graph = loader.loadGraphById("144", opts);
     ASSERT_NE(graph, nullptr) << loader.getLastError();
 
     // fail 노드 (Point 노드) 확인
@@ -294,7 +298,9 @@ TEST_F(PointNodeRoutingTest, Test144_RightEdgeToLeftTarget_MustBeOrthogonal) {
     SCXMLTestLoader loader(resourcePath_);
     ASSERT_TRUE(loader.loadIndex()) << loader.getLastError();
 
-    auto graph = loader.loadGraphById("144");
+    ConvertOptions opts;
+    opts.finalNodeType = NodeType::Point;  // These tests require Point node for "fail"
+    auto graph = loader.loadGraphById("144", opts);
     ASSERT_NE(graph, nullptr) << loader.getLastError();
 
     auto failNodeOpt = graph->findByScxmlId("fail");

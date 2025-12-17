@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Types.h"
+#include "arborvia/layout/config/LayoutEnums.h"
 
 #include <any>
 #include <optional>
@@ -14,12 +15,23 @@ namespace arborvia {
 struct NodeData {
     NodeId id = INVALID_NODE;
     Size size = {100.0f, 50.0f};
+    NodeType nodeType = NodeType::Regular;  ///< Explicit node type (Regular or Point)
     std::string label;
     std::any userData;
 
     NodeData() = default;
-    explicit NodeData(Size s) : size(s) {}
-    NodeData(Size s, std::string lbl) : size(s), label(std::move(lbl)) {}
+    explicit NodeData(Size s) : size(s), nodeType(inferNodeType(s)) {}
+    explicit NodeData(NodeType type) : nodeType(type) {}
+    NodeData(Size s, NodeType type) : size(s), nodeType(type) {}
+    NodeData(Size s, std::string lbl) : size(s), nodeType(inferNodeType(s)), label(std::move(lbl)) {}
+    NodeData(Size s, NodeType type, std::string lbl) : size(s), nodeType(type), label(std::move(lbl)) {}
+
+private:
+    /// Infer NodeType from size for backward compatibility
+    /// Size {0,0} → Point, otherwise → Regular
+    static NodeType inferNodeType(Size s) {
+        return (s.width < 1.0f && s.height < 1.0f) ? NodeType::Point : NodeType::Regular;
+    }
 };
 
 struct EdgeData {

@@ -340,10 +340,8 @@ void SugiyamaLayout::assignCoordinates() {
             layout.layer = static_cast<int>(layerIdx);
             layout.order = static_cast<int>(order);
             
-            // Detect Point nodes (size = {0,0})
-            if (layout.size.width < 1.0f && layout.size.height < 1.0f) {
-                layout.nodeType = NodeType::Point;
-            }
+            // Copy NodeType from NodeData (explicit, not inferred from size)
+            layout.nodeType = state_->graph->getNode(id).nodeType;
 
             state_->result.setNodeLayout(id, layout);
         }
@@ -405,12 +403,12 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
         // Now layout children of this compound node
         // (This would require creating a subgraph and running layout on it)
         // For MVP, just stack them vertically
-        float currentY = options_.compoundPadding;
+        float currentY = options_.compoundPadding();
         float maxWidth = 0.0f;
 
         for (NodeId child : children) {
             const float gridSize = options_.gridConfig.cellSize;
-            Point pos = {snapToGrid(options_.compoundPadding, gridSize),
+            Point pos = {snapToGrid(options_.compoundPadding(), gridSize),
                          snapToGrid(currentY, gridSize)};
             Size size = state_->nodeSizes[child];
 
@@ -418,20 +416,18 @@ void SugiyamaLayout::layoutCompoundNode(NodeId id, const CompoundGraph& graph) {
             layout.id = child;
             layout.position = pos;
             layout.size = size;
-            if (size.width < 1.0f && size.height < 1.0f) {
-                layout.nodeType = NodeType::Point;
-            }
+            layout.nodeType = state_->graph->getNode(child).nodeType;
 
             state_->result.setNodeLayout(child, layout);
 
-            currentY += size.height + options_.nodeSpacingVertical;
+            currentY += size.height + options_.nodeSpacingVertical();
             maxWidth = std::max(maxWidth, size.width);
         }
 
         // Update compound node size
         state_->nodeSizes[id] = {
-            maxWidth + 2 * options_.compoundPadding,
-            currentY - options_.nodeSpacingVertical + options_.compoundPadding
+            maxWidth + 2 * options_.compoundPadding(),
+            currentY - options_.nodeSpacingVertical() + options_.compoundPadding()
         };
     }
 }
@@ -441,7 +437,7 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
     if (children.empty()) return;
 
     // Layout children side by side (horizontally)
-    float currentX = options_.compoundPadding;
+    float currentX = options_.compoundPadding();
     float maxHeight = 0.0f;
 
     for (NodeId child : children) {
@@ -453,26 +449,24 @@ void SugiyamaLayout::layoutParallelRegions(NodeId id, const CompoundGraph& graph
         Size size = state_->nodeSizes[child];
         const float gridSize = options_.gridConfig.cellSize;
         Point pos = {snapToGrid(currentX, gridSize),
-                     snapToGrid(options_.compoundPadding, gridSize)};
+                     snapToGrid(options_.compoundPadding(), gridSize)};
 
         NodeLayout layout;
         layout.id = child;
         layout.position = pos;
         layout.size = size;
-        if (size.width < 1.0f && size.height < 1.0f) {
-            layout.nodeType = NodeType::Point;
-        }
+        layout.nodeType = state_->graph->getNode(child).nodeType;
 
         state_->result.setNodeLayout(child, layout);
 
-        currentX += size.width + options_.parallelSpacing;
+        currentX += size.width + options_.parallelSpacing();
         maxHeight = std::max(maxHeight, size.height);
     }
 
     // Update parallel node size
     state_->nodeSizes[id] = {
-        currentX - options_.parallelSpacing + options_.compoundPadding,
-        maxHeight + 2 * options_.compoundPadding
+        currentX - options_.parallelSpacing() + options_.compoundPadding(),
+        maxHeight + 2 * options_.compoundPadding()
     };
 }
 
@@ -497,7 +491,7 @@ void SugiyamaLayout::updateCompoundBounds(NodeId id, const CompoundGraph& graph)
     }
 
     // Add padding
-    bounds = bounds.expanded(options_.compoundPadding);
+    bounds = bounds.expanded(options_.compoundPadding());
 
     state_->nodeSizes[id] = bounds.size();
 }

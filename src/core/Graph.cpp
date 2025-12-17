@@ -9,9 +9,7 @@ NodeId Graph::addNode() {
 }
 
 NodeId Graph::addNode(Size size) {
-    NodeData data;
-    data.size = size;
-    return addNode(data);
+    return addNode(NodeData(size));
 }
 
 NodeId Graph::addNode(const std::string& label) {
@@ -21,10 +19,7 @@ NodeId Graph::addNode(const std::string& label) {
 }
 
 NodeId Graph::addNode(Size size, const std::string& label) {
-    NodeData data;
-    data.size = size;
-    data.label = label;
-    return addNode(data);
+    return addNode(NodeData(size, std::move(std::string(label))));
 }
 
 NodeId Graph::addNode(const NodeData& data) {

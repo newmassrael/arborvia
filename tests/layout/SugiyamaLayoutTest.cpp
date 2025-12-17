@@ -134,8 +134,8 @@ TEST(SugiyamaLayoutTest, LeftToRightDirection_NodesOrderedHorizontally) {
 
     LayoutOptions options;
     options.direction = Direction::LeftToRight;
-    options.nodeSpacingHorizontal = 100.0f;
-    options.nodeSpacingVertical = 50.0f;
+    options.nodeSpacingHorizontalGrids = 5;  // 5 * 20 = 100
+    options.nodeSpacingVerticalGrids = 3;    // 3 * 20 = 60
 
     SugiyamaLayout layout(options);
     LayoutResult result = layout.layout(graph);
@@ -495,7 +495,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_LoopOffsetChange_SnapPointsRemainOnNode) {
     for (float loopOffset : loopOffsets) {
         LayoutOptions options;
 
-        options.channelRouting.selfLoop.loopOffset = loopOffset;
+        options.channelRouting.selfLoop.loopOffsetGrids = static_cast<int>(loopOffset / 20.0f);
 
         SugiyamaLayout layout(options);
         LayoutResult result = layout.layout(graph);
@@ -540,7 +540,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
     // Initial layout
     LayoutOptions options;
 
-    options.channelRouting.selfLoop.loopOffset = 20.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 1;
 
     ManualLayoutManager manualManager;
 
@@ -557,7 +557,7 @@ TEST(SugiyamaLayoutTest, SelfLoop_DragThenChangeOptions_SnapPointsMatchNewPositi
     manualManager.clearAllEdgeRoutings();
 
     // Change loop offset (like adjusting the slider after drag)
-    options.channelRouting.selfLoop.loopOffset = 50.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 3;
 
     SugiyamaLayout layout2(options);
     layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
@@ -617,7 +617,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     // Initial layout
     LayoutOptions options;
 
-    options.channelRouting.selfLoop.loopOffset = 30.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 2;
 
 
     ManualLayoutManager manualManager;
@@ -662,7 +662,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_AfterDrag_SnapPointsNotDuplicated) {
     manualManager.clearAllEdgeRoutings();
 
     // Re-layout with different loop offset
-    options.channelRouting.selfLoop.loopOffset = 50.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 3;
 
     SugiyamaLayout layout2(options);
     layout2.setManualLayoutManager(std::make_shared<ManualLayoutManager>(manualManager));
@@ -739,7 +739,7 @@ TEST(SugiyamaLayoutTest, MultipleEdges_UpdateEdgePositions_SnapPointsNotDuplicat
     // Initial layout
     LayoutOptions options;
 
-    options.channelRouting.selfLoop.loopOffset = 30.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 2;
 
 
     SugiyamaLayout layout(options);
@@ -877,7 +877,7 @@ TEST(SugiyamaLayoutTest, DemoGraph_DragRunning_SnapPointsNotDuplicated) {
     // Initial layout
     LayoutOptions options;
 
-    options.channelRouting.selfLoop.loopOffset = 50.0f;
+    options.channelRouting.selfLoop.loopOffsetGrids = 3;
       // Default mode
 
     SugiyamaLayout layout(options);

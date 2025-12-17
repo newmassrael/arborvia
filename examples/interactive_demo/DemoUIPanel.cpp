@@ -47,18 +47,18 @@ UIResult DemoUIPanel::render(DemoState& state) {
 
 void DemoUIPanel::renderEdgeRoutingOptions(DemoState& state, bool& changed) {
     if (ImGui::TreeNode("Edge Routing Options")) {
-        if (ImGui::SliderFloat("Spacing", &state.layoutOptions->channelRouting.channelSpacing, 5.0f, 30.0f)) {
+        if (ImGui::SliderInt("Spacing (grids)", &state.layoutOptions->channelRouting.channelSpacingGrids, 1, 3)) {
             changed = true;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Spacing between parallel edge channels");
+            ImGui::SetTooltip("Spacing between parallel edge channels (grid units)");
         }
 
-        if (ImGui::SliderFloat("Offset", &state.layoutOptions->channelRouting.channelOffset, 10.0f, 50.0f)) {
+        if (ImGui::SliderInt("Offset (grids)", &state.layoutOptions->channelRouting.channelOffsetGrids, 1, 3)) {
             changed = true;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Minimum offset from layer boundary");
+            ImGui::SetTooltip("Minimum offset from layer boundary (grid units)");
         }
 
         ImGui::Checkbox("Center Single Edge", &state.layoutOptions->channelRouting.centerSingleEdge);
@@ -73,7 +73,7 @@ void DemoUIPanel::renderEdgeRoutingOptions(DemoState& state, bool& changed) {
             changed = true;
         }
 
-        if (ImGui::SliderFloat("Loop Offset", &state.layoutOptions->channelRouting.selfLoop.loopOffset, 10.0f, 50.0f)) {
+        if (ImGui::SliderInt("Loop Offset (grids)", &state.layoutOptions->channelRouting.selfLoop.loopOffsetGrids, 1, 3)) {
             changed = true;
         }
 

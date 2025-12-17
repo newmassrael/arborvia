@@ -37,18 +37,14 @@ void parseStateElement(pugi::xml_node node, SCXMLGraph& graph,
     
     // Create node based on tag type
     if (tagName == "state") {
-        nodeId = graph.addState(id, {opts.defaultStateWidth, opts.defaultStateHeight});
+        nodeId = graph.addState(id, {opts.stateWidth(), opts.stateHeight()});
     } 
     else if (tagName == "parallel") {
-        nodeId = graph.addParallelState(id, {opts.defaultStateWidth, opts.defaultStateHeight});
+        nodeId = graph.addParallelState(id, {opts.stateWidth(), opts.stateHeight()});
     }
     else if (tagName == "final") {
-        // Use finalStateSize option: 0 = point node, >0 = regular node with that size
-        if (opts.finalStateSize > 0) {
-            nodeId = graph.addFinalState(id, {opts.finalStateSize, opts.finalStateSize});
-        } else {
-            nodeId = graph.addFinalState(id);  // Point node (default)
-        }
+        nodeId = graph.addFinalState(id, opts.finalNodeType, 
+                                      {opts.finalWidth(), opts.finalHeight()});
     }
     else if (tagName == "history") {
         bool deep = std::string(node.attribute("type").as_string()) == "deep";

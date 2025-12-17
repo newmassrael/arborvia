@@ -1672,8 +1672,8 @@ TEST_F(DragBehaviorTest, Edge6_ErrorToIdle_ShouldNotPenetrateNodes) {
 
     LayoutOptions options;
     options.direction = Direction::TopToBottom;
-    options.nodeSpacingHorizontal = 100.0f;
-    options.nodeSpacingVertical = 100.0f;
+    options.nodeSpacingHorizontalGrids = 5;
+    options.nodeSpacingVerticalGrids = 5;
     options.gridConfig.cellSize = 20.0f;
     options.autoSnapPoints = true;
 
@@ -1760,8 +1760,8 @@ TEST_F(DragBehaviorTest, AllNodes_DragInAllDirections_NoNodePenetration) {
 
     LayoutOptions options;
     options.direction = Direction::TopToBottom;
-    options.nodeSpacingHorizontal = 100.0f;
-    options.nodeSpacingVertical = 100.0f;
+    options.nodeSpacingHorizontalGrids = 5;
+    options.nodeSpacingVerticalGrids = 5;
     options.gridConfig.cellSize = 20.0f;
     options.autoSnapPoints = true;
 
@@ -1856,8 +1856,8 @@ TEST_F(DragBehaviorTest, RandomDrag_100Iterations_NoNodePenetration) {
 
     LayoutOptions options;
     options.direction = Direction::TopToBottom;
-    options.nodeSpacingHorizontal = 100.0f;
-    options.nodeSpacingVertical = 100.0f;
+    options.nodeSpacingHorizontalGrids = 5;
+    options.nodeSpacingVerticalGrids = 5;
     options.gridConfig.cellSize = 20.0f;
     options.autoSnapPoints = true;
 

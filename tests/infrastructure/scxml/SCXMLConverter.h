@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SCXMLGraph.h"
+#include <arborvia/layout/config/LayoutEnums.h>
 
 #include <memory>
 #include <optional>
@@ -16,18 +17,25 @@ struct ConvertOptions {
     /// Parse onentry/onexit actions
     bool includeActions = false;
     
-    /// Default size for state nodes
-    float defaultStateWidth = 120.0f;
-    float defaultStateHeight = 60.0f;
+    /// Grid size for node sizing (all sizes are multiples of this)
+    float gridSize = 20.0f;
     
-    /// Size for final states (0 = point node, >0 = regular node with label)
-    float finalStateSize = 0.0f;
+    /// Default size for state nodes (in grid units)
+    int stateWidthGrids = 6;   // 6 * 20 = 120
+    int stateHeightGrids = 3;  // 3 * 20 = 60
     
-    /// Size for initial pseudo-states
-    float initialPseudoSize = 20.0f;
+    /// Node type for final states (Point or Regular)
+    NodeType finalNodeType = NodeType::Regular;
     
-    /// Size for history states
-    float historyStateSize = 30.0f;
+    /// Size for final states in grid units (when finalNodeType is Regular)
+    int finalWidthGrids = 6;   // 6 * 20 = 120
+    int finalHeightGrids = 3;  // 3 * 20 = 60
+    
+    // Helper methods to get actual pixel sizes
+    float stateWidth() const { return stateWidthGrids * gridSize; }
+    float stateHeight() const { return stateHeightGrids * gridSize; }
+    float finalWidth() const { return finalWidthGrids * gridSize; }
+    float finalHeight() const { return finalHeightGrids * gridSize; }
 };
 
 /// Parse error information

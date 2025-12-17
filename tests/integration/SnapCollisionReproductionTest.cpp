@@ -60,8 +60,8 @@ protected:
 
         // Setup layout options (same as interactive demo)
         options_.direction = Direction::TopToBottom;
-        options_.nodeSpacingHorizontal = 100.0f;
-        options_.nodeSpacingVertical = 100.0f;
+        options_.nodeSpacingHorizontalGrids = 5;
+        options_.nodeSpacingVerticalGrids = 5;
         options_.gridConfig.cellSize = 20.0f;
         options_.autoSnapPoints = true;
 
@@ -540,7 +540,9 @@ TEST_F(SnapCollisionTest144, Test144_EdgesToFailNode_NoSnapCollision) {
     SCXMLTestLoader loader(resourcePath_);
     ASSERT_TRUE(loader.loadIndex()) << loader.getLastError();
 
-    auto graph = loader.loadGraphById("144");
+    ConvertOptions opts;
+    opts.finalNodeType = NodeType::Point;  // These tests require Point node for "fail"
+    auto graph = loader.loadGraphById("144", opts);
     ASSERT_NE(graph, nullptr) << loader.getLastError();
 
     // Find nodes
@@ -674,7 +676,9 @@ TEST_F(SnapCollisionTest144, Test144_AggressiveDrag_NoSnapCollision) {
     SCXMLTestLoader loader(resourcePath_);
     ASSERT_TRUE(loader.loadIndex()) << loader.getLastError();
 
-    auto graph = loader.loadGraphById("144");
+    ConvertOptions opts;
+    opts.finalNodeType = NodeType::Point;  // These tests require Point node for "fail"
+    auto graph = loader.loadGraphById("144", opts);
     ASSERT_NE(graph, nullptr) << loader.getLastError();
 
     // Layout

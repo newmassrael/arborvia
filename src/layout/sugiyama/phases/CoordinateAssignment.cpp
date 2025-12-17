@@ -18,7 +18,7 @@ CoordinateAssignmentResult SimpleCoordinateAssignment::assign(
             if (graph.hasNode(node)) {
                 nodeSizes[node] = graph.getNode(node).size;
             } else {
-                nodeSizes[node] = options.defaultNodeSize;
+                nodeSizes[node] = options.defaultNodeSize();
             }
         }
     }
@@ -58,13 +58,13 @@ void SimpleCoordinateAssignment::simpleAssignment(
     // Edge routing needs at least one grid cell between layers for bend points
     const float gridSize = options.gridConfig.cellSize;
     const float minLayerSpacing = gridSize * 2.0f;  // Minimum gap for edge routing channel
-    const float effectiveVerticalSpacing = std::max(options.nodeSpacingVertical, minLayerSpacing);
-    const float effectiveHorizontalSpacing = std::max(options.nodeSpacingHorizontal, gridSize);
+    const float effectiveVerticalSpacing = std::max(options.nodeSpacingVertical(), minLayerSpacing);
+    const float effectiveHorizontalSpacing = std::max(options.nodeSpacingHorizontal(), gridSize);
 
     LOG_DEBUG("[CoordinateAssignment] gridSize={} minLayerSpacing={} effectiveVerticalSpacing={} effectiveHorizontalSpacing={}",
               gridSize, minLayerSpacing, effectiveVerticalSpacing, effectiveHorizontalSpacing);
     LOG_DEBUG("[CoordinateAssignment] nodeSpacingVertical={} nodeSpacingHorizontal={} horizontal={}",
-              options.nodeSpacingVertical, options.nodeSpacingHorizontal, horizontal);
+              options.nodeSpacingVertical(), options.nodeSpacingHorizontal(), horizontal);
 
     float currentLayerPos = 0.0f;
 
@@ -77,7 +77,7 @@ void SimpleCoordinateAssignment::simpleAssignment(
 
         for (NodeId node : layer) {
             auto it = nodeSizes.find(node);
-            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize;
+            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize();
 
             if (horizontal) {
                 layerHeight = std::max(layerHeight, size.width);
@@ -101,7 +101,7 @@ void SimpleCoordinateAssignment::simpleAssignment(
 
         for (NodeId node : layer) {
             auto it = nodeSizes.find(node);
-            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize;
+            Size size = (it != nodeSizes.end()) ? it->second : options.defaultNodeSize();
 
             Point pos;
             if (horizontal) {
@@ -141,13 +141,13 @@ void SimpleCoordinateAssignment::simpleAssignment(
     LOG_DEBUG("[CoordinateAssignment] === FINAL NODE DISTANCES ===");
     for (const auto& [nodeA, posA] : result.positions) {
         auto itA = nodeSizes.find(nodeA);
-        Size sizeA = (itA != nodeSizes.end()) ? itA->second : options.defaultNodeSize;
+        Size sizeA = (itA != nodeSizes.end()) ? itA->second : options.defaultNodeSize();
         
         for (const auto& [nodeB, posB] : result.positions) {
             if (nodeA >= nodeB) continue;  // Skip self and duplicates
             
             auto itB = nodeSizes.find(nodeB);
-            Size sizeB = (itB != nodeSizes.end()) ? itB->second : options.defaultNodeSize;
+            Size sizeB = (itB != nodeSizes.end()) ? itB->second : options.defaultNodeSize();
             
             // Calculate actual gap between nodes
             float gapX = 0.0f, gapY = 0.0f;

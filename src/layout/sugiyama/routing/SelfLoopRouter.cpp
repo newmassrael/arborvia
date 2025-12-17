@@ -169,9 +169,9 @@ EdgeLayout SelfLoopRouter::route(
     // Spacing in grid units (minimum 1 cell)
     int gSpacing = std::max(1, toGrid(calculateSpacing(gridSize)));
 
-    // Loop offset in grid units
-    int gLoopOffset = std::max(1, toGrid(config.loopOffset));
-    int gStackSpacing = std::max(0, toGrid(config.stackSpacing));
+    // Loop offset in grid units (already stored as grid units)
+    int gLoopOffset = std::max(1, config.loopOffsetGrids);
+    int gStackSpacing = std::max(0, config.stackSpacingGrids);
     int gSnapOffset = loopIndex * gStackSpacing;
 
     // Limit snap offset to 40% of smaller dimension
