@@ -278,6 +278,7 @@ void DemoUIPanel::renderSCXMLSection(DemoState& state) {
 void DemoUIPanel::renderActionButtons(DemoState& state) {
     if (ImGui::Button("Reset Layout")) {
         manualManager_->clearManualState();
+        state.interaction = InteractionState{};
         if (doLayoutCallback_) {
             doLayoutCallback_();
         }

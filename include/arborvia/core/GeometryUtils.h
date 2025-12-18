@@ -116,6 +116,11 @@ inline float effectiveGridSize(float gridSize) noexcept {
 /// Used when edge routing changes and snap points must be recalculated
 constexpr int SNAP_INDEX_UNASSIGNED = -1;
 
+/// Snap index for Point node center position
+/// Point nodes always have all edges at center, sharing this index.
+/// This is intentional - do NOT use snapIndex for collision detection on Point nodes.
+constexpr int SNAP_INDEX_POINT_NODE_CENTER = 0;
+
 }  // namespace constants
 
 /// Grid coordinate conversion utilities

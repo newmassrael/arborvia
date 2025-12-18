@@ -835,13 +835,11 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
               static_cast<int>(newEdge), newSnapIndex);
 
     if (isSource) {
-        edge.sourcePoint = result.actualPosition;
+        edge.setSourceSnap(newSnapIndex, result.actualPosition);  // SSOT: snapIndex and Point synchronized
         edge.sourceEdge = newEdge;
-        // NOTE: snapIndex computed from position, not stored
     } else {
-        edge.targetPoint = result.actualPosition;
+        edge.setTargetSnap(newSnapIndex, result.actualPosition);  // SSOT: snapIndex and Point synchronized
         edge.targetEdge = newEdge;
-        // NOTE: snapIndex computed from position, not stored
     }
 
     LOG_DEBUG("[moveSnapPoint] Edge {} AFTER update: src=({},{}) tgt=({},{})",
@@ -851,14 +849,14 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
     // If swap partner found, move it to the original position
     if (swapEdgeId != INVALID_EDGE) {
         EdgeLayout& swapEdge = edgeLayouts[swapEdgeId];
+        int originalSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
+            node, originalEdge, originalPosition, gridSize);
         if (swapIsSource) {
-            swapEdge.sourcePoint = originalPosition;
+            swapEdge.setSourceSnap(originalSnapIndex, originalPosition);
             swapEdge.sourceEdge = originalEdge;
-            // NOTE: snapIndex computed from position, not stored
         } else {
-            swapEdge.targetPoint = originalPosition;
+            swapEdge.setTargetSnap(originalSnapIndex, originalPosition);
             swapEdge.targetEdge = originalEdge;
-            // NOTE: snapIndex computed from position, not stored
         }
         result.redistributedEdges.push_back(swapEdgeId);
     } else {
@@ -1043,6 +1041,7 @@ std::vector<EdgeId> LayoutUtils::redistributeSnapPoints(
     }
 
     // Apply new positions
+    float gridSize = constants::effectiveGridSize(options.gridConfig.cellSize);
     for (const auto& snap : snapsOnEdge) {
         if (snap.edgeId == fixedEdgeId) continue;  // Skip the fixed one
 
@@ -1050,19 +1049,17 @@ std::vector<EdgeId> LayoutUtils::redistributeSnapPoints(
         if (edgeIt == edgeLayouts.end()) continue;
 
         Point newSnapPos = calculateSnapPointFromRatio(node, edge, snap.position, options.gridConfig.cellSize);
+        int newSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(node, edge, newSnapPos, gridSize);
 
-        if (snap.isSource) {
-            if (edgeIt->second.sourcePoint.x != newSnapPos.x ||
-                edgeIt->second.sourcePoint.y != newSnapPos.y) {
-                edgeIt->second.sourcePoint = newSnapPos;
-                redistributed.push_back(snap.edgeId);
+        int currentSnapIndex = snap.isSource ? edgeIt->second.sourceSnapIndex
+                                             : edgeIt->second.targetSnapIndex;
+        if (currentSnapIndex != newSnapIndex) {
+            if (snap.isSource) {
+                edgeIt->second.setSourceSnap(newSnapIndex, newSnapPos);
+            } else {
+                edgeIt->second.setTargetSnap(newSnapIndex, newSnapPos);
             }
-        } else {
-            if (edgeIt->second.targetPoint.x != newSnapPos.x ||
-                edgeIt->second.targetPoint.y != newSnapPos.y) {
-                edgeIt->second.targetPoint = newSnapPos;
-                redistributed.push_back(snap.edgeId);
-            }
+            redistributed.push_back(snap.edgeId);
         }
     }
 

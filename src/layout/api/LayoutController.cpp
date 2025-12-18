@@ -1,6 +1,7 @@
 #include "arborvia/layout/api/LayoutController.h"
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/layout/constraints/PositionFinder.h"
+#include "arborvia/core/GeometryUtils.h"
 #include "layout/interactive/ConstraintManager.h"
 #include "sugiyama/routing/EdgeRouting.h"
 #include "arborvia/common/Logger.h"
@@ -237,7 +238,7 @@ NodeMoveResult LayoutController::setNodeType(NodeId nodeId, NodeType newType) {
         // so they work for both Point and Regular nodes
         if (srcNode.isPointNode()) {
             edge.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(srcNode, tgtNode);
-            edge.sourcePoint = srcNode.center();
+            edge.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, srcNode.center());
         } else if (edge.from == nodeId) {
             // Source was converted to Regular: recalculate sourceEdge
             edge.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(srcNode, tgtNode);
@@ -246,7 +247,7 @@ NodeMoveResult LayoutController::setNodeType(NodeId nodeId, NodeType newType) {
 
         if (tgtNode.isPointNode()) {
             edge.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(srcNode, tgtNode);
-            edge.targetPoint = tgtNode.center();
+            edge.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, tgtNode.center());
         } else if (edge.to == nodeId) {
             // Target was converted to Regular: recalculate targetEdge
             edge.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(srcNode, tgtNode);

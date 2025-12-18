@@ -431,4 +431,40 @@ Point GridSnapCalculator::computeSnapPointFromRatio(
     }
 }
 
+// =============================================================================
+// EdgeLayout Point Synchronization
+// =============================================================================
+
+void GridSnapCalculator::updateEdgeLayoutPoints(
+    EdgeLayout& layout,
+    const NodeLayout& sourceNode,
+    const NodeLayout& targetNode,
+    float gridSize)
+{
+    updateSourcePoint(layout, sourceNode, gridSize);
+    updateTargetPoint(layout, targetNode, gridSize);
+}
+
+void GridSnapCalculator::updateSourcePoint(
+    EdgeLayout& layout,
+    const NodeLayout& sourceNode,
+    float gridSize)
+{
+    if (layout.sourceSnapIndex >= 0) {
+        layout.sourcePoint = getPositionFromCandidateIndex(
+            sourceNode, layout.sourceEdge, layout.sourceSnapIndex, gridSize);
+    }
+}
+
+void GridSnapCalculator::updateTargetPoint(
+    EdgeLayout& layout,
+    const NodeLayout& targetNode,
+    float gridSize)
+{
+    if (layout.targetSnapIndex >= 0) {
+        layout.targetPoint = getPositionFromCandidateIndex(
+            targetNode, layout.targetEdge, layout.targetSnapIndex, gridSize);
+    }
+}
+
 }  // namespace arborvia

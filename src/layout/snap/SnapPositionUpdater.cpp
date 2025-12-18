@@ -293,9 +293,9 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
         if (!nodeHasMoved) {
             if (thisEdgeNeedsNewIndex) {
                 if (isSource) {
-                    layout.sourcePoint = snapPoint;
+                    layout.setSourceSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
                 } else {
-                    layout.targetPoint = snapPoint;
+                    layout.setTargetSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
                 }
                 LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (needsNewIndex): snapPoint=({},{}) candidateIndex={}",
                           snapPoint.x, snapPoint.y, candidateIndex);
@@ -304,9 +304,9 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
             }
         } else {
             if (isSource) {
-                layout.sourcePoint = snapPoint;
+                layout.setSourceSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
             } else {
-                layout.targetPoint = snapPoint;
+                layout.setTargetSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
             }
             LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (nodeHasMoved): snapPoint=({},{}) candidateIndex={}",
                       snapPoint.x, snapPoint.y, candidateIndex);

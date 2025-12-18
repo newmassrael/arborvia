@@ -362,8 +362,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
                 continue;
             }
 
-            workingLayout.sourcePoint = newSnapPoint;
-            // NOTE: snapIndex is no longer stored - computed from position as needed
+            workingLayout.setSourceSnap(candidateIndex, newSnapPoint);
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -388,8 +387,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
                 continue;
             }
 
-            workingLayout.targetPoint = newSnapPoint;
-            // NOTE: snapIndex is no longer stored - computed from position as needed
+            workingLayout.setTargetSnap(candidateIndex, newSnapPoint);
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -479,9 +477,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             EdgeLayout workingLayout = originalLayout;
             workingLayout.sourceEdge = srcEdge;
             workingLayout.targetEdge = tgtEdge;
-            workingLayout.sourcePoint = newSrc;
-            workingLayout.targetPoint = newTgt;
-            // NOTE: snapIndex is no longer stored - computed from position as needed
+            if (canModifySource) {
+                workingLayout.setSourceSnap(srcCandidateIdx, newSrc);
+            }
+            if (canModifyTarget) {
+                workingLayout.setTargetSnap(tgtCandidateIdx, newTgt);
+            }
 
             // Step 4a: Try A*
             result.astarAttempts++;

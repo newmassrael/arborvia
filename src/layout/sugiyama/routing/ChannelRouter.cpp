@@ -369,26 +369,33 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     layout.channelY = channel.yPosition;
 
     // Set snap points:
-    // - Point nodes: always center (fixed)
-    // - Normal nodes: use center temporarily, SnapDistributor will redistribute with proper indices
+    // - Point nodes: snapIndex=0 at center (SSOT)
+    // - Normal nodes: temporary position, SnapDistributor will assign proper snapIndex
     if (fromIsPoint) {
-        layout.sourcePoint = fromCenter;
+        layout.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, fromCenter);
     } else {
-        // Temporary center position - SnapDistributor will override with proper index-based position
-        layout.sourcePoint = SnapPointCalculator::calculateFromRatio(
+        // Calculate initial snap position - SnapDistributor may reassign later
+        Point tempPos = SnapPointCalculator::calculateFromRatio(
             fromLayout, layout.sourceEdge, 0.5f, gridSize);
+        int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+            fromLayout, layout.sourceEdge, tempPos, gridSize);
+        Point snapPos = GridSnapCalculator::getPositionFromCandidateIndex(
+            fromLayout, layout.sourceEdge, snapIdx, gridSize);
+        layout.setSourceSnap(snapIdx, snapPos);
     }
 
     if (toIsPoint) {
-        layout.targetPoint = toCenter;
+        layout.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, toCenter);
     } else {
-        // Temporary center position - SnapDistributor will override with proper index-based position
-        layout.targetPoint = SnapPointCalculator::calculateFromRatio(
+        // Calculate initial snap position - SnapDistributor may reassign later
+        Point tempPos = SnapPointCalculator::calculateFromRatio(
             toLayout, layout.targetEdge, 0.5f, gridSize);
+        int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+            toLayout, layout.targetEdge, tempPos, gridSize);
+        Point snapPos = GridSnapCalculator::getPositionFromCandidateIndex(
+            toLayout, layout.targetEdge, snapIdx, gridSize);
+        layout.setTargetSnap(snapIdx, snapPos);
     }
-
-    // NOTE: snapIndex is no longer stored - computed from position as needed
-    // using GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gridSize)
 
     // ROOT CAUSE ANALYSIS: Check if snap points are on grid vertices
     // ARCHITECTURE PROBLEM: ChannelRouter uses center.x directly without grid quantization,

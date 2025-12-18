@@ -271,12 +271,17 @@ EdgeLayout SelfLoopRouter::route(
             break;
     }
 
-    // === CONVERT GRID COORDINATES TO PIXELS ===
-    layout.sourcePoint = {toPixel(gSrcX), toPixel(gSrcY)};
-    layout.targetPoint = {toPixel(gTgtX), toPixel(gTgtY)};
+    // === CONVERT GRID COORDINATES TO PIXELS AND CALCULATE SNAP INDICES ===
+    Point srcPos = {toPixel(gSrcX), toPixel(gSrcY)};
+    Point tgtPos = {toPixel(gTgtX), toPixel(gTgtY)};
     
-    // NOTE: snapIndex is no longer stored - computed from position as needed
-    // using GridSnapCalculator::getCandidateIndexFromPosition(node, edge, point, gridSize)
+    int srcSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeLayout, layout.sourceEdge, srcPos, gridSize);
+    int tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+        nodeLayout, layout.targetEdge, tgtPos, gridSize);
+    
+    layout.setSourceSnap(srcSnapIdx, srcPos);
+    layout.setTargetSnap(tgtSnapIdx, tgtPos);
     
     LOG_DEBUG("[SNAP-TRACE] SelfLoopRouter::route edge={} SOURCE pos=({},{}) TARGET pos=({},{})",
               edgeId, layout.sourcePoint.x, layout.sourcePoint.y,

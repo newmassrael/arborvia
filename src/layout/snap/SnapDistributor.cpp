@@ -40,12 +40,12 @@ void SnapDistributor::distribute(
         std::sort(connections.begin(), connections.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
 
-        // Optionally re-sort by other node position to minimize edge crossings
+        // Re-sort by other node position to minimize edge crossings
+        // This must happen before selectOptimalCandidates which preserves this order
         if (sortSnapPoints && connections.size() > 1) {
             auto sortedPairs = SnapIndexManager::sortSnapPointsByOtherNode(
                 nodeId, nodeEdge, result.edgeLayouts, nodeLayouts);
 
-            // Replace original connections if sorting succeeded
             if (sortedPairs.size() == connections.size()) {
                 connections = std::move(sortedPairs);
             }
@@ -65,13 +65,11 @@ void SnapDistributor::distribute(
             for (const auto& [edgeId, isSource] : connections) {
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
                 if (isSource) {
-                    layout.sourcePoint = center;
-                    layout.sourceSnapIndex = 0;
+                    layout.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, center);
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE PointNode={} center=({},{})",
                               edgeId, nodeId, center.x, center.y);
                 } else {
-                    layout.targetPoint = center;
-                    layout.targetSnapIndex = 0;
+                    layout.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, center);
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET PointNode={} center=({},{})",
                               edgeId, nodeId, center.x, center.y);
                 }
@@ -79,29 +77,29 @@ void SnapDistributor::distribute(
             continue;
         }
 
-        // Normal nodes: distribute using index-based calculation
-        int connectionCount = static_cast<int>(connections.size());
+        // Normal nodes: sequential distribution
+        // Note: Manhattan optimization disabled due to complex interaction with other layout stages
+        {
+            int connectionCount = static_cast<int>(connections.size());
 
-        // Use grid-based calculation for all snap point positions
-        for (int i = 0; i < connectionCount; ++i) {
-            auto [edgeId, isSource] = connections[i];
-            EdgeLayout& layout = result.edgeLayouts[edgeId];
+            for (int i = 0; i < connectionCount; ++i) {
+                auto [edgeId, isSource] = connections[i];
+                EdgeLayout& layout = result.edgeLayouts[edgeId];
 
-            // Calculate snap position using index (NOT ratio)
-            int candidateIndex = 0;
-            Point snapPoint = GridSnapCalculator::calculateSnapPosition(
-                node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
+                int candidateIndex = 0;
+                Point snapPoint = GridSnapCalculator::calculateSnapPosition(
+                    node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
 
-            if (isSource) {
-                layout.sourcePoint = snapPoint;
-                layout.sourceSnapIndex = candidateIndex;  // Store snap index for stable identity
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
-                          edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
-            } else {
-                layout.targetPoint = snapPoint;
-                layout.targetSnapIndex = candidateIndex;  // Store snap index for stable identity
-                LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
-                          edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
+                // SSOT: Use setter methods to ensure snapIndex and Point are synchronized
+                if (isSource) {
+                    layout.setSourceSnap(candidateIndex, snapPoint);
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
+                              edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
+                } else {
+                    layout.setTargetSnap(candidateIndex, snapPoint);
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
+                              edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
+                }
             }
         }
     }

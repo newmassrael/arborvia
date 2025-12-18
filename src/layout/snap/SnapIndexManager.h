@@ -148,6 +148,39 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts);
 
+    // === Optimal Snap Selection ===
+
+    /// Result of optimal snap selection for a single connection
+    struct SnapAssignment {
+        EdgeId edgeId;
+        bool isSource;
+        int candidateIndex;
+        Point snapPosition;
+    };
+
+    /// Select optimal snap candidates using Manhattan distance minimization.
+    ///
+    /// Algorithm:
+    /// 1. Sort connections by other node position (crossing minimization)
+    /// 2. For each connection, calculate Manhattan distance to all candidates
+    /// 3. Greedy assignment: prefer candidates that minimize total distance
+    ///    while maintaining crossing-minimized order
+    ///
+    /// @param connections List of (EdgeId, isSource) pairs to assign
+    /// @param node The node whose edge we're assigning snap points on
+    /// @param nodeEdge Which edge of the node
+    /// @param edgeLayouts All edge layouts (to find other endpoints)
+    /// @param nodeLayouts All node layouts (to find other node positions)
+    /// @param gridSize Grid size for candidate calculation
+    /// @return Vector of SnapAssignment with optimal candidate indices
+    static std::vector<SnapAssignment> selectOptimalCandidates(
+        const std::vector<std::pair<EdgeId, bool>>& connections,
+        const NodeLayout& node,
+        NodeEdge nodeEdge,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize);
+
 private:
     /// Get sort key for a node based on edge orientation
     /// @param node Node to get key for

@@ -360,14 +360,16 @@ void SugiyamaLayout::routeEdges() {
                                options_,
                                true);  // skipOptimization=true
 
-    // 2. Distribute snap points (this finalizes source/target positions)
+    // 2. Distribute snap points (assigns snapIndex - the Single Source of Truth)
+    //    Optimizer will preserve these indices when possible
     if (options_.autoSnapPoints) {
         routing.distributeAutoSnapPoints(
             result, state_->result.nodeLayouts(),
             options_.gridConfig.cellSize);
     }
 
-    // 3. Run optimizer on final snap positions to satisfy all constraints
+    // 3. Run optimizer (may change NodeEdge, sets snapIndex=-1 when NodeEdge changes)
+    //    When snapIndex is valid, optimizer preserves it and derives positions from it
     routing.optimizeRouting(result, state_->result.nodeLayouts(), options_);
 
     for (auto& [id, layout] : result.edgeLayouts) {

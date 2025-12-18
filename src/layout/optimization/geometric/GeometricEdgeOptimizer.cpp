@@ -109,8 +109,8 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
         EdgeLayout finalLayout = baseLayout;
         finalLayout.sourceEdge = best.layout.sourceEdge;
         finalLayout.targetEdge = best.layout.targetEdge;
-        finalLayout.sourcePoint = best.layout.sourcePoint;
-        finalLayout.targetPoint = best.layout.targetPoint;
+        // Copy snap state from best candidate (preserves SSOT)
+        finalLayout.copySnapStateFrom(best.layout);
         finalLayout.bendPoints = best.layout.bendPoints;
 
         result[edgeId] = finalLayout;
@@ -209,11 +209,11 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     candidate.sourceEdge = sourceEdge;
     candidate.targetEdge = targetEdge;
 
+    // Snap indices will be calculated below with setSourceSnap/setTargetSnap
+
     // Check if endpoints should be preserved (on fixed nodes)
     bool srcFixed = isNodeFixed(base.from);
     bool tgtFixed = isNodeFixed(base.to);
-
-    // NOTE: snapIndex is no longer stored - computed from position as needed
 
     auto srcIt = nodeLayouts.find(base.from);
     auto tgtIt = nodeLayouts.find(base.to);
@@ -250,8 +250,26 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         sourcePoint, targetPoint, sourceEdge, targetEdge,
         nodeLayouts, base.from, base.to);
 
-    candidate.sourcePoint = sourcePoint;
-    candidate.targetPoint = targetPoint;
+    // Set snap positions using SSOT pattern
+    float effectiveGridSize = constants::effectiveGridSize(gridSize_);
+    if (srcFixed && sourceEdge == base.sourceEdge) {
+        // Preserved from base - snapIndex/Point already correct
+    } else {
+        // Calculate snapIndex for new position
+        int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+            srcIt->second, sourceEdge, sourcePoint, effectiveGridSize);
+        candidate.setSourceSnap(snapIdx, sourcePoint);
+    }
+
+    if (tgtFixed && targetEdge == base.targetEdge) {
+        // Preserved from base - snapIndex/Point already correct
+    } else {
+        // Calculate snapIndex for new position
+        int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
+            tgtIt->second, targetEdge, targetPoint, effectiveGridSize);
+        candidate.setTargetSnap(snapIdx, targetPoint);
+    }
+
     candidate.bendPoints = std::move(bendPoints);
 
     // === Step 2: Iteratively avoid overlap AND re-check node collisions ===
@@ -1226,6 +1244,7 @@ std::vector<BendPoint> GeometricEdgeOptimizer::tryAlternativeMidPoints(
 
     auto scorePath = [&](const std::vector<BendPoint>& bends) -> int {
         EdgeLayout candidate;
+        // Temporary layout for scoring only (not persisted)
         candidate.sourcePoint = source;
         candidate.targetPoint = target;
         candidate.sourceEdge = sourceEdge;

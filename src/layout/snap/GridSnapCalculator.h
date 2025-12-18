@@ -209,6 +209,56 @@ public:
         float ratio,
         float gridSize);
 
+    // =========================================================================
+    // EdgeLayout Point Synchronization
+    // =========================================================================
+
+    /**
+     * @brief Update EdgeLayout's sourcePoint/targetPoint from snapIndex values.
+     *
+     * This is the canonical way to ensure Point values are derived from snapIndex.
+     * Only updates points where the corresponding snapIndex is valid (>= 0).
+     * Points with invalid snapIndex (-1) are left unchanged.
+     *
+     * Call this after:
+     * - SnapDistributor assigns snapIndices
+     * - Node positions change (to recalculate pixel positions)
+     *
+     * @param layout EdgeLayout to update (modified in place)
+     * @param sourceNode Source node layout
+     * @param targetNode Target node layout
+     * @param gridSize Grid cell size
+     */
+    static void updateEdgeLayoutPoints(
+        EdgeLayout& layout,
+        const NodeLayout& sourceNode,
+        const NodeLayout& targetNode,
+        float gridSize);
+
+    /**
+     * @brief Update only the source point from snapIndex.
+     *
+     * @param layout EdgeLayout to update
+     * @param sourceNode Source node layout
+     * @param gridSize Grid cell size
+     */
+    static void updateSourcePoint(
+        EdgeLayout& layout,
+        const NodeLayout& sourceNode,
+        float gridSize);
+
+    /**
+     * @brief Update only the target point from snapIndex.
+     *
+     * @param layout EdgeLayout to update
+     * @param targetNode Target node layout
+     * @param gridSize Grid cell size
+     */
+    static void updateTargetPoint(
+        EdgeLayout& layout,
+        const NodeLayout& targetNode,
+        float gridSize);
+
 private:
     // =========================================================================
     // Corner Exclusion Helpers (Single Source of Truth)

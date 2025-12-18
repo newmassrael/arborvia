@@ -757,7 +757,9 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     candidate.targetEdge = targetEdge;
     candidate.bendPoints.clear();
 
-    // NOTE: snapIndex is no longer stored - computed from position as needed
+    // === Snap Index Management ===
+    // Same NodeEdge → preserve existing snapIndex (SnapDistributor's assignment)
+    // Snap indices will be calculated below with setSourceSnap/setTargetSnap
 
     // Get node layouts
     auto srcIt = nodeLayouts.find(base.from);
@@ -785,55 +787,59 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     
     // === SOURCE SNAP POSITION ===
     // Rule: Same NodeEdge → preserve SnapDistributor's position (respect distributed candidateIdx)
-    //       Different NodeEdge → compute center position for new edge
+    //       Different NodeEdge → compute center position for new edge (snapIndex=-1)
     if (sourceEdge == base.sourceEdge) {
         // Same NodeEdge - preserve existing position (SnapDistributor already distributed)
         if (srcFixed) {
-            // Node is fixed - position unchanged
-            candidate.sourcePoint = base.sourcePoint;
+            // Node is fixed - preserve existing snapIndex and position
+            // No change needed - candidate was copied from base
         } else {
-            // Node moved - recalculate position preserving candidateIdx
+            // Node moved - recalculate position preserving candidateIdx (SSOT pattern)
             int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
                 srcIt->second, base.sourceEdge, base.sourcePoint, gridSize);
-            // Recompute position at same candidateIdx (accounts for node movement)
-            candidate.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 srcIt->second, sourceEdge, candidateIdx, gridSize);
+            candidate.setSourceSnap(candidateIdx, derivedPoint);
         }
         startGrid = {
             static_cast<int>(std::round(candidate.sourcePoint.x / gridSize)),
             static_cast<int>(std::round(candidate.sourcePoint.y / gridSize))
         };
     } else {
-        // Different NodeEdge - compute center position (grid-aligned)
-        // Use center candidateIdx for new edge
+        // Different NodeEdge - compute center position
         int candidateCount = GridSnapCalculator::getCandidateCount(srcIt->second, sourceEdge, gridSize);
         int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
-        candidate.sourcePoint = GridSnapCalculator::getPositionFromCandidateIndex(
+        Point centerPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             srcIt->second, sourceEdge, centerIdx, gridSize);
+        candidate.setSourceSnap(centerIdx, centerPoint);
         startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
     }
     
     // === TARGET SNAP POSITION ===
     if (targetEdge == base.targetEdge) {
-        // Same NodeEdge - preserve existing position
+        // Same NodeEdge - preserve existing position (SnapDistributor already distributed)
         if (tgtFixed) {
-            candidate.targetPoint = base.targetPoint;
+            // Node is fixed - preserve existing snapIndex and position
+            // No change needed - candidate was copied from base
         } else {
+            // Node moved - recalculate position preserving candidateIdx (SSOT pattern)
             int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
                 tgtIt->second, base.targetEdge, base.targetPoint, gridSize);
-            candidate.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 tgtIt->second, targetEdge, candidateIdx, gridSize);
+            candidate.setTargetSnap(candidateIdx, derivedPoint);
         }
         goalGrid = {
             static_cast<int>(std::round(candidate.targetPoint.x / gridSize)),
             static_cast<int>(std::round(candidate.targetPoint.y / gridSize))
         };
     } else {
-        // Different NodeEdge - compute center position (grid-aligned)
+        // Different NodeEdge - compute center position
         int candidateCount = GridSnapCalculator::getCandidateCount(tgtIt->second, targetEdge, gridSize);
         int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
-        candidate.targetPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+        Point centerPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             tgtIt->second, targetEdge, centerIdx, gridSize);
+        candidate.setTargetSnap(centerIdx, centerPoint);
         goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
     }
 
@@ -1058,9 +1064,8 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         if (result.success) {
             // Update bendPoints and snap positions (may be changed by retry chain)
             layout.bendPoints = result.layout.bendPoints;
-            layout.sourcePoint = result.layout.sourcePoint;
-            layout.targetPoint = result.layout.targetPoint;
-            // NOTE: snapIndex is no longer stored - computed from position as needed
+            // Copy snap state from retry chain result (preserves SSOT)
+            layout.copySnapStateFrom(result.layout);
             layout.usedGridSize = effectiveGridSize();  // Single Source of Truth
 
             // Update rerouted edges back to edgeLayouts (only bendPoints)
