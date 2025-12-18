@@ -1065,15 +1065,13 @@ void GeometricEdgeOptimizer::regenerateBendPoints(
 
         // If collision still exists, try alternative mid-points with penalty scoring
         if (hasCollision) {
-            // Create edgeLayouts map for penalty scoring (empty for now - could be enhanced)
-            std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
             layout.bendPoints = tryAlternativeMidPoints(
                 layout.sourcePoint,
                 layout.targetPoint,
                 layout.sourceEdge,
                 layout.targetEdge,
                 nodeLayouts,
-                emptyLayouts,
+                edgeLayouts,
                 layout.from,
                 layout.to);
         }
