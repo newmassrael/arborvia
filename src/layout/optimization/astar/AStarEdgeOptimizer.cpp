@@ -17,9 +17,67 @@
 #include <future>
 #include <thread>
 #include <unordered_set>
+#include <set>
 
 
 namespace arborvia {
+
+namespace {
+    /// Collect snap indices already used on a specific NodeEdge
+    /// Returns set of snap indices that are occupied by other edges
+    std::set<int> collectUsedSnapIndices(
+        NodeId nodeId,
+        NodeEdge nodeEdge,
+        bool isSource,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
+        
+        std::set<int> usedIndices;
+        
+        for (const auto& [edgeId, layout] : edgeLayouts) {
+            // Check source side
+            if (isSource && layout.from == nodeId && layout.sourceEdge == nodeEdge) {
+                usedIndices.insert(layout.sourceSnapIndex);
+            }
+            // Check target side
+            if (!isSource && layout.to == nodeId && layout.targetEdge == nodeEdge) {
+                usedIndices.insert(layout.targetSnapIndex);
+            }
+        }
+        
+        return usedIndices;
+    }
+    
+    /// Find first unused snap index on a NodeEdge
+    /// Returns centerIdx if all indices are used
+    int findFirstUnusedSnapIndex(
+        int candidateCount,
+        const std::set<int>& usedIndices) {
+        
+        // Try from center outward: center, center+1, center-1, center+2, ...
+        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
+        
+        // First try center
+        if (usedIndices.find(centerIdx) == usedIndices.end()) {
+            return centerIdx;
+        }
+        
+        // Then try outward from center
+        for (int offset = 1; offset < candidateCount; ++offset) {
+            int plusIdx = centerIdx + offset;
+            if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
+                return plusIdx;
+            }
+            
+            int minusIdx = centerIdx - offset;
+            if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
+                return minusIdx;
+            }
+        }
+        
+        // All used, return center as fallback
+        return centerIdx;
+    }
+}  // anonymous namespace
 
 AStarEdgeOptimizer::AStarEdgeOptimizer(
     std::shared_ptr<IPathFinder> pathFinder)
@@ -408,7 +466,7 @@ AStarEdgeOptimizer::evaluateCombinations(
         // Generate new path with A*
         bool pathFound = false;
         EdgeLayout candidate = createCandidateLayout(
-            baseLayout, srcEdge, tgtEdge, nodeLayouts, obstacles, pathFound);
+            baseLayout, srcEdge, tgtEdge, nodeLayouts, assignedLayouts, obstacles, pathFound);
 
         // Skip invalid candidates (node not found or no valid path)
         if (!pathFound) {
@@ -619,7 +677,7 @@ AStarEdgeOptimizer::evaluateCombinations(
         // Generate new path with A* using provided pathfinder
         bool pathFound = false;
         EdgeLayout candidate = createCandidateLayout(
-            baseLayout, srcEdge, tgtEdge, nodeLayouts, obstacles, pathFound, pathFinder);
+            baseLayout, srcEdge, tgtEdge, nodeLayouts, assignedLayouts, obstacles, pathFound, pathFinder);
 
         if (!pathFound) {
             return;
@@ -735,10 +793,11 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     NodeEdge sourceEdge,
     NodeEdge targetEdge,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
     ObstacleMap& obstacles,
     bool& pathFound) {
     // Delegate to thread-safe version with member pathfinder
-    return createCandidateLayout(base, sourceEdge, targetEdge, nodeLayouts, obstacles, pathFound, *pathFinder_);
+    return createCandidateLayout(base, sourceEdge, targetEdge, nodeLayouts, assignedLayouts, obstacles, pathFound, *pathFinder_);
 }
 
 EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
@@ -746,6 +805,7 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     NodeEdge sourceEdge,
     NodeEdge targetEdge,
     const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
     ObstacleMap& obstacles,
     bool& pathFound,
     IPathFinder& pathFinder) {
@@ -806,12 +866,14 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
             static_cast<int>(std::round(candidate.sourcePoint.y / gridSize))
         };
     } else {
-        // Different NodeEdge - compute center position
+        // Different NodeEdge - find first unused snap index to avoid collision
         int candidateCount = GridSnapCalculator::getCandidateCount(srcIt->second, sourceEdge, gridSize);
-        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
-        Point centerPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-            srcIt->second, sourceEdge, centerIdx, gridSize);
-        candidate.setSourceSnap(centerIdx, centerPoint);
+        std::set<int> usedIndices = collectUsedSnapIndices(
+            base.from, sourceEdge, true, assignedLayouts);
+        int selectedIdx = findFirstUnusedSnapIndex(candidateCount, usedIndices);
+        Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            srcIt->second, sourceEdge, selectedIdx, gridSize);
+        candidate.setSourceSnap(selectedIdx, snapPoint);
         startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
     }
     
@@ -834,12 +896,14 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
             static_cast<int>(std::round(candidate.targetPoint.y / gridSize))
         };
     } else {
-        // Different NodeEdge - compute center position
+        // Different NodeEdge - find first unused snap index to avoid collision
         int candidateCount = GridSnapCalculator::getCandidateCount(tgtIt->second, targetEdge, gridSize);
-        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
-        Point centerPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-            tgtIt->second, targetEdge, centerIdx, gridSize);
-        candidate.setTargetSnap(centerIdx, centerPoint);
+        std::set<int> usedIndices = collectUsedSnapIndices(
+            base.to, targetEdge, false, assignedLayouts);
+        int selectedIdx = findFirstUnusedSnapIndex(candidateCount, usedIndices);
+        Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+            tgtIt->second, targetEdge, selectedIdx, gridSize);
+        candidate.setTargetSnap(selectedIdx, snapPoint);
         goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
     }
 
@@ -1538,7 +1602,7 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
             ObstacleMap obstaclesA = baseObstacles;  // Copy base obstacles
             bool pathFoundA = false;
             EdgeLayout candidateA = createCandidateLayout(
-                layoutA, srcA, tgtA, nodeLayouts, obstaclesA, pathFoundA);
+                layoutA, srcA, tgtA, nodeLayouts, otherLayouts, obstaclesA, pathFoundA);
 
             if (!pathFoundA) continue;
             ++pathFoundACount;
@@ -1569,7 +1633,7 @@ AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
 
                     bool pathFoundB = false;
                     EdgeLayout candidateB = createCandidateLayout(
-                        layoutB, srcB, tgtB, nodeLayouts, obstaclesB, pathFoundB);
+                        layoutB, srcB, tgtB, nodeLayouts, withA, obstaclesB, pathFoundB);
 
                     if (!pathFoundB) continue;
                     ++pathFoundBCount;
@@ -1645,9 +1709,8 @@ AStarEdgeOptimizer::ParallelEdgeResult AStarEdgeOptimizer::evaluateEdgeIndepende
     }
 
     // For regular edges, use thread-local pathfinder
-    std::unordered_map<EdgeId, EdgeLayout> emptyLayouts;
     auto combinations = evaluateCombinations(
-        edgeId, baseLayout, emptyLayouts, nodeLayouts, forbiddenZones, pathFinder);
+        edgeId, baseLayout, currentLayouts, nodeLayouts, forbiddenZones, pathFinder);
 
     if (!combinations.empty()) {
         presult.best = combinations.front();

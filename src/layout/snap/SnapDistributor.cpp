@@ -77,28 +77,26 @@ void SnapDistributor::distribute(
             continue;
         }
 
-        // Normal nodes: sequential distribution
-        // Note: Manhattan optimization disabled due to complex interaction with other layout stages
+        // Normal nodes: Manhattan distance optimization
+        // Select snap points that minimize distance to target nodes
         {
-            int connectionCount = static_cast<int>(connections.size());
+            auto assignments = SnapIndexManager::selectOptimalCandidates(
+                connections, node, nodeEdge, result.edgeLayouts, nodeLayouts, gridSizeToUse);
 
-            for (int i = 0; i < connectionCount; ++i) {
-                auto [edgeId, isSource] = connections[i];
-                EdgeLayout& layout = result.edgeLayouts[edgeId];
-
-                int candidateIndex = 0;
-                Point snapPoint = GridSnapCalculator::calculateSnapPosition(
-                    node, nodeEdge, i, connectionCount, gridSizeToUse, &candidateIndex);
+            for (const auto& assignment : assignments) {
+                EdgeLayout& layout = result.edgeLayouts[assignment.edgeId];
 
                 // SSOT: Use setter methods to ensure snapIndex and Point are synchronized
-                if (isSource) {
-                    layout.setSourceSnap(candidateIndex, snapPoint);
-                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
-                              edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
+                if (assignment.isSource) {
+                    layout.setSourceSnap(assignment.candidateIndex, assignment.snapPosition);
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} Manhattan snapIdx={} pos=({},{})",
+                              assignment.edgeId, nodeId, assignment.candidateIndex, 
+                              assignment.snapPosition.x, assignment.snapPosition.y);
                 } else {
-                    layout.setTargetSnap(candidateIndex, snapPoint);
-                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} edge={} idx={}/{} pos=({},{}) snapIdx={}",
-                              edgeId, nodeId, static_cast<int>(nodeEdge), i, connectionCount, snapPoint.x, snapPoint.y, candidateIndex);
+                    layout.setTargetSnap(assignment.candidateIndex, assignment.snapPosition);
+                    LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} Manhattan snapIdx={} pos=({},{})",
+                              assignment.edgeId, nodeId, assignment.candidateIndex,
+                              assignment.snapPosition.x, assignment.snapPosition.y);
                 }
             }
         }

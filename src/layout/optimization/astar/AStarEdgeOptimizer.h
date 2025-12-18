@@ -137,11 +137,13 @@ private:
     /// Create a candidate layout for a specific source/target edge combination
     /// Calculates actual orthogonal path using A* pathfinder
     /// Uses member pathFinder_
+    /// @param assignedLayouts Other edge layouts (to avoid snap index collision)
     EdgeLayout createCandidateLayout(
         const EdgeLayout& base,
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         ObstacleMap& obstacles,
         bool& pathFound);
 
@@ -151,6 +153,7 @@ private:
         NodeEdge sourceEdge,
         NodeEdge targetEdge,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         ObstacleMap& obstacles,
         bool& pathFound,
         IPathFinder& pathFinder);

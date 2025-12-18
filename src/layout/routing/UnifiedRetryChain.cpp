@@ -9,14 +9,63 @@
 #include "arborvia/common/Logger.h"
 #include <array>
 #include <cmath>
+#include <set>
 
 namespace arborvia {
 
 namespace {
-    /// Snap ratios to try during retry sequence (ordered by priority)
-    static constexpr std::array<float, 9> SNAP_RATIOS = {
-        0.2f, 0.4f, 0.5f, 0.6f, 0.8f, 0.1f, 0.9f, 0.3f, 0.7f
-    };
+    /// Collect snap indices already used on a specific NodeEdge
+    /// Returns set of snap indices that are occupied by other edges
+    std::set<int> collectUsedSnapIndices(
+        EdgeId currentEdgeId,
+        NodeId nodeId,
+        NodeEdge nodeEdge,
+        bool isSource,
+        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges) {
+        
+        std::set<int> usedIndices;
+        
+        for (const auto& [edgeId, layout] : otherEdges) {
+            if (edgeId == currentEdgeId) continue;
+            
+            // Check source side
+            if (isSource && layout.from == nodeId && layout.sourceEdge == nodeEdge) {
+                usedIndices.insert(layout.sourceSnapIndex);
+            }
+            // Check target side
+            if (!isSource && layout.to == nodeId && layout.targetEdge == nodeEdge) {
+                usedIndices.insert(layout.targetSnapIndex);
+            }
+        }
+        
+        return usedIndices;
+    }
+    
+    /// Generate adjacent snap indices in priority order: +1, -1, +2, -2, ...
+    /// Skips indices that are already used or out of bounds
+    std::vector<int> generateAdjacentIndices(
+        int currentIndex,
+        int candidateCount,
+        const std::set<int>& usedIndices) {
+        
+        std::vector<int> result;
+        
+        for (int offset = 1; offset < candidateCount; ++offset) {
+            // Try +offset
+            int plusIdx = currentIndex + offset;
+            if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
+                result.push_back(plusIdx);
+            }
+            
+            // Try -offset
+            int minusIdx = currentIndex - offset;
+            if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
+                result.push_back(minusIdx);
+            }
+        }
+        
+        return result;
+    }
 
     /// Log constraint violation details
     void logValidationFailure(EdgeId edgeId, const UnifiedRetryChain::PathValidationResult& validation) {
@@ -286,6 +335,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
     const RetryConfig& config) {
 
     RetryResult result;
+    float gridSize = effectiveGridSize();
 
     // Soft constraint: determine which endpoints can be modified
     bool canModifySource = !config.movedNodes || config.movedNodes->count(originalLayout.from) > 0;
@@ -306,11 +356,6 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
     }
     const NodeLayout& srcNode = srcNodeIt->second;
     const NodeLayout& tgtNode = tgtNodeIt->second;
-
-    // Use snap ratios from constant, limited by config
-    const size_t maxRatios = std::min(
-        SNAP_RATIOS.size(),
-        static_cast<size_t>(config.maxSnapRetries));
 
     // Helper lambda to try A* and cooperative reroute
     auto tryWithReroute = [&](EdgeLayout& workingLayout) -> bool {
@@ -345,24 +390,34 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
         return false;
     };
 
-    // Try source snap variations if allowed
+    // Try source snap index variations if allowed
     if (canModifySource) {
-        for (size_t i = 0; i < maxRatios; ++i) {
-            float ratio = SNAP_RATIOS[i];
+        // Collect already used snap indices on this NodeEdge
+        std::set<int> usedSourceIndices = collectUsedSnapIndices(
+            edgeId, originalLayout.from, originalLayout.sourceEdge, true, otherEdges);
+        
+        // Get candidate count for this NodeEdge
+        int srcCandidateCount = GridSnapCalculator::getCandidateCount(
+            srcNode, originalLayout.sourceEdge, gridSize);
+        
+        // Generate adjacent indices (skipping used ones)
+        auto adjacentIndices = generateAdjacentIndices(
+            originalLayout.sourceSnapIndex, srcCandidateCount, usedSourceIndices);
+        
+        // Limit retries
+        size_t maxRetries = std::min(adjacentIndices.size(), static_cast<size_t>(config.maxSnapRetries));
+        
+        for (size_t i = 0; i < maxRetries; ++i) {
+            int newIndex = adjacentIndices[i];
             EdgeLayout workingLayout = originalLayout;
-
-            int candidateIndex = 0;
-            Point newSnapPoint = calculateSnapPointForRatio(
-                srcNode, workingLayout.sourceEdge, ratio, &candidateIndex);
-
-            // Skip if same as original
-            float dx = std::abs(newSnapPoint.x - originalLayout.sourcePoint.x);
-            float dy = std::abs(newSnapPoint.y - originalLayout.sourcePoint.y);
-            if (dx < 1.0f && dy < 1.0f) {
-                continue;
-            }
-
-            workingLayout.setSourceSnap(candidateIndex, newSnapPoint);
+            
+            Point newSnapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+                srcNode, originalLayout.sourceEdge, newIndex, gridSize);
+            
+            workingLayout.setSourceSnap(newIndex, newSnapPoint);
+            
+            LOG_DEBUG("[UnifiedRetryChain] Edge {} trying source snapIndex {} (was {})",
+                      edgeId, newIndex, originalLayout.sourceSnapIndex);
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -370,24 +425,34 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
         }
     }
 
-    // Try target snap variations if allowed
+    // Try target snap index variations if allowed
     if (canModifyTarget) {
-        for (size_t i = 0; i < maxRatios; ++i) {
-            float ratio = SNAP_RATIOS[i];
+        // Collect already used snap indices on this NodeEdge
+        std::set<int> usedTargetIndices = collectUsedSnapIndices(
+            edgeId, originalLayout.to, originalLayout.targetEdge, false, otherEdges);
+        
+        // Get candidate count for this NodeEdge
+        int tgtCandidateCount = GridSnapCalculator::getCandidateCount(
+            tgtNode, originalLayout.targetEdge, gridSize);
+        
+        // Generate adjacent indices (skipping used ones)
+        auto adjacentIndices = generateAdjacentIndices(
+            originalLayout.targetSnapIndex, tgtCandidateCount, usedTargetIndices);
+        
+        // Limit retries
+        size_t maxRetries = std::min(adjacentIndices.size(), static_cast<size_t>(config.maxSnapRetries));
+        
+        for (size_t i = 0; i < maxRetries; ++i) {
+            int newIndex = adjacentIndices[i];
             EdgeLayout workingLayout = originalLayout;
-
-            int candidateIndex = 0;
-            Point newSnapPoint = calculateSnapPointForRatio(
-                tgtNode, workingLayout.targetEdge, ratio, &candidateIndex);
-
-            // Skip if same as original
-            float dx = std::abs(newSnapPoint.x - originalLayout.targetPoint.x);
-            float dy = std::abs(newSnapPoint.y - originalLayout.targetPoint.y);
-            if (dx < 1.0f && dy < 1.0f) {
-                continue;
-            }
-
-            workingLayout.setTargetSnap(candidateIndex, newSnapPoint);
+            
+            Point newSnapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
+                tgtNode, originalLayout.targetEdge, newIndex, gridSize);
+            
+            workingLayout.setTargetSnap(newIndex, newSnapPoint);
+            
+            LOG_DEBUG("[UnifiedRetryChain] Edge {} trying target snapIndex {} (was {})",
+                      edgeId, newIndex, originalLayout.targetSnapIndex);
 
             if (tryWithReroute(workingLayout)) {
                 return result;
@@ -395,7 +460,7 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
         }
     }
 
-    result.failureReason = "All snap point variations failed";
+    result.failureReason = "All snap index variations failed";
     return result;
 }
 
@@ -459,19 +524,41 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             int tgtCandidateCount = GridSnapCalculator::getCandidateCount(tgtNode, tgtEdge, gridSize);
 
             // Calculate new positions only for modifiable endpoints
-            // NOTE: snapIndex is no longer stored - computed from position as needed
+            // Find first unused snap index to avoid collision
             int srcCandidateIdx = 0;
             int tgtCandidateIdx = 0;
             Point newSrc = originalLayout.sourcePoint;
             Point newTgt = originalLayout.targetPoint;
 
             if (canModifySource) {
-                newSrc = GridSnapCalculator::calculateSnapPosition(
-                    srcNode, srcEdge, 0, std::max(1, srcCandidateCount), gridSize, &srcCandidateIdx);
+                // Collect used indices on this new NodeEdge
+                std::set<int> usedSrcIndices = collectUsedSnapIndices(
+                    edgeId, originalLayout.from, srcEdge, true, otherEdges);
+                
+                // Find first unused index
+                for (int i = 0; i < srcCandidateCount; ++i) {
+                    if (usedSrcIndices.find(i) == usedSrcIndices.end()) {
+                        srcCandidateIdx = i;
+                        break;
+                    }
+                }
+                newSrc = GridSnapCalculator::getPositionFromCandidateIndex(
+                    srcNode, srcEdge, srcCandidateIdx, gridSize);
             }
             if (canModifyTarget) {
-                newTgt = GridSnapCalculator::calculateSnapPosition(
-                    tgtNode, tgtEdge, 0, std::max(1, tgtCandidateCount), gridSize, &tgtCandidateIdx);
+                // Collect used indices on this new NodeEdge
+                std::set<int> usedTgtIndices = collectUsedSnapIndices(
+                    edgeId, originalLayout.to, tgtEdge, false, otherEdges);
+                
+                // Find first unused index
+                for (int i = 0; i < tgtCandidateCount; ++i) {
+                    if (usedTgtIndices.find(i) == usedTgtIndices.end()) {
+                        tgtCandidateIdx = i;
+                        break;
+                    }
+                }
+                newTgt = GridSnapCalculator::getPositionFromCandidateIndex(
+                    tgtNode, tgtEdge, tgtCandidateIdx, gridSize);
             }
 
             EdgeLayout workingLayout = originalLayout;
