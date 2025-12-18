@@ -5,7 +5,6 @@
 #include "arborvia/layout/config/LayoutTypes.h"
 #include "../../sugiyama/routing/EdgeRoutingUtils.h"
 
-#include <atomic>
 #include <future>
 #include <memory>
 #include <vector>
@@ -13,7 +12,6 @@
 namespace arborvia {
 
 // Forward declarations
-class ObstacleMap;
 class UnifiedRetryChain;
 
 
@@ -77,109 +75,6 @@ private:
 
     /// Initialize or return the unified retry chain
     UnifiedRetryChain& getRetryChain(float gridSize);
-    
-    // Constraint state inherited from IEdgeOptimizer:
-    // - originalLayouts_, movedNodes_, isNodeFixed(), setConstraintState()
-    // - createPenaltyContext() for consistent PenaltyContext creation
-
-    /// Result of evaluating a single edge combination (uses shared type)
-    using CombinationResult = EdgeCombinationResult;
-
-    /// Result of parallel edge evaluation
-    struct ParallelEdgeResult {
-        EdgeId edgeId;
-        EdgeCombinationResult best;
-        bool isSelfLoop = false;
-        bool hasValidResult = false;
-    };
-
-    /// Evaluate single edge independently (thread-safe)
-    /// Uses thread-local pathfinder to avoid data races
-    /// @param pathFinder Thread-local pathfinder instance
-    /// @param currentLayouts All current edge layouts (for self-loop loopIndex calculation)
-    ParallelEdgeResult evaluateEdgeIndependent(
-        EdgeId edgeId,
-        const EdgeLayout& baseLayout,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones,
-        IPathFinder& pathFinder,
-        const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts);
-
-    /// Detect overlapping edges in results
-    std::vector<std::pair<EdgeId, EdgeId>> detectOverlaps(
-        const std::unordered_map<EdgeId, EdgeLayout>& layouts);
-
-    /// Evaluate edge combinations for a single edge
-    /// When preserveDirections() is true, only evaluates the existing combination.
-    /// Otherwise, evaluates all 16 combinations (4 source × 4 target edges).
-    /// @param edgeId Edge being optimized
-    /// @param baseLayout Original layout to derive combinations from
-    /// @param assignedLayouts Layouts already assigned (for intersection scoring)
-    /// @param nodeLayouts Node positions
-    /// @param forbiddenZones Pre-calculated forbidden zones for constraint checking
-    /// @return Vector of valid combination results, sorted by score (best first)
-    std::vector<CombinationResult> evaluateCombinations(
-        EdgeId edgeId,
-        const EdgeLayout& baseLayout,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones);
-
-    /// Thread-safe version with explicit pathfinder
-    std::vector<CombinationResult> evaluateCombinations(
-        EdgeId edgeId,
-        const EdgeLayout& baseLayout,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones,
-        IPathFinder& pathFinder);
-
-    /// Create a candidate layout for a specific source/target edge combination
-    /// Calculates actual orthogonal path using A* pathfinder
-    /// Uses member pathFinder_
-    /// @param assignedLayouts Other edge layouts (to avoid snap index collision)
-    EdgeLayout createCandidateLayout(
-        const EdgeLayout& base,
-        NodeEdge sourceEdge,
-        NodeEdge targetEdge,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        ObstacleMap& obstacles,
-        bool& pathFound);
-
-    /// Thread-safe version with explicit pathfinder
-    EdgeLayout createCandidateLayout(
-        const EdgeLayout& base,
-        NodeEdge sourceEdge,
-        NodeEdge targetEdge,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        ObstacleMap& obstacles,
-        bool& pathFound,
-        IPathFinder& pathFinder);
-
-    /// Calculate snap point position on a node edge (pixel coordinates)
-    /// @param node Node layout
-    /// @param edge Which edge of the node
-    /// @param position Relative position (0.0 to 1.0, default 0.5 = center)
-    /// @return Absolute point coordinates
-    static Point calculateSnapPosition(
-        const NodeLayout& node,
-        NodeEdge edge,
-        float position = 0.5f);
-
-    /// Calculate snap point position on a node edge (grid coordinates)
-    /// All coordinates are exact grid vertices - no rounding errors
-    /// @param node Node layout
-    /// @param edge Which edge of the node
-    /// @param gridSize Grid cell size
-    /// @param position Relative position (0.0 to 1.0, default 0.5 = center)
-    /// @return Grid coordinates
-    static GridPoint calculateGridPosition(
-        const NodeLayout& node,
-        NodeEdge edge,
-        float gridSize,
-        float position = 0.5f);
 
     /// Get effective grid size (uses default if not set)
     float effectiveGridSize() const;
@@ -192,83 +87,6 @@ private:
     std::vector<ForbiddenZone> calculateForbiddenZones(
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize) const;
-
-    /// Result of cooperative rerouting for an edge pair
-    struct EdgePairResult {
-        EdgeLayout layoutA;
-        EdgeLayout layoutB;
-        int combinedScore;
-        bool valid = false;
-    };
-
-    /// Resolve overlapping edge pair by cooperative rerouting
-    /// Removes both edges from obstacle map and evaluates 16×16 = 256 combinations
-    /// to find the best non-overlapping (pathA, pathB) pair.
-    /// @param edgeIdA First edge
-    /// @param edgeIdB Second edge
-    /// @param layoutA Current layout for first edge
-    /// @param layoutB Current layout for second edge
-    /// @param assignedLayouts All currently assigned layouts
-    /// @param nodeLayouts Node positions
-    /// @param forbiddenZones Pre-calculated forbidden zones
-    /// @return Best non-overlapping pair result (valid=false if none found)
-    EdgePairResult resolveOverlappingPair(
-        EdgeId edgeIdA, EdgeId edgeIdB,
-        const EdgeLayout& layoutA, const EdgeLayout& layoutB,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones);
-
-    /// Fallback path adjustment when 256 combination search fails
-    /// Tries various path adjustments to resolve overlap between two edges
-    /// @param edgeIdA First edge
-    /// @param edgeIdB Second edge
-    /// @param layoutA Layout for first edge (kept as-is or adjusted)
-    /// @param layoutB Layout for second edge (adjusted to avoid overlap)
-    /// @param otherLayouts Other assigned layouts (excluding A and B)
-    /// @param nodeLayouts Node positions
-    /// @param forbiddenZones Pre-calculated forbidden zones
-    /// @param gridSize Grid cell size for adjustments
-    /// @return Best adjusted pair result (valid=false if all attempts fail)
-    EdgePairResult tryPathAdjustmentFallback(
-        EdgeId edgeIdA, EdgeId edgeIdB,
-        const EdgeLayout& layoutA, const EdgeLayout& layoutB,
-        const std::unordered_map<EdgeId, EdgeLayout>& otherLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones,
-        float gridSize);
-
-    /// Evaluate self-loop combinations for a single edge
-    /// Tries all 4 directions (Right, Left, Top, Bottom) and returns
-    /// sorted results based on penalty scores.
-    /// @param edgeId Edge being optimized
-    /// @param baseLayout Original layout
-    /// @param assignedLayouts Layouts already assigned (for overlap checking)
-    /// @param nodeLayouts Node positions
-    /// @param forbiddenZones Pre-calculated forbidden zones
-    /// @return Vector of valid combination results, sorted by score (best first)
-    std::vector<CombinationResult> evaluateSelfLoopCombinations(
-        EdgeId edgeId,
-        const EdgeLayout& baseLayout,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones);
-
-    /// Resolve all overlapping pairs using resolveOverlappingPair + CooperativeRerouter fallback
-    /// @param overlappingPairs Pairs of overlapping edge IDs
-    /// @param result Map to update with resolved layouts
-    /// @param assignedLayouts All assigned layouts (updated with resolved layouts)
-    /// @param nodeLayouts Node positions
-    /// @param forbiddenZones Pre-calculated forbidden zones
-    /// @param resolvedEdges Optional set to track which edges were resolved (for parallel mode)
-    /// @return true if any overlaps were resolved
-    bool resolveAllOverlaps(
-        const std::vector<std::pair<EdgeId, EdgeId>>& overlappingPairs,
-        std::unordered_map<EdgeId, EdgeLayout>& result,
-        std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-        const std::vector<ForbiddenZone>& forbiddenZones,
-        std::unordered_set<EdgeId>* resolvedEdges = nullptr);
 };
 
 

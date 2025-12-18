@@ -42,6 +42,8 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/optimization/BuiltinPenalties.cpp
     src/layout/optimization/astar/AStarEdgeOptimizer.cpp
     src/layout/optimization/astar/AStarOptimizerFactory.cpp
+    src/layout/optimization/astar/NodeEdgeSelector.cpp
+    src/layout/optimization/astar/OverlapResolver.cpp
     src/layout/optimization/geometric/GeometricEdgeOptimizer.cpp
     src/layout/optimization/geometric/GeometricOptimizerFactory.cpp
 

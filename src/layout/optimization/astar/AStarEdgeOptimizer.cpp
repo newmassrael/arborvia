@@ -1,19 +1,16 @@
 #include "AStarEdgeOptimizer.h"
+#include "EdgeRoutingContext.h"
+#include "NodeEdgeSelector.h"
+#include "OverlapResolver.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
 #include "../../pathfinding/SelfLoopPathCalculator.h"
-#include "../../snap/GridSnapCalculator.h"
-#include "../../snap/SnapIndexManager.h"
-#include "../../routing/CooperativeRerouter.h"
 #include "../../routing/UnifiedRetryChain.h"
 #include "../../sugiyama/routing/PathIntersection.h"
-#include "../../sugiyama/routing/SelfLoopRouter.h"
 #include "arborvia/core/GeometryUtils.h"
-#include "arborvia/layout/api/IEdgePenalty.h"
 
 #include "arborvia/common/Logger.h"
 #include <algorithm>
-#include <array>
 #include <future>
 #include <thread>
 #include <unordered_set>
@@ -64,15 +61,26 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     float gridSizeParam,
     const std::unordered_set<NodeId>& movedNodes) {
 
-    // Store gridSize for use in helper methods (effectiveGridSize() will return this)
+    // Store gridSize for use in helper methods
     gridSize_ = gridSizeParam;
-    
+
     // Store constraint state in base class for FixedEndpointPenalty
     setConstraintState(currentLayouts, movedNodes);
 
     // Calculate forbidden zones once for all edges
     float gridSize = effectiveGridSize();
     auto forbiddenZones = calculateForbiddenZones(nodeLayouts, gridSize);
+
+    // Build EdgeRoutingContext for new components
+    EdgeRoutingContext context;
+    context.pathFinder = pathFinder_.get();
+    context.penaltySystem = penaltySystem_;
+    context.nodeLayouts = &nodeLayouts;
+    context.forbiddenZones = &forbiddenZones;
+    context.gridSize = gridSize;
+    context.originalLayouts = originalLayouts_;
+    context.movedNodes = movedNodes_;
+    context.preserveDirections = preserveDirections();
 
     std::unordered_map<EdgeId, EdgeLayout> result;
     std::unordered_map<EdgeId, EdgeLayout> assignedLayouts = currentLayouts;
@@ -93,13 +101,11 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
         for (int pass = 0; pass < MAX_PASSES; ++pass) {
             // ===== PHASE 1: Parallel independent evaluation =====
-            // Note: nodeLayouts and forbiddenZones are read-only during optimize(),
-            // so reference capture is safe and avoids expensive copying
-            std::vector<std::future<ParallelEdgeResult>> futures;
+            std::vector<std::future<NodeEdgeSelector::ParallelEdgeResult>> futures;
             futures.reserve(numEdges);
 
             for (EdgeId edgeId : edges) {
-                // Skip edges that had successful overlap resolution - keep their resolved layout
+                // Skip edges that had successful overlap resolution
                 if (resolvedEdges.count(edgeId)) continue;
 
                 auto it = currentLayouts.find(edgeId);
@@ -109,13 +115,12 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                 const EdgeLayout baseLayout = (pass > 0 && result.count(edgeId))
                     ? result[edgeId] : it->second;
 
-                // Launch async evaluation - reference capture is safe for read-only data
+                // Launch async evaluation with thread-local pathfinder
                 futures.push_back(std::async(std::launch::async,
-                    [this, edgeId, baseLayout, &nodeLayouts, &forbiddenZones, &currentLayouts]() {
-                        // Create thread-local pathfinder for thread safety
+                    [&context, edgeId, baseLayout, &currentLayouts]() {
                         AStarPathFinder localPathFinder;
-                        return evaluateEdgeIndependent(
-                            edgeId, baseLayout, nodeLayouts, forbiddenZones, localPathFinder, currentLayouts);
+                        return NodeEdgeSelector::evaluateEdgeIndependent(
+                            context, edgeId, baseLayout, currentLayouts, localPathFinder);
                     }));
             }
 
@@ -123,18 +128,17 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             bool anyOverlapFound = false;
 
             for (auto& future : futures) {
-                ParallelEdgeResult presult = future.get();
+                NodeEdgeSelector::ParallelEdgeResult presult = future.get();
                 if (presult.hasValidResult) {
                     if (presult.best.score > 0) anyOverlapFound = true;
                     result[presult.edgeId] = presult.best.layout;
                     assignedLayouts[presult.edgeId] = presult.best.layout;
                     if (presult.isSelfLoop) {
                         LOG_DEBUG("[SNAP-TRACE] PARALLEL SELFLOOP SAVED edge={} srcPos=({},{}) tgtPos=({},{})",
-                                  presult.edgeId, presult.best.layout.sourcePoint.x, presult.best.layout.sourcePoint.y, 
+                                  presult.edgeId, presult.best.layout.sourcePoint.x, presult.best.layout.sourcePoint.y,
                                   presult.best.layout.targetPoint.x, presult.best.layout.targetPoint.y);
                     }
                 } else {
-                    // Mark as failed - will be processed in Phase 1.5
                     auto it = currentLayouts.find(presult.edgeId);
                     if (it != currentLayouts.end()) {
                         result[presult.edgeId] = it->second;
@@ -144,8 +148,6 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             }
 
             // ===== PHASE 1.5: Sequential retry chain for failed edges =====
-            // Process failed edges (those with diagonal paths) using UnifiedRetryChain
-            // This must be done sequentially because CooperativeRerouter modifies other edges
             std::vector<EdgeId> failedEdgesInParallel;
             for (EdgeId edgeId : edges) {
                 if (resolvedEdges.count(edgeId)) continue;
@@ -208,7 +210,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             }
 
             // ===== PHASE 2: Detect overlaps =====
-            auto overlappingPairs = detectOverlaps(result);
+            auto overlappingPairs = OverlapResolver::detectOverlaps(result);
             LOG_DEBUG("[AStarOpt] PHASE 2: detectOverlaps found {} pairs (pass={}, parallel=true)",
                       overlappingPairs.size(), pass);
             for (const auto& [a, b] : overlappingPairs) {
@@ -217,8 +219,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             if (!overlappingPairs.empty()) anyOverlapFound = true;
 
             // ===== PHASE 3: Resolve overlaps (serial - cooperative rerouting) =====
-            resolveAllOverlaps(overlappingPairs, result, assignedLayouts,
-                               nodeLayouts, forbiddenZones, &resolvedEdges);
+            OverlapResolver::resolveAllOverlaps(context, overlappingPairs, result, assignedLayouts, &resolvedEdges);
 
             // Exit early if no overlaps found
             if (!anyOverlapFound) break;
@@ -241,8 +242,8 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
 
                 // Handle self-loops
                 if (baseLayout.from == baseLayout.to) {
-                    auto selfLoopCombinations = evaluateSelfLoopCombinations(
-                        edgeId, baseLayout, assignedLayouts, nodeLayouts, forbiddenZones);
+                    auto selfLoopCombinations = NodeEdgeSelector::evaluateSelfLoopCombinations(
+                        context, edgeId, baseLayout, assignedLayouts);
                     if (!selfLoopCombinations.empty()) {
                         const auto& best = selfLoopCombinations.front();
                         if (best.score > 0) anyOverlapFound = true;
@@ -260,8 +261,8 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                 }
 
                 // Evaluate edge combinations
-                auto combinations = evaluateCombinations(
-                    edgeId, baseLayout, assignedLayouts, nodeLayouts, forbiddenZones);
+                auto combinations = NodeEdgeSelector::evaluateCombinations(
+                    context, edgeId, baseLayout, assignedLayouts);
 
                 if (combinations.empty()) {
                     // All 16 combinations failed - use UnifiedRetryChain as fallback
@@ -280,7 +281,6 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                     if (retryResult.success) {
                         result[edgeId] = retryResult.layout;
                         assignedLayouts[edgeId] = retryResult.layout;
-                        // Update rerouted edges
                         for (const auto& reroutedLayout : retryResult.reroutedEdges) {
                             if (result.count(reroutedLayout.id)) {
                                 result[reroutedLayout.id] = reroutedLayout;
@@ -301,8 +301,8 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
                 assignedLayouts[edgeId] = best.layout;
             }
 
-            // Detect and resolve overlaps (not just for failed edges)
-            auto overlappingPairs = detectOverlaps(result);
+            // Detect and resolve overlaps
+            auto overlappingPairs = OverlapResolver::detectOverlaps(result);
             LOG_DEBUG("[AStarOpt] PHASE 2: detectOverlaps found {} pairs (pass={}, sequential=true)",
                       overlappingPairs.size(), pass);
             for (const auto& [a, b] : overlappingPairs) {
@@ -310,8 +310,7 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
             }
             if (!overlappingPairs.empty()) {
                 anyOverlapFound = true;
-                resolveAllOverlaps(overlappingPairs, result, assignedLayouts,
-                                   nodeLayouts, forbiddenZones, nullptr);
+                OverlapResolver::resolveAllOverlaps(context, overlappingPairs, result, assignedLayouts, nullptr);
             }
 
             if (!anyOverlapFound) break;
@@ -319,626 +318,6 @@ std::unordered_map<EdgeId, EdgeLayout> AStarEdgeOptimizer::optimize(
     }
 
     return result;
-}
-
-std::vector<AStarEdgeOptimizer::CombinationResult>
-AStarEdgeOptimizer::evaluateCombinations(
-    EdgeId /*edgeId*/,
-    const EdgeLayout& baseLayout,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones) {
-
-    std::vector<CombinationResult> results;
-    results.reserve(16);
-
-    // Build obstacle map once for all combinations (more efficient)
-    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
-    float gridSize = effectiveGridSize();
-    ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
-
-    // Add OTHER edge segments as obstacles so A* finds paths that avoid them
-    // Uses centralized API that automatically handles Point node awareness
-    obstacles.addEdgeSegmentsForLayout(baseLayout, assignedLayouts, nodeLayouts);
-
-    // Lambda to evaluate a single edge combination
-    auto evaluateEdge = [&](NodeEdge srcEdge, NodeEdge tgtEdge) {
-        // First, try keeping original bendPoints if same source/target edges
-        // AND snap points are at the same location (within tolerance)
-        constexpr float SNAP_TOLERANCE = 5.0f;
-        bool sameSnapPoints = false;
-        
-        if (srcEdge == baseLayout.sourceEdge && tgtEdge == baseLayout.targetEdge &&
-            !baseLayout.bendPoints.empty()) {
-            
-            // Check if snap points match the original layout
-            // (They may have changed due to redistribution)
-            auto srcNodeIt = nodeLayouts.find(baseLayout.from);
-            auto tgtNodeIt = nodeLayouts.find(baseLayout.to);
-            if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
-                // Snap points should be close to the original source/target points
-                // If they've moved significantly, the original path won't work
-                Point currentSrc = baseLayout.sourcePoint;
-                Point currentTgt = baseLayout.targetPoint;
-                
-                // Check if first bendpoint is close to source (path starts correctly)
-                // and last bendpoint is close to target (path ends correctly)
-                if (baseLayout.bendPoints.size() >= 1) {
-                    const Point& firstBend = baseLayout.bendPoints.front().position;
-                    const Point& lastBend = baseLayout.bendPoints.back().position;
-                    
-                    // For orthogonal paths, check axis alignment
-                    bool srcAligned = false;
-                    bool tgtAligned = false;
-                    
-                    // Source to first bend should be orthogonal from source edge
-                    if (srcEdge == NodeEdge::Top || srcEdge == NodeEdge::Bottom) {
-                        srcAligned = std::abs(currentSrc.x - firstBend.x) < SNAP_TOLERANCE;
-                    } else {
-                        srcAligned = std::abs(currentSrc.y - firstBend.y) < SNAP_TOLERANCE;
-                    }
-                    
-                    // Last bend to target should be orthogonal to target edge
-                    if (tgtEdge == NodeEdge::Top || tgtEdge == NodeEdge::Bottom) {
-                        tgtAligned = std::abs(currentTgt.x - lastBend.x) < SNAP_TOLERANCE;
-                    } else {
-                        tgtAligned = std::abs(currentTgt.y - lastBend.y) < SNAP_TOLERANCE;
-                    }
-                    
-                    sameSnapPoints = srcAligned && tgtAligned;
-                }
-            }
-        }
-        
-        if (sameSnapPoints) {
-            PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
-            ctx.sourceNodeId = baseLayout.from;
-            ctx.targetNodeId = baseLayout.to;
-            ctx.originalLayouts = originalLayouts_;
-            ctx.movedNodes = movedNodes_;
-            
-            if (passesHardConstraints(baseLayout, ctx)) {
-                int score = calculatePenalty(baseLayout, ctx);
-                results.push_back({srcEdge, tgtEdge, score, baseLayout, true});
-                return;  // Use original path, no need to generate new one
-            }
-        }
-
-        // Generate new path with A*
-        bool pathFound = false;
-        EdgeLayout candidate = createCandidateLayout(
-            baseLayout, srcEdge, tgtEdge, nodeLayouts, assignedLayouts, obstacles, pathFound);
-
-        // Skip invalid candidates (node not found or no valid path)
-        if (!pathFound) {
-            return;
-        }
-
-        // Calculate score using unified penalty system
-        PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
-        ctx.sourceNodeId = candidate.from;
-        ctx.targetNodeId = candidate.to;
-        ctx.originalLayouts = originalLayouts_;
-        ctx.movedNodes = movedNodes_;
-
-        // Check hard constraints first
-        if (!passesHardConstraints(candidate, ctx)) {
-            return;
-        }
-
-        int score = calculatePenalty(candidate, ctx);
-        results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
-    };
-
-    if (preserveDirections()) {
-        // Preserve existing direction - only evaluate current combination
-        evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
-    } else {
-        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
-        // Optimize directions with smart ordering based on node positions
-        // Threshold for early return: score below this means acceptable path found
-        constexpr int EARLY_RETURN_SCORE_THRESHOLD = 100;
-        
-        // Get node centers to determine relative positions
-        auto srcNodeIt = nodeLayouts.find(baseLayout.from);
-        auto tgtNodeIt = nodeLayouts.find(baseLayout.to);
-        
-        // Use a bitmask for O(1) duplicate checking (4 src * 4 tgt = 16 bits)
-        // Bit index = srcEdge * 4 + tgtEdge
-        auto edgeToIndex = [](NodeEdge e) -> int {
-            switch (e) {
-                case NodeEdge::Top: return 0;
-                case NodeEdge::Bottom: return 1;
-                case NodeEdge::Left: return 2;
-                case NodeEdge::Right: return 3;
-                default: return 0;
-            }
-        };
-        uint16_t addedMask = 0;
-        
-        auto tryAddCombo = [&](NodeEdge src, NodeEdge tgt) {
-            int bit = edgeToIndex(src) * 4 + edgeToIndex(tgt);
-            if (!(addedMask & (1 << bit))) {
-                addedMask |= (1 << bit);
-                evaluateEdge(src, tgt);
-                return !results.empty() && results.back().score < EARLY_RETURN_SCORE_THRESHOLD;
-            }
-            return false;
-        };
-        
-        // 1. Always try current direction first (might already be optimal)
-        if (tryAddCombo(baseLayout.sourceEdge, baseLayout.targetEdge)) {
-            goto done_evaluating;
-        }
-        
-        // 2. Try position-based optimal directions
-        if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
-            Point srcCenter = srcNodeIt->second.center();
-            Point tgtCenter = tgtNodeIt->second.center();
-            
-            float dx = tgtCenter.x - srcCenter.x;
-            float dy = tgtCenter.y - srcCenter.y;
-            
-            // Default directions for edge case where dx == dy == 0
-            NodeEdge primarySrc = NodeEdge::Bottom;
-            NodeEdge primaryTgt = NodeEdge::Top;
-            NodeEdge secondarySrc = NodeEdge::Right;
-            NodeEdge secondaryTgt = NodeEdge::Left;
-            
-            // Determine primary and secondary directions based on relative position
-            if (std::abs(dx) > std::abs(dy)) {
-                // Horizontal dominant
-                primarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
-                primaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
-                secondarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
-                secondaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
-            } else if (std::abs(dy) > 0.1f) {
-                // Vertical dominant (with tolerance for near-zero)
-                primarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
-                primaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
-                secondarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
-                secondaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
-            }
-            // else: use defaults for overlapping nodes
-            
-            // Try high-priority combinations based on relative position
-            if (tryAddCombo(primarySrc, primaryTgt)) goto done_evaluating;
-            if (tryAddCombo(secondarySrc, secondaryTgt)) goto done_evaluating;
-            if (tryAddCombo(primarySrc, secondaryTgt)) goto done_evaluating;
-            if (tryAddCombo(secondarySrc, primaryTgt)) goto done_evaluating;
-        }
-        
-        // 3. Try remaining combinations
-        {
-            constexpr std::array<NodeEdge, 4> allEdges = {
-                NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
-            };
-            for (NodeEdge srcEdge : allEdges) {
-                for (NodeEdge tgtEdge : allEdges) {
-                    if (tryAddCombo(srcEdge, tgtEdge)) {
-                        goto done_evaluating;
-                    }
-                }
-            }
-        }
-        done_evaluating:;
-    }
-
-    // Sort by score (ascending - lower is better)
-    // Use stable_sort with deterministic tie-breaker to prevent flickering
-    std::stable_sort(results.begin(), results.end(),
-              [](const CombinationResult& a, const CombinationResult& b) {
-                  if (a.score != b.score) return a.score < b.score;
-                  // Tie-breaker: deterministic order by edge combination
-                  if (a.sourceEdge != b.sourceEdge) return a.sourceEdge < b.sourceEdge;
-                  return a.targetEdge < b.targetEdge;
-              });
-
-    return results;
-}
-
-// Thread-safe version with explicit pathfinder
-std::vector<AStarEdgeOptimizer::CombinationResult>
-AStarEdgeOptimizer::evaluateCombinations(
-    EdgeId /*edgeId*/,
-    const EdgeLayout& baseLayout,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones,
-    IPathFinder& pathFinder) {
-
-    std::vector<CombinationResult> results;
-    results.reserve(16);
-
-    // Build obstacle map once for all combinations (more efficient)
-    // Include edge layouts in bounds calculation to prevent out-of-bounds segments
-    float gridSize = effectiveGridSize();
-    ObstacleMap obstacles;
-    obstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
-
-    // Add OTHER edge segments as obstacles so A* finds paths that avoid them
-    // Uses centralized API that automatically handles Point node awareness
-    obstacles.addEdgeSegmentsForLayout(baseLayout, assignedLayouts, nodeLayouts);
-
-    // Lambda to evaluate a single edge combination
-    auto evaluateEdge = [&](NodeEdge srcEdge, NodeEdge tgtEdge) {
-        // First, try keeping original bendPoints if same source/target edges
-        // AND snap points are at the same location (within tolerance)
-        constexpr float SNAP_TOLERANCE = 5.0f;
-        bool sameSnapPoints = false;
-        
-        if (srcEdge == baseLayout.sourceEdge && tgtEdge == baseLayout.targetEdge &&
-            !baseLayout.bendPoints.empty()) {
-            
-            // Check if snap points match the original layout
-            auto srcNodeIt = nodeLayouts.find(baseLayout.from);
-            auto tgtNodeIt = nodeLayouts.find(baseLayout.to);
-            if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
-                Point currentSrc = baseLayout.sourcePoint;
-                Point currentTgt = baseLayout.targetPoint;
-                
-                if (baseLayout.bendPoints.size() >= 1) {
-                    const Point& firstBend = baseLayout.bendPoints.front().position;
-                    const Point& lastBend = baseLayout.bendPoints.back().position;
-                    
-                    bool srcAligned = false;
-                    bool tgtAligned = false;
-                    
-                    if (srcEdge == NodeEdge::Top || srcEdge == NodeEdge::Bottom) {
-                        srcAligned = std::abs(currentSrc.x - firstBend.x) < SNAP_TOLERANCE;
-                    } else {
-                        srcAligned = std::abs(currentSrc.y - firstBend.y) < SNAP_TOLERANCE;
-                    }
-                    
-                    if (tgtEdge == NodeEdge::Top || tgtEdge == NodeEdge::Bottom) {
-                        tgtAligned = std::abs(currentTgt.x - lastBend.x) < SNAP_TOLERANCE;
-                    } else {
-                        tgtAligned = std::abs(currentTgt.y - lastBend.y) < SNAP_TOLERANCE;
-                    }
-                    
-                    sameSnapPoints = srcAligned && tgtAligned;
-                }
-            }
-        }
-        
-        if (sameSnapPoints) {
-            PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
-            ctx.sourceNodeId = baseLayout.from;
-            ctx.targetNodeId = baseLayout.to;
-            ctx.originalLayouts = originalLayouts_;
-            ctx.movedNodes = movedNodes_;
-            
-            if (passesHardConstraints(baseLayout, ctx)) {
-                int score = calculatePenalty(baseLayout, ctx);
-                results.push_back({srcEdge, tgtEdge, score, baseLayout, true});
-                return;  // Use original path
-            }
-        }
-
-        // Generate new path with A* using provided pathfinder
-        bool pathFound = false;
-        EdgeLayout candidate = createCandidateLayout(
-            baseLayout, srcEdge, tgtEdge, nodeLayouts, assignedLayouts, obstacles, pathFound, pathFinder);
-
-        if (!pathFound) {
-            return;
-        }
-
-        // Calculate score using unified penalty system
-        PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
-        ctx.sourceNodeId = candidate.from;
-        ctx.targetNodeId = candidate.to;
-        ctx.originalLayouts = originalLayouts_;
-        ctx.movedNodes = movedNodes_;
-
-        if (!passesHardConstraints(candidate, ctx)) {
-            return;
-        }
-
-        int score = calculatePenalty(candidate, ctx);
-        results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
-    };
-
-    if (preserveDirections()) {
-        // Preserve existing direction - only evaluate current combination
-        evaluateEdge(baseLayout.sourceEdge, baseLayout.targetEdge);
-    } else {
-        // Evaluate all combinations - FixedEndpointPenalty will handle constraint scoring
-        constexpr int EARLY_RETURN_SCORE_THRESHOLD = 100;
-        
-        auto srcNodeIt = nodeLayouts.find(baseLayout.from);
-        auto tgtNodeIt = nodeLayouts.find(baseLayout.to);
-        
-        auto edgeToIndex = [](NodeEdge e) -> int {
-            switch (e) {
-                case NodeEdge::Top: return 0;
-                case NodeEdge::Bottom: return 1;
-                case NodeEdge::Left: return 2;
-                case NodeEdge::Right: return 3;
-                default: return 0;
-            }
-        };
-        uint16_t addedMask = 0;
-        
-        auto tryAddCombo = [&](NodeEdge src, NodeEdge tgt) {
-            int bit = edgeToIndex(src) * 4 + edgeToIndex(tgt);
-            if (!(addedMask & (1 << bit))) {
-                addedMask |= (1 << bit);
-                evaluateEdge(src, tgt);
-                return !results.empty() && results.back().score < EARLY_RETURN_SCORE_THRESHOLD;
-            }
-            return false;
-        };
-        
-        if (tryAddCombo(baseLayout.sourceEdge, baseLayout.targetEdge)) {
-            goto done_evaluating;
-        }
-        
-        if (srcNodeIt != nodeLayouts.end() && tgtNodeIt != nodeLayouts.end()) {
-            Point srcCenter = srcNodeIt->second.center();
-            Point tgtCenter = tgtNodeIt->second.center();
-            
-            float dx = tgtCenter.x - srcCenter.x;
-            float dy = tgtCenter.y - srcCenter.y;
-            
-            NodeEdge primarySrc = NodeEdge::Bottom;
-            NodeEdge primaryTgt = NodeEdge::Top;
-            NodeEdge secondarySrc = NodeEdge::Right;
-            NodeEdge secondaryTgt = NodeEdge::Left;
-            
-            if (std::abs(dx) > std::abs(dy)) {
-                primarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
-                primaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
-                secondarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
-                secondaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
-            } else if (std::abs(dy) > 0.1f) {
-                primarySrc = (dy > 0) ? NodeEdge::Bottom : NodeEdge::Top;
-                primaryTgt = (dy > 0) ? NodeEdge::Top : NodeEdge::Bottom;
-                secondarySrc = (dx > 0) ? NodeEdge::Right : NodeEdge::Left;
-                secondaryTgt = (dx > 0) ? NodeEdge::Left : NodeEdge::Right;
-            }
-            
-            if (tryAddCombo(primarySrc, primaryTgt)) goto done_evaluating;
-            if (tryAddCombo(secondarySrc, secondaryTgt)) goto done_evaluating;
-            if (tryAddCombo(primarySrc, secondaryTgt)) goto done_evaluating;
-            if (tryAddCombo(secondarySrc, primaryTgt)) goto done_evaluating;
-        }
-        
-        {
-            constexpr std::array<NodeEdge, 4> allEdges = {
-                NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
-            };
-            for (NodeEdge srcEdge : allEdges) {
-                for (NodeEdge tgtEdge : allEdges) {
-                    if (tryAddCombo(srcEdge, tgtEdge)) {
-                        goto done_evaluating;
-                    }
-                }
-            }
-        }
-        done_evaluating:;
-    }
-
-    std::stable_sort(results.begin(), results.end(),
-              [](const CombinationResult& a, const CombinationResult& b) {
-                  if (a.score != b.score) return a.score < b.score;
-                  if (a.sourceEdge != b.sourceEdge) return a.sourceEdge < b.sourceEdge;
-                  return a.targetEdge < b.targetEdge;
-              });
-
-    return results;
-}
-
-EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
-    const EdgeLayout& base,
-    NodeEdge sourceEdge,
-    NodeEdge targetEdge,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    ObstacleMap& obstacles,
-    bool& pathFound) {
-    // Delegate to thread-safe version with member pathfinder
-    return createCandidateLayout(base, sourceEdge, targetEdge, nodeLayouts, assignedLayouts, obstacles, pathFound, *pathFinder_);
-}
-
-EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
-    const EdgeLayout& base,
-    NodeEdge sourceEdge,
-    NodeEdge targetEdge,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    ObstacleMap& obstacles,
-    bool& pathFound,
-    IPathFinder& pathFinder) {
-
-    pathFound = false;
-
-    EdgeLayout candidate = base;
-    candidate.sourceEdge = sourceEdge;
-    candidate.targetEdge = targetEdge;
-    candidate.bendPoints.clear();
-
-    // === Snap Index Management ===
-    // Same NodeEdge → preserve existing snapIndex (SnapDistributor's assignment)
-    // Snap indices will be calculated below with setSourceSnap/setTargetSnap
-
-    // Get node layouts
-    auto srcIt = nodeLayouts.find(base.from);
-    if (srcIt == nodeLayouts.end()) {
-        return candidate;
-    }
-
-    auto tgtIt = nodeLayouts.find(base.to);
-    if (tgtIt == nodeLayouts.end()) {
-        return candidate;
-    }
-
-    float gridSize = effectiveGridSize();
-
-    // === Fixed Endpoint Optimization ===
-    // This is a PERFORMANCE OPTIMIZATION that works with FixedEndpointPenalty:
-    // - Here: Preserve position/snapIndex early to avoid generating invalid candidates
-    // - FixedEndpointPenalty: Final enforcement that rejects any violations
-    // Both check: (1) node is fixed, (2) edge matches original
-    // If edge differs, new position is generated and FixedEndpointPenalty will reject it
-    bool srcFixed = isNodeFixed(base.from);
-    bool tgtFixed = isNodeFixed(base.to);
-
-    GridPoint startGrid, goalGrid;
-    
-    // === SOURCE SNAP POSITION ===
-    // Rule: Same NodeEdge → preserve SnapDistributor's position (respect distributed candidateIdx)
-    //       Different NodeEdge → compute center position for new edge (snapIndex=-1)
-    if (sourceEdge == base.sourceEdge) {
-        // Same NodeEdge - preserve existing position (SnapDistributor already distributed)
-        if (srcFixed) {
-            // Node is fixed - preserve existing snapIndex and position
-            // No change needed - candidate was copied from base
-        } else {
-            // Node moved - recalculate position preserving candidateIdx (SSOT pattern)
-            int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                srcIt->second, base.sourceEdge, base.sourcePoint, gridSize);
-            Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-                srcIt->second, sourceEdge, candidateIdx, gridSize);
-            candidate.setSourceSnap(candidateIdx, derivedPoint);
-        }
-        startGrid = {
-            static_cast<int>(std::round(candidate.sourcePoint.x / gridSize)),
-            static_cast<int>(std::round(candidate.sourcePoint.y / gridSize))
-        };
-    } else {
-        // Different NodeEdge - find first unused snap index to avoid collision
-        int candidateCount = GridSnapCalculator::getCandidateCount(srcIt->second, sourceEdge, gridSize);
-        std::set<int> usedIndices = SnapIndexManager::collectUsedIndices(
-            base.from, sourceEdge, true, assignedLayouts);
-        int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
-        Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-            srcIt->second, sourceEdge, selectedIdx, gridSize);
-        candidate.setSourceSnap(selectedIdx, snapPoint);
-        startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
-    }
-    
-    // === TARGET SNAP POSITION ===
-    if (targetEdge == base.targetEdge) {
-        // Same NodeEdge - preserve existing position (SnapDistributor already distributed)
-        if (tgtFixed) {
-            // Node is fixed - preserve existing snapIndex and position
-            // No change needed - candidate was copied from base
-        } else {
-            // Node moved - recalculate position preserving candidateIdx (SSOT pattern)
-            int candidateIdx = GridSnapCalculator::getCandidateIndexFromPosition(
-                tgtIt->second, base.targetEdge, base.targetPoint, gridSize);
-            Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-                tgtIt->second, targetEdge, candidateIdx, gridSize);
-            candidate.setTargetSnap(candidateIdx, derivedPoint);
-        }
-        goalGrid = {
-            static_cast<int>(std::round(candidate.targetPoint.x / gridSize)),
-            static_cast<int>(std::round(candidate.targetPoint.y / gridSize))
-        };
-    } else {
-        // Different NodeEdge - find first unused snap index to avoid collision
-        int candidateCount = GridSnapCalculator::getCandidateCount(tgtIt->second, targetEdge, gridSize);
-        std::set<int> usedIndices = SnapIndexManager::collectUsedIndices(
-            base.to, targetEdge, false, assignedLayouts);
-        int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
-        Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
-            tgtIt->second, targetEdge, selectedIdx, gridSize);
-        candidate.setTargetSnap(selectedIdx, snapPoint);
-        goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
-    }
-
-    // Use provided pathfinder (thread-safe)
-    LOG_DEBUG("[CALLER:AStarEdgeOptimizer.cpp] A* findPath called");
-    PathResult pathResult = pathFinder.findPath(
-        startGrid, goalGrid, obstacles,
-        base.from, base.to,
-        sourceEdge, targetEdge,
-        {}, {});
-
-    if (!pathResult.found || pathResult.path.size() < 2) {
-        return candidate;
-    }
-
-    for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
-        Point pixelPoint = obstacles.gridToPixel(
-            pathResult.path[i].x, pathResult.path[i].y);
-        candidate.bendPoints.push_back({pixelPoint});
-    }
-
-    pathFound = true;
-    return candidate;
-}
-
-Point AStarEdgeOptimizer::calculateSnapPosition(
-    const NodeLayout& node,
-    NodeEdge edge,
-    float position) {
-
-    switch (edge) {
-        case NodeEdge::Top:
-            return {
-                node.position.x + node.size.width * position,
-                node.position.y
-            };
-        case NodeEdge::Bottom:
-            return {
-                node.position.x + node.size.width * position,
-                node.position.y + node.size.height
-            };
-        case NodeEdge::Left:
-            return {
-                node.position.x,
-                node.position.y + node.size.height * position
-            };
-        case NodeEdge::Right:
-            return {
-                node.position.x + node.size.width,
-                node.position.y + node.size.height * position
-            };
-    }
-
-    return node.center();
-}
-
-GridPoint AStarEdgeOptimizer::calculateGridPosition(
-    const NodeLayout& node,
-    NodeEdge edge,
-    float gridSize,
-    float position) {
-
-    // Calculate pixel position at edge center
-    float px, py;
-    
-    switch (edge) {
-        case NodeEdge::Top:
-            px = node.position.x + node.size.width * position;
-            py = node.position.y;
-            break;
-        case NodeEdge::Bottom:
-            px = node.position.x + node.size.width * position;
-            py = node.position.y + node.size.height;
-            break;
-        case NodeEdge::Left:
-            px = node.position.x;
-            py = node.position.y + node.size.height * position;
-            break;
-        case NodeEdge::Right:
-            px = node.position.x + node.size.width;
-            py = node.position.y + node.size.height * position;
-            break;
-        default:
-            px = node.position.x + node.size.width * 0.5f;
-            py = node.position.y + node.size.height * 0.5f;
-            break;
-    }
-
-    // Convert to grid coordinates (round to nearest grid vertex)
-    return {
-        static_cast<int>(std::round(px / gridSize)),
-        static_cast<int>(std::round(py / gridSize))
-    };
 }
 
 std::vector<ForbiddenZone> AStarEdgeOptimizer::calculateForbiddenZones(
@@ -985,19 +364,18 @@ void AStarEdgeOptimizer::regenerateBendPoints(
     // Track already-routed edges for blocking
     std::unordered_map<EdgeId, EdgeLayout> routedEdges;
 
-    // Build base obstacle map once (from nodes only) - PERFORMANCE OPTIMIZATION
-    // This avoids rebuilding the expensive node-based grid for each edge
+    // Build base obstacle map once (from nodes only)
     ObstacleMap baseObstacles;
     baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0, &edgeLayouts);
 
-    // Pre-create self-loop calculator and config (avoid allocation in loop)
+    // Pre-create self-loop calculator and config
     SelfLoopPathCalculator selfLoopCalc;
     PathConfig selfLoopConfig;
     selfLoopConfig.gridSize = gridSize;
-    selfLoopConfig.extensionCells = 2;  // 2 grid cells from node edge
+    selfLoopConfig.extensionCells = 2;
     selfLoopConfig.snapToGrid = true;
 
-    // Phase 1: Route edges sequentially, each sees previously-routed edges as blocking
+    // Phase 1: Route edges sequentially
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) {
@@ -1006,7 +384,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
         EdgeLayout& layout = it->second;
 
-        // Handle self-loops: use SelfLoopPathCalculator for geometric routing
+        // Handle self-loops
         if (layout.from == layout.to) {
             auto result = selfLoopCalc.calculatePath(layout, nodeLayouts, selfLoopConfig);
             if (result.success) {
@@ -1014,25 +392,15 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                 routedEdges[edgeId] = layout;
                 continue;
             }
-            // If self-loop calculation fails (invalid edge combination), fall through to A*
         }
 
-        // Copy base obstacles and add edge segments - PERFORMANCE OPTIMIZATION
-        // This reuses the expensive node-based grid built once before the loop
         ObstacleMap obstacles = baseObstacles;
-
-        // Add all edges from edgeLayouts as obstacles (excluding current edge)
-        // Uses centralized API that automatically handles Point node awareness
         obstacles.addEdgeSegmentsForLayout(layout, edgeLayouts, nodeLayouts);
 
-        // Also add already-routed edges from current call (they may have updated paths)
         if (!routedEdges.empty()) {
             obstacles.addEdgeSegmentsForLayout(layout, routedEdges, nodeLayouts);
         }
 
-        // Use UnifiedRetryChain for retry sequence
-        // IMPORTANT: regenerateBendPoints must preserve sourceEdge/targetEdge/sourcePoint/targetPoint
-        // Only bendPoints should be recalculated
         auto& retryChain = getRetryChain(gridSize);
 
         UnifiedRetryChain::RetryConfig config;
@@ -1042,9 +410,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         config.gridSize = gridSize;
         config.movedNodes = movedNodes_.empty() ? nullptr : &movedNodes_;
 
-        // Create mutable copy of edgeLayouts for retry chain
         std::unordered_map<EdgeId, EdgeLayout> otherEdges = edgeLayouts;
-        // Merge routedEdges into otherEdges
         for (const auto& [id, routedLayout] : routedEdges) {
             otherEdges[id] = routedLayout;
         }
@@ -1068,13 +434,10 @@ void AStarEdgeOptimizer::regenerateBendPoints(
         }
 
         if (result.success) {
-            // Update bendPoints and snap positions (may be changed by retry chain)
             layout.bendPoints = result.layout.bendPoints;
-            // Copy snap state from retry chain result (preserves SSOT)
             layout.copySnapStateFrom(result.layout);
-            layout.usedGridSize = effectiveGridSize();  // Single Source of Truth
+            layout.usedGridSize = effectiveGridSize();
 
-            // Update rerouted edges back to edgeLayouts (only bendPoints)
             for (const auto& reroutedLayout : result.reroutedEdges) {
                 auto it = edgeLayouts.find(reroutedLayout.id);
                 if (it != edgeLayouts.end()) {
@@ -1094,9 +457,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                           layout.bendPoints[i].position.y);
             }
         }
-        // If retry chain fails, keep existing bendPoints
 
-        // Add this edge to routed edges for blocking subsequent edges
         routedEdges[edgeId] = layout;
     }
 
@@ -1104,19 +465,14 @@ void AStarEdgeOptimizer::regenerateBendPoints(
     constexpr int MAX_RIP_UP_ITERATIONS = 3;
 
     for (int iteration = 0; iteration < MAX_RIP_UP_ITERATIONS; ++iteration) {
-        // Find edges that overlap with others
-        // IMPORTANT: Check ALL edges in edgeLayouts, not just input edges
-        // This catches overlaps when snap sync changes a path to overlap with
-        // an edge that wasn't in the original reroute list
         std::vector<EdgeId> dirtyEdges;
-        std::unordered_set<EdgeId> dirtySet;  // For deduplication
-        
+        std::unordered_set<EdgeId> dirtySet;
+
         for (const auto& [edgeId, layout] : edgeLayouts) {
             if (layout.from == layout.to) {
-                continue;  // Skip self-loops
+                continue;
             }
 
-            // Check if this edge overlaps with any other assigned edge
             if (PathIntersection::hasOverlapWithOthers(layout, edgeLayouts, edgeId)) {
                 if (dirtySet.insert(edgeId).second) {
                     dirtyEdges.push_back(edgeId);
@@ -1126,7 +482,7 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
         if (dirtyEdges.empty()) {
             LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2 iteration {}: No overlaps found", iteration);
-            break;  // No overlaps, we're done
+            break;
         }
 
         LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2 iteration {}: Found {} dirty edges", iteration, dirtyEdges.size());
@@ -1134,7 +490,6 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             LOG_DEBUG("[AStarOpt::regenerateBendPoints] Phase 2: dirty edge {}", dId);
         }
 
-        // Re-route dirty edges using UnifiedRetryChain
         for (EdgeId dirtyId : dirtyEdges) {
             auto it = edgeLayouts.find(dirtyId);
             if (it == edgeLayouts.end()) {
@@ -1143,7 +498,6 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
             EdgeLayout& layout = it->second;
 
-            // Use UnifiedRetryChain for full retry sequence
             auto& retryChain = getRetryChain(gridSize);
 
             UnifiedRetryChain::RetryConfig config;
@@ -1159,600 +513,12 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             if (result.success) {
                 layout = result.layout;
 
-                // Update rerouted edges
                 for (const auto& reroutedLayout : result.reroutedEdges) {
                     edgeLayouts[reroutedLayout.id] = reroutedLayout;
                 }
-
             }
         }
     }
-}
-
-AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::tryPathAdjustmentFallback(
-    EdgeId edgeIdA, EdgeId edgeIdB,
-    const EdgeLayout& layoutA, const EdgeLayout& layoutB,
-    const std::unordered_map<EdgeId, EdgeLayout>& otherLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones,
-    float gridSize) {
-
-    EdgePairResult result;
-    result.valid = false;
-
-    // Strategy 1: Try adjusting layoutB's path to avoid overlap with layoutA
-    {
-        std::unordered_map<EdgeId, EdgeLayout> withA;
-        withA[edgeIdA] = layoutA;
-        auto adjustedBendsB = PathIntersection::adjustPathToAvoidOverlap(layoutB, withA, gridSize);
-
-        EdgeLayout adjustedB = layoutB;
-        adjustedB.bendPoints = adjustedBendsB;
-
-        if (!PathIntersection::hasSegmentOverlap(layoutA, adjustedB)) {
-            PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
-            ctxA.sourceNodeId = layoutA.from;
-            ctxA.targetNodeId = layoutA.to;
-            ctxA.originalLayouts = originalLayouts_;
-            ctxA.movedNodes = movedNodes_;
-            int scoreA = calculatePenalty(layoutA, ctxA);
-
-            std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
-            withALayout[edgeIdA] = layoutA;
-            PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
-            ctxB.sourceNodeId = adjustedB.from;
-            ctxB.targetNodeId = adjustedB.to;
-            ctxB.originalLayouts = originalLayouts_;
-            ctxB.movedNodes = movedNodes_;
-            int scoreB = calculatePenalty(adjustedB, ctxB);
-
-            result.layoutA = layoutA;
-            result.layoutB = adjustedB;
-            result.combinedScore = scoreA + scoreB;
-            result.valid = true;
-            return result;
-        }
-    }
-
-    // Strategy 2: Try adjusting layoutA's path instead
-    {
-        std::unordered_map<EdgeId, EdgeLayout> withB;
-        withB[edgeIdB] = layoutB;
-        auto adjustedBendsA = PathIntersection::adjustPathToAvoidOverlap(layoutA, withB, gridSize);
-
-        EdgeLayout adjustedA = layoutA;
-        adjustedA.bendPoints = adjustedBendsA;
-
-        if (!PathIntersection::hasSegmentOverlap(adjustedA, layoutB)) {
-            std::unordered_map<EdgeId, EdgeLayout> withAdjA = otherLayouts;
-            withAdjA[edgeIdA] = adjustedA;
-            PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
-            ctxA.sourceNodeId = adjustedA.from;
-            ctxA.targetNodeId = adjustedA.to;
-            ctxA.originalLayouts = originalLayouts_;
-            ctxA.movedNodes = movedNodes_;
-            int scoreA = calculatePenalty(adjustedA, ctxA);
-
-            PenaltyContext ctxB{withAdjA, nodeLayouts, forbiddenZones, gridSize};
-            ctxB.sourceNodeId = layoutB.from;
-            ctxB.targetNodeId = layoutB.to;
-            ctxB.originalLayouts = originalLayouts_;
-            ctxB.movedNodes = movedNodes_;
-            int scoreB = calculatePenalty(layoutB, ctxB);
-
-            result.layoutA = adjustedA;
-            result.layoutB = layoutB;
-            result.combinedScore = scoreA + scoreB;
-            result.valid = true;
-            return result;
-        }
-    }
-
-    // Strategy 3: Handle first-segment vertical overlap
-    if (!layoutB.bendPoints.empty() && !layoutA.bendPoints.empty()) {
-        const Point& b0 = layoutB.sourcePoint;
-        const Point& b1 = layoutB.bendPoints[0].position;
-        const Point& a0 = layoutA.sourcePoint;
-        const Point& a1 = layoutA.bendPoints[0].position;
-
-        bool bFirstVertical = std::abs(b0.x - b1.x) < 1.0f;
-        bool aFirstVertical = std::abs(a0.x - a1.x) < 1.0f;
-
-        if (bFirstVertical && aFirstVertical && std::abs(b0.x - a0.x) < 1.0f) {
-            float bMinY = std::min(b0.y, b1.y), bMaxY = std::max(b0.y, b1.y);
-            float aMinY = std::min(a0.y, a1.y), aMaxY = std::max(a0.y, a1.y);
-
-            if (std::max(bMinY, aMinY) <= std::min(bMaxY, aMaxY) + 1.0f) {
-                float sharedX = b0.x;
-
-                for (int dir = -1; dir <= 1; dir += 2) {
-                    float tryX = sharedX + dir * gridSize;
-                    float yOffset = dir * gridSize;
-
-                    std::vector<BendPoint> newBends;
-                    newBends.push_back({{tryX, layoutB.sourcePoint.y}});
-                    bool firstHorizontalAdjusted = false;
-
-                    for (size_t i = 0; i < layoutB.bendPoints.size(); ++i) {
-                        const auto& bp = layoutB.bendPoints[i];
-                        if (std::abs(bp.position.x - sharedX) < 1.0f) {
-                            float adjustedY = bp.position.y;
-                            if (!firstHorizontalAdjusted && i + 1 < layoutB.bendPoints.size()) {
-                                const auto& nextBp = layoutB.bendPoints[i + 1];
-                                if (std::abs(bp.position.y - nextBp.position.y) < 1.0f) {
-                                    adjustedY = bp.position.y + yOffset;
-                                    firstHorizontalAdjusted = true;
-                                }
-                            }
-                            newBends.push_back({{tryX, adjustedY}});
-                        } else if (firstHorizontalAdjusted && i > 0 &&
-                                   std::abs(layoutB.bendPoints[i-1].position.y - bp.position.y) < 1.0f) {
-                            newBends.push_back({{bp.position.x, bp.position.y + yOffset}});
-                            firstHorizontalAdjusted = false;
-                        } else {
-                            newBends.push_back(bp);
-                        }
-                    }
-
-                    EdgeLayout adjustedB = layoutB;
-                    adjustedB.bendPoints = newBends;
-
-                    if (!PathIntersection::hasSegmentOverlapExcludingLast(layoutA, adjustedB, 2)) {
-                        PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
-                        ctxA.sourceNodeId = layoutA.from;
-                        ctxA.targetNodeId = layoutA.to;
-                        ctxA.originalLayouts = originalLayouts_;
-                        ctxA.movedNodes = movedNodes_;
-                        int scoreA = calculatePenalty(layoutA, ctxA);
-
-                        std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
-                        withALayout[edgeIdA] = layoutA;
-                        PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
-                        ctxB.sourceNodeId = adjustedB.from;
-                        ctxB.targetNodeId = adjustedB.to;
-                        ctxB.originalLayouts = originalLayouts_;
-                        ctxB.movedNodes = movedNodes_;
-                        int scoreB = calculatePenalty(adjustedB, ctxB);
-
-                        result.layoutA = layoutA;
-                        result.layoutB = adjustedB;
-                        result.combinedScore = scoreA + scoreB;
-                        result.valid = true;
-                        return result;
-                    }
-                }
-            }
-        }
-    }
-
-    // Strategy 4: General overlap detection and fix
-    {
-        std::unordered_map<EdgeId, EdgeLayout> withA;
-        withA[edgeIdA] = layoutA;
-        auto overlapInfo = PathIntersection::findOverlapInfo(layoutB, withA, layoutB.id, gridSize);
-
-        if (overlapInfo.found) {
-            // Convert grid coordinate to pixel
-            float sharedPixel = overlapInfo.sharedGridCoord * gridSize;
-            
-            for (int dir = -1; dir <= 1; dir += 2) {
-                // Use grid-based offset
-                int tryGridCoord = overlapInfo.sharedGridCoord + dir;
-                std::vector<BendPoint> newBends;
-
-                if (overlapInfo.isVertical) {
-                    float tryX = tryGridCoord * gridSize;
-                    newBends.push_back({{tryX, layoutB.sourcePoint.y}});
-                    for (const auto& bp : layoutB.bendPoints) {
-                        if (std::abs(bp.position.x - sharedPixel) < 1.0f) {
-                            newBends.push_back({{tryX, bp.position.y}});
-                        } else {
-                            newBends.push_back(bp);
-                        }
-                    }
-                } else {
-                    float tryY = tryGridCoord * gridSize;
-                    newBends.push_back({{layoutB.sourcePoint.x, tryY}});
-                    for (const auto& bp : layoutB.bendPoints) {
-                        if (std::abs(bp.position.y - sharedPixel) < 1.0f) {
-                            newBends.push_back({{bp.position.x, tryY}});
-                        } else {
-                            newBends.push_back(bp);
-                        }
-                    }
-                }
-
-                EdgeLayout adjustedB = layoutB;
-                adjustedB.bendPoints = newBends;
-
-                if (!PathIntersection::hasSegmentOverlap(layoutA, adjustedB)) {
-                    PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
-                    ctxA.sourceNodeId = layoutA.from;
-                    ctxA.targetNodeId = layoutA.to;
-                    ctxA.originalLayouts = originalLayouts_;
-                    ctxA.movedNodes = movedNodes_;
-                    int scoreA = calculatePenalty(layoutA, ctxA);
-
-                    std::unordered_map<EdgeId, EdgeLayout> withALayout = otherLayouts;
-                    withALayout[edgeIdA] = layoutA;
-                    PenaltyContext ctxB{withALayout, nodeLayouts, forbiddenZones, gridSize};
-                    ctxB.sourceNodeId = adjustedB.from;
-                    ctxB.targetNodeId = adjustedB.to;
-                    ctxB.originalLayouts = originalLayouts_;
-                    ctxB.movedNodes = movedNodes_;
-                    int scoreB = calculatePenalty(adjustedB, ctxB);
-
-                    result.layoutA = layoutA;
-                    result.layoutB = adjustedB;
-                    result.combinedScore = scoreA + scoreB;
-                    result.valid = true;
-                    return result;
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-std::vector<AStarEdgeOptimizer::CombinationResult>
-AStarEdgeOptimizer::evaluateSelfLoopCombinations(
-    EdgeId edgeId,
-    const EdgeLayout& baseLayout,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones) {
-
-    std::vector<CombinationResult> results;
-
-    // Find the node for this self-loop
-    auto nodeIt = nodeLayouts.find(baseLayout.from);
-    if (nodeIt == nodeLayouts.end()) {
-        return results;  // Node not found
-    }
-
-    const NodeLayout& nodeLayout = nodeIt->second;
-
-    // Calculate loop index for unique snap points using shared helper
-    int loopIndex = SelfLoopRouter::calculateLoopIndex(edgeId, baseLayout.from, assignedLayouts);
-
-    // Create default layout options for SelfLoopRouter
-    LayoutOptions options;
-    options.gridConfig.cellSize = effectiveGridSize();
-
-    // Try all 4 self-loop directions
-    std::array<SelfLoopDirection, 4> directions = {
-        SelfLoopDirection::Right,
-        SelfLoopDirection::Left,
-        SelfLoopDirection::Top,
-        SelfLoopDirection::Bottom
-    };
-
-    for (SelfLoopDirection dir : directions) {
-        options.channelRouting.selfLoop.preferredDirection = dir;
-
-        // Generate self-loop layout using SelfLoopRouter
-        EdgeLayout candidate = SelfLoopRouter::route(
-            edgeId, baseLayout.from, nodeLayout, loopIndex, options);
-
-        // Calculate penalty score using unified penalty system
-        PenaltyContext ctx{assignedLayouts, nodeLayouts, forbiddenZones, effectiveGridSize()};
-        ctx.sourceNodeId = candidate.from;
-        ctx.targetNodeId = candidate.to;
-        ctx.originalLayouts = originalLayouts_;
-        ctx.movedNodes = movedNodes_;
-
-        // Check hard constraints (segment overlap, etc.)
-        if (!passesHardConstraints(candidate, ctx)) {
-            LOG_DEBUG("[SNAP-TRACE] SelfLoop edge={} REJECTED by hardConstraints srcPos=({},{})", 
-                      edgeId, candidate.sourcePoint.x, candidate.sourcePoint.y);
-            continue;  // Skip combinations that violate hard constraints
-        }
-
-        int score = calculatePenalty(candidate, ctx);
-        LOG_DEBUG("[SNAP-TRACE] SelfLoop edge={} ACCEPTED srcPos=({},{}) score={}",
-                  edgeId, candidate.sourcePoint.x, candidate.sourcePoint.y, score);
-
-        // Map direction to source/target edges for CombinationResult
-        NodeEdge srcEdge = candidate.sourceEdge;
-        NodeEdge tgtEdge = candidate.targetEdge;
-
-        results.push_back({srcEdge, tgtEdge, score, std::move(candidate), true});
-    }
-
-    // Sort by score (lowest first = best)
-    std::sort(results.begin(), results.end(),
-        [](const CombinationResult& a, const CombinationResult& b) {
-            return a.score < b.score;
-        });
-
-    return results;
-}
-
-AStarEdgeOptimizer::EdgePairResult AStarEdgeOptimizer::resolveOverlappingPair(
-    EdgeId edgeIdA, EdgeId edgeIdB,
-    const EdgeLayout& layoutA, const EdgeLayout& layoutB,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones) {
-
-    EdgePairResult bestResult;
-    bestResult.valid = false;
-    bestResult.combinedScore = std::numeric_limits<int>::max();
-
-    float gridSize = effectiveGridSize();
-
-    // Build obstacle map WITHOUT edges A and B
-    // This allows A and B to find paths without blocking each other
-    std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
-    for (const auto& [id, layout] : assignedLayouts) {
-        if (id != edgeIdA && id != edgeIdB) {
-            otherLayouts[id] = layout;
-        }
-    }
-
-    // Check if Edge A or B targets a Point node
-    // Point nodes have size (0,0) - multiple edges converging on same Point target
-    // should not block each other's final segments
-    NodeId targetA = layoutA.to;
-    NodeId targetB = layoutB.to;
-    auto targetAIt = nodeLayouts.find(targetA);
-    auto targetBIt = nodeLayouts.find(targetB);
-    bool targetAIsPoint = (targetAIt != nodeLayouts.end() && targetAIt->second.isPointNode());
-    bool targetBIsPoint = (targetBIt != nodeLayouts.end() && targetBIt->second.isPointNode());
-
-    // Include all edge layouts in bounds calculation to prevent out-of-bounds segments
-    ObstacleMap baseObstacles;
-    baseObstacles.buildFromNodes(nodeLayouts, gridSize, 0, &assignedLayouts);
-    
-    // Use Point-node-aware edge segment registration if either target is a Point node
-    // This prevents edges sharing a Point target from blocking each other's approach
-    // Handle case where A and B target different Point nodes
-    if (targetAIsPoint && targetBIsPoint && targetA != targetB) {
-        // Both edges target different Point nodes - skip last segments for both targets
-        baseObstacles.addEdgeSegmentsWithPointNodeAwareness(
-            otherLayouts, nodeLayouts, INVALID_EDGE, targetA);
-        // Note: addEdgeSegmentsWithPointNodeAwareness will skip edges targeting targetA,
-        // but not those targeting targetB. For full correctness, we'd need a multi-target API.
-        // Current test cases have both edges targeting the same Point node.
-    } else if (targetAIsPoint || targetBIsPoint) {
-        // One or both edges target the same Point node
-        NodeId pointTarget = targetAIsPoint ? targetA : targetB;
-        baseObstacles.addEdgeSegmentsWithPointNodeAwareness(
-            otherLayouts, nodeLayouts, INVALID_EDGE, pointTarget);
-    } else {
-        baseObstacles.addEdgeSegments(otherLayouts, INVALID_EDGE);
-    }
-
-    // All 4 node edges
-    constexpr std::array<NodeEdge, 4> allEdges = {
-        NodeEdge::Top, NodeEdge::Bottom, NodeEdge::Left, NodeEdge::Right
-    };
-
-    int totalCombos = 0;
-    int pathFoundACount = 0;
-    int passedHardA = 0;
-    int pathFoundBCount = 0;
-    int passedHardB = 0;
-    int noOverlapCount = 0;
-
-    // Evaluate all 16×16 = 256 combinations for the pair
-    for (NodeEdge srcA : allEdges) {
-        for (NodeEdge tgtA : allEdges) {
-            ++totalCombos;
-            // Create candidate A
-            ObstacleMap obstaclesA = baseObstacles;  // Copy base obstacles
-            bool pathFoundA = false;
-            EdgeLayout candidateA = createCandidateLayout(
-                layoutA, srcA, tgtA, nodeLayouts, otherLayouts, obstaclesA, pathFoundA);
-
-            if (!pathFoundA) continue;
-            ++pathFoundACount;
-
-            // Check hard constraints for A (SKIP overlap check with other edges for now)
-            // We only care about self-overlap and forbidden zones
-            PenaltyContext ctxA{otherLayouts, nodeLayouts, forbiddenZones, gridSize};
-            ctxA.sourceNodeId = candidateA.from;
-            ctxA.targetNodeId = candidateA.to;
-            ctxA.originalLayouts = originalLayouts_;
-            ctxA.movedNodes = movedNodes_;
-            if (!passesHardConstraints(candidateA, ctxA)) continue;
-            ++passedHardA;
-
-            int scoreA = calculatePenalty(candidateA, ctxA);
-
-            // Now try all combinations for B, with A as additional obstacle
-            for (NodeEdge srcB : allEdges) {
-                for (NodeEdge tgtB : allEdges) {
-                    // Build obstacles for B: base + candidateA
-                    ObstacleMap obstaclesB = baseObstacles;
-                    std::unordered_map<EdgeId, EdgeLayout> withA = otherLayouts;
-                    withA[edgeIdA] = candidateA;
-                    
-                    // Add Edge A and other edges as obstacles for routing Edge B
-                    // Uses centralized API that automatically handles Point node awareness
-                    obstaclesB.addEdgeSegmentsForLayout(layoutB, withA, nodeLayouts);
-
-                    bool pathFoundB = false;
-                    EdgeLayout candidateB = createCandidateLayout(
-                        layoutB, srcB, tgtB, nodeLayouts, withA, obstaclesB, pathFoundB);
-
-                    if (!pathFoundB) continue;
-                    ++pathFoundBCount;
-
-                    // Check hard constraints for B (with A in the context)
-                    PenaltyContext ctxB{withA, nodeLayouts, forbiddenZones, gridSize};
-                    ctxB.sourceNodeId = candidateB.from;
-                    ctxB.targetNodeId = candidateB.to;
-                    ctxB.originalLayouts = originalLayouts_;
-                    ctxB.movedNodes = movedNodes_;
-                    if (!passesHardConstraints(candidateB, ctxB)) continue;
-                    ++passedHardB;
-
-                    int scoreB = calculatePenalty(candidateB, ctxB);
-
-                    // Check for overlap between A and B
-                    std::unordered_map<EdgeId, EdgeLayout> pairLayouts;
-                    pairLayouts[edgeIdA] = candidateA;
-                    pairLayouts[edgeIdB] = candidateB;
-                    
-                    if (PathIntersection::hasOverlapWithOthers(candidateA, pairLayouts, edgeIdA)) {
-                        continue;  // A and B still overlap
-                    }
-                    ++noOverlapCount;
-
-                    int combinedScore = scoreA + scoreB;
-                    if (combinedScore < bestResult.combinedScore) {
-                        bestResult.layoutA = candidateA;
-                        bestResult.layoutB = candidateB;
-                        bestResult.combinedScore = combinedScore;
-                        bestResult.valid = true;
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: If no valid combination found, try path adjustment
-    if (!bestResult.valid) {
-        bestResult = tryPathAdjustmentFallback(
-            edgeIdA, edgeIdB, layoutA, layoutB,
-            otherLayouts, nodeLayouts, forbiddenZones, gridSize);
-    }
-
-
-    return bestResult;
-}
-
-AStarEdgeOptimizer::ParallelEdgeResult AStarEdgeOptimizer::evaluateEdgeIndependent(
-    EdgeId edgeId,
-    const EdgeLayout& baseLayout,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones,
-    IPathFinder& pathFinder,
-    const std::unordered_map<EdgeId, EdgeLayout>& currentLayouts) {
-
-    ParallelEdgeResult presult;
-    presult.edgeId = edgeId;
-    presult.hasValidResult = false;
-
-    // Handle self-loops (don't use pathfinder for self-loops)
-    if (baseLayout.from == baseLayout.to) {
-        presult.isSelfLoop = true;
-        // Pass currentLayouts to calculate correct loopIndex for unique snap points
-        auto combinations = evaluateSelfLoopCombinations(
-            edgeId, baseLayout, currentLayouts, nodeLayouts, forbiddenZones);
-
-        if (!combinations.empty()) {
-            presult.best = combinations.front();
-            presult.hasValidResult = true;
-        }
-        return presult;
-    }
-
-    // For regular edges, use thread-local pathfinder
-    auto combinations = evaluateCombinations(
-        edgeId, baseLayout, currentLayouts, nodeLayouts, forbiddenZones, pathFinder);
-
-    if (!combinations.empty()) {
-        presult.best = combinations.front();
-        presult.hasValidResult = true;
-    }
-
-    return presult;
-}
-
-std::vector<std::pair<EdgeId, EdgeId>> AStarEdgeOptimizer::detectOverlaps(
-    const std::unordered_map<EdgeId, EdgeLayout>& layouts) {
-    // Delegate to PathIntersection (Single Source of Truth)
-    return PathIntersection::findAllOverlappingPairs(layouts);
-}
-
-bool AStarEdgeOptimizer::resolveAllOverlaps(
-    const std::vector<std::pair<EdgeId, EdgeId>>& overlappingPairs,
-    std::unordered_map<EdgeId, EdgeLayout>& result,
-    std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
-    const std::vector<ForbiddenZone>& forbiddenZones,
-    std::unordered_set<EdgeId>* resolvedEdges) {
-
-    bool anyResolved = false;
-
-    for (const auto& [idA, idB] : overlappingPairs) {
-        auto itA = result.find(idA);
-        auto itB = result.find(idB);
-        if (itA == result.end() || itB == result.end()) continue;
-
-        LOG_DEBUG("[AStarOpt] PHASE 3: Resolving overlap Edge {} & {}", idA, idB);
-
-        EdgePairResult pairResult = resolveOverlappingPair(
-            idA, idB, itA->second, itB->second,
-            assignedLayouts, nodeLayouts, forbiddenZones);
-
-        LOG_DEBUG("[AStarOpt]   resolveOverlappingPair: valid={}", pairResult.valid);
-
-        if (pairResult.valid) {
-            // Debug: log the resolved paths
-            LOG_DEBUG("[AStarOpt]   RESOLVED Edge {} bends:", idA);
-            for (const auto& bp : pairResult.layoutA.bendPoints) {
-                LOG_DEBUG("[AStarOpt]     ({}, {})", bp.position.x, bp.position.y);
-            }
-            LOG_DEBUG("[AStarOpt]   RESOLVED Edge {} bends:", idB);
-            for (const auto& bp : pairResult.layoutB.bendPoints) {
-                LOG_DEBUG("[AStarOpt]     ({}, {})", bp.position.x, bp.position.y);
-            }
-            
-            result[idA] = pairResult.layoutA;
-            result[idB] = pairResult.layoutB;
-            assignedLayouts[idA] = pairResult.layoutA;
-            assignedLayouts[idB] = pairResult.layoutB;
-            if (resolvedEdges) {
-                resolvedEdges->insert(idA);
-                resolvedEdges->insert(idB);
-            }
-            anyResolved = true;
-            LOG_DEBUG("[AStarOpt]   SUCCESS via resolveOverlappingPair");
-        } else {
-            // Fallback: Use CooperativeRerouter when pair resolution fails
-            LOG_DEBUG("[AStarOpt]   Trying CooperativeRerouter fallback...");
-            CooperativeRerouter rerouter(pathFinder_, effectiveGridSize());
-
-            // Build otherLayouts excluding both A and B
-            std::unordered_map<EdgeId, EdgeLayout> otherLayouts;
-            for (const auto& [eid, layout] : assignedLayouts) {
-                if (eid != idA && eid != idB) {
-                    otherLayouts[eid] = layout;
-                }
-            }
-            // Add B to otherLayouts so A can route around it
-            otherLayouts[idB] = itB->second;
-
-            auto coopResult = rerouter.rerouteWithCooperation(
-                idA, itA->second, otherLayouts, nodeLayouts);
-
-            LOG_DEBUG("[AStarOpt]   CooperativeRerouter: success={} reason={}",
-                      coopResult.success, coopResult.failureReason);
-
-            if (coopResult.success) {
-                result[idA] = coopResult.layout;
-                assignedLayouts[idA] = coopResult.layout;
-                for (const auto& reroutedLayout : coopResult.reroutedEdges) {
-                    result[reroutedLayout.id] = reroutedLayout;
-                    assignedLayouts[reroutedLayout.id] = reroutedLayout;
-                }
-                if (resolvedEdges) {
-                    resolvedEdges->insert(idA);
-                    resolvedEdges->insert(idB);
-                }
-                anyResolved = true;
-                LOG_DEBUG("[AStarOpt]   SUCCESS via CooperativeRerouter");
-            } else {
-                LOG_DEBUG("[AStarOpt]   FAILED - overlap remains!");
-            }
-        }
-    }
-
-    return anyResolved;
 }
 
 }  // namespace arborvia
