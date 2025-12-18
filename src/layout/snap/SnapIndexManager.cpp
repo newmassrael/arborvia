@@ -368,4 +368,96 @@ std::vector<SnapIndexManager::SnapAssignment> SnapIndexManager::selectOptimalCan
     return result;
 }
 
+// =============================================================================
+// Snap Index Collision Avoidance
+// =============================================================================
+
+std::set<int> SnapIndexManager::collectUsedIndices(
+    NodeId nodeId,
+    NodeEdge nodeEdge,
+    bool isSource,
+    const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+    EdgeId excludeEdgeId) {
+
+    std::set<int> usedIndices;
+
+    for (const auto& [edgeId, layout] : edgeLayouts) {
+        // Skip the excluded edge (typically the edge being processed)
+        if (edgeId == excludeEdgeId) continue;
+
+        // Check source side
+        if (isSource && layout.from == nodeId && layout.sourceEdge == nodeEdge) {
+            usedIndices.insert(layout.sourceSnapIndex);
+        }
+        // Check target side
+        if (!isSource && layout.to == nodeId && layout.targetEdge == nodeEdge) {
+            usedIndices.insert(layout.targetSnapIndex);
+        }
+    }
+
+    return usedIndices;
+}
+
+int SnapIndexManager::findFirstUnusedIndex(
+    int candidateCount,
+    const std::set<int>& usedIndices) {
+
+    if (candidateCount <= 0) {
+        return 0;
+    }
+
+    // Start from center, search outward: center, center+1, center-1, center+2, ...
+    int centerIdx = candidateCount / 2;
+
+    // First try center
+    if (usedIndices.find(centerIdx) == usedIndices.end()) {
+        return centerIdx;
+    }
+
+    // Then try outward from center
+    for (int offset = 1; offset < candidateCount; ++offset) {
+        int plusIdx = centerIdx + offset;
+        if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
+            return plusIdx;
+        }
+
+        int minusIdx = centerIdx - offset;
+        if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
+            return minusIdx;
+        }
+    }
+
+    // All used, return center as fallback
+    return centerIdx;
+}
+
+std::vector<int> SnapIndexManager::generateAdjacentIndices(
+    int currentIndex,
+    int candidateCount,
+    const std::set<int>& usedIndices) {
+
+    std::vector<int> result;
+
+    if (candidateCount <= 0) {
+        return result;
+    }
+
+    // Generate indices in priority order: +1, -1, +2, -2, ...
+    for (int offset = 1; offset < candidateCount; ++offset) {
+        // Try +offset
+        int plusIdx = currentIndex + offset;
+        if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
+            result.push_back(plusIdx);
+        }
+
+        // Try -offset
+        int minusIdx = currentIndex - offset;
+        if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
+            result.push_back(minusIdx);
+        }
+    }
+
+    return result;
+}
+
 }  // namespace arborvia

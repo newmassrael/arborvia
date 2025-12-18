@@ -3,6 +3,7 @@
 #include "../sugiyama/routing/PathIntersection.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "../snap/GridSnapCalculator.h"
+#include "../snap/SnapIndexManager.h"
 #include "../snap/SnapPointCalculator.h"
 #include "arborvia/layout/constraints/ConstraintGateway.h"
 
@@ -14,59 +15,6 @@
 namespace arborvia {
 
 namespace {
-    /// Collect snap indices already used on a specific NodeEdge
-    /// Returns set of snap indices that are occupied by other edges
-    std::set<int> collectUsedSnapIndices(
-        EdgeId currentEdgeId,
-        NodeId nodeId,
-        NodeEdge nodeEdge,
-        bool isSource,
-        const std::unordered_map<EdgeId, EdgeLayout>& otherEdges) {
-        
-        std::set<int> usedIndices;
-        
-        for (const auto& [edgeId, layout] : otherEdges) {
-            if (edgeId == currentEdgeId) continue;
-            
-            // Check source side
-            if (isSource && layout.from == nodeId && layout.sourceEdge == nodeEdge) {
-                usedIndices.insert(layout.sourceSnapIndex);
-            }
-            // Check target side
-            if (!isSource && layout.to == nodeId && layout.targetEdge == nodeEdge) {
-                usedIndices.insert(layout.targetSnapIndex);
-            }
-        }
-        
-        return usedIndices;
-    }
-    
-    /// Generate adjacent snap indices in priority order: +1, -1, +2, -2, ...
-    /// Skips indices that are already used or out of bounds
-    std::vector<int> generateAdjacentIndices(
-        int currentIndex,
-        int candidateCount,
-        const std::set<int>& usedIndices) {
-        
-        std::vector<int> result;
-        
-        for (int offset = 1; offset < candidateCount; ++offset) {
-            // Try +offset
-            int plusIdx = currentIndex + offset;
-            if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
-                result.push_back(plusIdx);
-            }
-            
-            // Try -offset
-            int minusIdx = currentIndex - offset;
-            if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
-                result.push_back(minusIdx);
-            }
-        }
-        
-        return result;
-    }
-
     /// Log constraint violation details
     void logValidationFailure(EdgeId edgeId, const UnifiedRetryChain::PathValidationResult& validation) {
         if (validation.valid) return;
@@ -393,15 +341,15 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
     // Try source snap index variations if allowed
     if (canModifySource) {
         // Collect already used snap indices on this NodeEdge
-        std::set<int> usedSourceIndices = collectUsedSnapIndices(
-            edgeId, originalLayout.from, originalLayout.sourceEdge, true, otherEdges);
+        std::set<int> usedSourceIndices = SnapIndexManager::collectUsedIndices(
+            originalLayout.from, originalLayout.sourceEdge, true, otherEdges, edgeId);
         
         // Get candidate count for this NodeEdge
         int srcCandidateCount = GridSnapCalculator::getCandidateCount(
             srcNode, originalLayout.sourceEdge, gridSize);
         
         // Generate adjacent indices (skipping used ones)
-        auto adjacentIndices = generateAdjacentIndices(
+        auto adjacentIndices = SnapIndexManager::generateAdjacentIndices(
             originalLayout.sourceSnapIndex, srcCandidateCount, usedSourceIndices);
         
         // Limit retries
@@ -428,15 +376,15 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
     // Try target snap index variations if allowed
     if (canModifyTarget) {
         // Collect already used snap indices on this NodeEdge
-        std::set<int> usedTargetIndices = collectUsedSnapIndices(
-            edgeId, originalLayout.to, originalLayout.targetEdge, false, otherEdges);
+        std::set<int> usedTargetIndices = SnapIndexManager::collectUsedIndices(
+            originalLayout.to, originalLayout.targetEdge, false, otherEdges, edgeId);
         
         // Get candidate count for this NodeEdge
         int tgtCandidateCount = GridSnapCalculator::getCandidateCount(
             tgtNode, originalLayout.targetEdge, gridSize);
         
         // Generate adjacent indices (skipping used ones)
-        auto adjacentIndices = generateAdjacentIndices(
+        auto adjacentIndices = SnapIndexManager::generateAdjacentIndices(
             originalLayout.targetSnapIndex, tgtCandidateCount, usedTargetIndices);
         
         // Limit retries
@@ -532,8 +480,8 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
 
             if (canModifySource) {
                 // Collect used indices on this new NodeEdge
-                std::set<int> usedSrcIndices = collectUsedSnapIndices(
-                    edgeId, originalLayout.from, srcEdge, true, otherEdges);
+                std::set<int> usedSrcIndices = SnapIndexManager::collectUsedIndices(
+                    originalLayout.from, srcEdge, true, otherEdges, edgeId);
                 
                 // Find first unused index
                 for (int i = 0; i < srcCandidateCount; ++i) {
@@ -547,8 +495,8 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             }
             if (canModifyTarget) {
                 // Collect used indices on this new NodeEdge
-                std::set<int> usedTgtIndices = collectUsedSnapIndices(
-                    edgeId, originalLayout.to, tgtEdge, false, otherEdges);
+                std::set<int> usedTgtIndices = SnapIndexManager::collectUsedIndices(
+                    originalLayout.to, tgtEdge, false, otherEdges, edgeId);
                 
                 // Find first unused index
                 for (int i = 0; i < tgtCandidateCount; ++i) {

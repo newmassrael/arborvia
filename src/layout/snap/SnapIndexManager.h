@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <stdexcept>
 
@@ -180,6 +181,42 @@ public:
         const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         float gridSize);
+
+    // === Snap Index Collision Avoidance ===
+
+    /// Collect snap indices already used on a specific NodeEdge
+    /// @param nodeId The node to check
+    /// @param nodeEdge Which edge of the node
+    /// @param isSource true for source endpoints, false for target endpoints
+    /// @param edgeLayouts All edge layouts to check
+    /// @param excludeEdgeId Optional edge to exclude from collection (e.g., current edge being processed)
+    /// @return Set of snap indices that are already in use
+    static std::set<int> collectUsedIndices(
+        NodeId nodeId,
+        NodeEdge nodeEdge,
+        bool isSource,
+        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts,
+        EdgeId excludeEdgeId = EdgeId{});
+
+    /// Find first unused snap index, searching from center outward
+    /// Algorithm: center, center+1, center-1, center+2, center-2, ...
+    /// @param candidateCount Total number of snap candidates on this NodeEdge
+    /// @param usedIndices Set of indices already in use
+    /// @return First available index, or center index if all are used
+    static int findFirstUnusedIndex(
+        int candidateCount,
+        const std::set<int>& usedIndices);
+
+    /// Generate adjacent indices in priority order: +1, -1, +2, -2, ...
+    /// Skips indices that are already used or out of bounds
+    /// @param currentIndex The starting index to search from
+    /// @param candidateCount Total number of snap candidates
+    /// @param usedIndices Set of indices to skip
+    /// @return Vector of available adjacent indices in priority order
+    static std::vector<int> generateAdjacentIndices(
+        int currentIndex,
+        int candidateCount,
+        const std::set<int>& usedIndices);
 
 private:
     /// Get sort key for a node based on edge orientation

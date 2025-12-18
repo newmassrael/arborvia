@@ -1,9 +1,9 @@
 #include "AStarEdgeOptimizer.h"
-#include "AStarEdgeOptimizer.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
 #include "../../pathfinding/SelfLoopPathCalculator.h"
 #include "../../snap/GridSnapCalculator.h"
+#include "../../snap/SnapIndexManager.h"
 #include "../../routing/CooperativeRerouter.h"
 #include "../../routing/UnifiedRetryChain.h"
 #include "../../sugiyama/routing/PathIntersection.h"
@@ -17,67 +17,9 @@
 #include <future>
 #include <thread>
 #include <unordered_set>
-#include <set>
 
 
 namespace arborvia {
-
-namespace {
-    /// Collect snap indices already used on a specific NodeEdge
-    /// Returns set of snap indices that are occupied by other edges
-    std::set<int> collectUsedSnapIndices(
-        NodeId nodeId,
-        NodeEdge nodeEdge,
-        bool isSource,
-        const std::unordered_map<EdgeId, EdgeLayout>& edgeLayouts) {
-        
-        std::set<int> usedIndices;
-        
-        for (const auto& [edgeId, layout] : edgeLayouts) {
-            // Check source side
-            if (isSource && layout.from == nodeId && layout.sourceEdge == nodeEdge) {
-                usedIndices.insert(layout.sourceSnapIndex);
-            }
-            // Check target side
-            if (!isSource && layout.to == nodeId && layout.targetEdge == nodeEdge) {
-                usedIndices.insert(layout.targetSnapIndex);
-            }
-        }
-        
-        return usedIndices;
-    }
-    
-    /// Find first unused snap index on a NodeEdge
-    /// Returns centerIdx if all indices are used
-    int findFirstUnusedSnapIndex(
-        int candidateCount,
-        const std::set<int>& usedIndices) {
-        
-        // Try from center outward: center, center+1, center-1, center+2, ...
-        int centerIdx = candidateCount > 0 ? candidateCount / 2 : 0;
-        
-        // First try center
-        if (usedIndices.find(centerIdx) == usedIndices.end()) {
-            return centerIdx;
-        }
-        
-        // Then try outward from center
-        for (int offset = 1; offset < candidateCount; ++offset) {
-            int plusIdx = centerIdx + offset;
-            if (plusIdx < candidateCount && usedIndices.find(plusIdx) == usedIndices.end()) {
-                return plusIdx;
-            }
-            
-            int minusIdx = centerIdx - offset;
-            if (minusIdx >= 0 && usedIndices.find(minusIdx) == usedIndices.end()) {
-                return minusIdx;
-            }
-        }
-        
-        // All used, return center as fallback
-        return centerIdx;
-    }
-}  // anonymous namespace
 
 AStarEdgeOptimizer::AStarEdgeOptimizer(
     std::shared_ptr<IPathFinder> pathFinder)
@@ -868,9 +810,9 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     } else {
         // Different NodeEdge - find first unused snap index to avoid collision
         int candidateCount = GridSnapCalculator::getCandidateCount(srcIt->second, sourceEdge, gridSize);
-        std::set<int> usedIndices = collectUsedSnapIndices(
+        std::set<int> usedIndices = SnapIndexManager::collectUsedIndices(
             base.from, sourceEdge, true, assignedLayouts);
-        int selectedIdx = findFirstUnusedSnapIndex(candidateCount, usedIndices);
+        int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
         Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             srcIt->second, sourceEdge, selectedIdx, gridSize);
         candidate.setSourceSnap(selectedIdx, snapPoint);
@@ -898,9 +840,9 @@ EdgeLayout AStarEdgeOptimizer::createCandidateLayout(
     } else {
         // Different NodeEdge - find first unused snap index to avoid collision
         int candidateCount = GridSnapCalculator::getCandidateCount(tgtIt->second, targetEdge, gridSize);
-        std::set<int> usedIndices = collectUsedSnapIndices(
+        std::set<int> usedIndices = SnapIndexManager::collectUsedIndices(
             base.to, targetEdge, false, assignedLayouts);
-        int selectedIdx = findFirstUnusedSnapIndex(candidateCount, usedIndices);
+        int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
         Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             tgtIt->second, targetEdge, selectedIdx, gridSize);
         candidate.setTargetSnap(selectedIdx, snapPoint);
