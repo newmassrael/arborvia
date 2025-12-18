@@ -571,53 +571,6 @@ int findAlternativeGridY(
     return originalGridY + 1;
 }
 
-// Legacy float versions - call grid versions internally for compatibility
-float findAlternativeX(
-    float originalX,
-    float yMin,
-    float yMax,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float gridSpacing) {
-
-    // Use 20.0f as default when grid is disabled (gridSpacing == 0)
-    // This provides a reasonable offset for overlap avoidance
-    float effectiveGridSize = constants::effectiveGridSize(gridSpacing);
-
-    // Convert to grid coordinates
-    int originalGridX = static_cast<int>(std::round(originalX / effectiveGridSize));
-    int yMinGrid = static_cast<int>(std::floor(yMin / effectiveGridSize));
-    int yMaxGrid = static_cast<int>(std::ceil(yMax / effectiveGridSize));
-
-    // Call grid-based function
-    int resultGridX = findAlternativeGridX(originalGridX, yMinGrid, yMaxGrid, assignedLayouts, effectiveGridSize);
-
-    // Convert back to pixel (grid-aligned if gridSpacing > 0)
-    return resultGridX * effectiveGridSize;
-}
-
-float findAlternativeY(
-    float originalY,
-    float xMin,
-    float xMax,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float gridSpacing) {
-
-    // Use 20.0f as default when grid is disabled (gridSpacing == 0)
-    // This provides a reasonable offset for overlap avoidance
-    float effectiveGridSize = constants::effectiveGridSize(gridSpacing);
-
-    // Convert to grid coordinates
-    int originalGridY = static_cast<int>(std::round(originalY / effectiveGridSize));
-    int xMinGrid = static_cast<int>(std::floor(xMin / effectiveGridSize));
-    int xMaxGrid = static_cast<int>(std::ceil(xMax / effectiveGridSize));
-
-    // Call grid-based function
-    int resultGridY = findAlternativeGridY(originalGridY, xMinGrid, xMaxGrid, assignedLayouts, effectiveGridSize);
-
-    // Convert back to pixel (grid-aligned if gridSpacing > 0)
-    return resultGridY * effectiveGridSize;
-}
-
 // =========================================================================
 // Bulk Overlap Detection (with bounding box optimization)
 // =========================================================================

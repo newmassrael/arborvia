@@ -2,7 +2,7 @@
 
 #include "DemoState.h"
 #include "CommandServer.h"
-#include <arborvia/layout/interactive/ManualLayoutManager.h>
+#include <arborvia/layout/interactive/UserLayoutController.h>
 #include <arborvia/layout/interactive/PathRoutingCoordinator.h>
 #include <functional>
 #include <string>

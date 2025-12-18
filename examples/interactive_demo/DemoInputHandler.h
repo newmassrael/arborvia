@@ -1,7 +1,7 @@
 #pragma once
 
 #include "DemoState.h"
-#include <arborvia/layout/interactive/ManualLayoutManager.h>
+#include <arborvia/layout/interactive/UserLayoutController.h>
 #include <imgui.h>
 #include <functional>
 

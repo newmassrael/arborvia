@@ -171,36 +171,6 @@ namespace PathIntersection {
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
         float gridSize);
 
-    /// Find alternative X coordinate that doesn't overlap with existing vertical segments
-    /// @deprecated Use findAlternativeGridX for grid-aligned calculations
-    /// @param originalX The X coordinate that causes overlap
-    /// @param yMin Minimum Y of the segment
-    /// @param yMax Maximum Y of the segment
-    /// @param assignedLayouts Already assigned edges
-    /// @param gridSpacing Grid spacing for offset calculation
-    /// @return Alternative X coordinate (grid-aligned if gridSpacing > 0)
-    float findAlternativeX(
-        float originalX,
-        float yMin,
-        float yMax,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float gridSpacing = 20.0f);
-
-    /// Find alternative Y coordinate that doesn't overlap with existing horizontal segments
-    /// @deprecated Use findAlternativeGridY for grid-aligned calculations
-    /// @param originalY The Y coordinate that causes overlap
-    /// @param xMin Minimum X of the segment
-    /// @param xMax Maximum X of the segment
-    /// @param assignedLayouts Already assigned edges
-    /// @param gridSpacing Grid spacing for offset calculation
-    /// @return Alternative Y coordinate (grid-aligned if gridSpacing > 0)
-    float findAlternativeY(
-        float originalY,
-        float xMin,
-        float xMax,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float gridSpacing = 20.0f);
-
     // =========================================================================
     // Bulk Overlap Detection (with bounding box optimization)
     // =========================================================================

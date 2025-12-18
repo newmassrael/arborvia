@@ -63,12 +63,6 @@ private:
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
 
-    /// Calculate edge center point for given node edge (grid-aligned using SnapPointCalculator)
-    /// @deprecated Use calculateSnapPositionWithContext for proper distribution
-    Point calculateEdgeCenter(
-        const NodeLayout& node,
-        NodeEdge edge) const;
-
     /// Calculate snap position considering existing connections on the same node edge
     /// Uses GridSnapCalculator (SSOT) to distribute connections evenly
     Point calculateSnapPositionWithContext(
@@ -146,28 +140,6 @@ private:
     std::vector<BendPoint> adjustPathToAvoidOverlap(
         const EdgeLayout& candidate,
         const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts);
-
-    /// Find alternative X coordinate that doesn't overlap with existing vertical segments
-    /// @param originalX The X coordinate that causes overlap
-    /// @param yMin Minimum Y of the segment
-    /// @param yMax Maximum Y of the segment
-    /// @param assignedLayouts Already assigned edges
-    /// @param gridSpacing Grid spacing for offset calculation
-    /// @return Alternative X coordinate
-    float findAlternativeX(
-        float originalX,
-        float yMin,
-        float yMax,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float gridSpacing = 20.0f);
-
-    /// Find alternative Y coordinate that doesn't overlap with existing horizontal segments
-    float findAlternativeY(
-        float originalY,
-        float xMin,
-        float xMax,
-        const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-        float gridSpacing = 20.0f);
 
     /// Create self-loop path with collision avoidance against other nodes
     /// Tries different offsets if collision is detected

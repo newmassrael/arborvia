@@ -1,5 +1,5 @@
 #include "../../include/arborvia/layout/util/LayoutSerializer.h"
-#include "../../include/arborvia/layout/interactive/ManualLayoutManager.h"
+#include "../../include/arborvia/layout/interactive/UserLayoutController.h"
 #include "../../include/arborvia/layout/config/LayoutResult.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -27,7 +27,7 @@ NodeEdge LayoutSerializer::stringToNodeEdge(const std::string& str) {
     return NodeEdge::Bottom;
 }
 
-std::string LayoutSerializer::toJson(const ManualLayoutManager& manager) {
+std::string LayoutSerializer::toJson(const UserLayoutController& manager) {
     json j;
     j["version"] = 1;
 
@@ -81,7 +81,7 @@ std::string LayoutSerializer::toJson(const ManualLayoutManager& manager) {
     return j.dump(2);
 }
 
-bool LayoutSerializer::fromJson(ManualLayoutManager& manager, const std::string& jsonStr) {
+bool LayoutSerializer::fromJson(UserLayoutController& manager, const std::string& jsonStr) {
     try {
         json j = json::parse(jsonStr);
 
@@ -143,14 +143,14 @@ bool LayoutSerializer::fromJson(ManualLayoutManager& manager, const std::string&
     }
 }
 
-bool LayoutSerializer::saveToFile(const ManualLayoutManager& manager, const std::string& path) {
+bool LayoutSerializer::saveToFile(const UserLayoutController& manager, const std::string& path) {
     std::ofstream file(path);
     if (!file.is_open()) return false;
     file << toJson(manager);
     return true;
 }
 
-bool LayoutSerializer::loadFromFile(ManualLayoutManager& manager, const std::string& path) {
+bool LayoutSerializer::loadFromFile(UserLayoutController& manager, const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) return false;
     std::stringstream buffer;

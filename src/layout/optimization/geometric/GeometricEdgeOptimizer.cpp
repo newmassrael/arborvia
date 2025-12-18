@@ -334,14 +334,6 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
     return candidate;
 }
 
-Point GeometricEdgeOptimizer::calculateEdgeCenter(
-    const NodeLayout& node,
-    NodeEdge edge) const {
-    // Use SnapPointCalculator for grid-aligned snap points (A* standard)
-    float effectiveGridSize = constants::effectiveGridSize(gridSize_);
-    return SnapPointCalculator::calculateFromRatio(node, edge, 0.5f, effectiveGridSize);
-}
-
 Point GeometricEdgeOptimizer::calculateSnapPositionWithContext(
     const NodeLayout& node,
     NodeEdge nodeEdge,
@@ -976,24 +968,6 @@ std::vector<BendPoint> GeometricEdgeOptimizer::adjustPathToAvoidOverlap(
     const EdgeLayout& candidate,
     const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts) {
     return PathIntersection::adjustPathToAvoidOverlap(candidate, assignedLayouts, gridSize_);
-}
-
-float GeometricEdgeOptimizer::findAlternativeX(
-    float originalX,
-    float yMin,
-    float yMax,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float gridSpacing) {
-    return PathIntersection::findAlternativeX(originalX, yMin, yMax, assignedLayouts, gridSpacing);
-}
-
-float GeometricEdgeOptimizer::findAlternativeY(
-    float originalY,
-    float xMin,
-    float xMax,
-    const std::unordered_map<EdgeId, EdgeLayout>& assignedLayouts,
-    float gridSpacing) {
-    return PathIntersection::findAlternativeY(originalY, xMin, xMax, assignedLayouts, gridSpacing);
 }
 
 // =============================================================================

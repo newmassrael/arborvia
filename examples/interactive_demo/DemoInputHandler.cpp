@@ -5,7 +5,6 @@
 #include <arborvia/layout/api/IDragConstraint.h>
 #include <arborvia/common/Logger.h>
 #include "../../src/layout/snap/GridSnapCalculator.h"
-#include "../../src/layout/routing/OrthogonalRouter.h"
 #include <cmath>
 #include <algorithm>
 
@@ -266,7 +265,7 @@ void DemoInputHandler::handleClicks(DemoState& state, const ImGuiIO& io, const P
         }
 
         const auto& existingBps = manualManager_->getBendPoints(edgeId);
-        auto bpResult = OrthogonalRouter::calculateBendPointPair(
+        auto bpResult = UserLayoutController::calculateBendPointPair(
             edgeLayout, existingBps, clickPos, interaction.bendPointPreview.insertIndex);
 
         // Insert both points
@@ -501,7 +500,7 @@ void DemoInputHandler::handleBendPointDrag(DemoState& state, [[maybe_unused]] co
     bool isLastBend = (bpIdx == static_cast<int>(bps.size()) - 1);
     bool hasNextBend = (bpIdx < static_cast<int>(bps.size()) - 1);
 
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(
         prevPoint, currentPos, nextPoint, dragTarget, hasNextBend, isLastBend);
 
     // Apply the calculated positions

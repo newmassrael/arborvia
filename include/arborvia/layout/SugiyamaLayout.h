@@ -4,7 +4,7 @@
 #include "api/ILayout.h"
 #include "config/LayoutOptions.h"
 #include "config/LayoutResult.h"
-#include "interactive/ManualLayoutManager.h"
+#include "interactive/UserLayoutController.h"
 
 #include <memory>
 #include <vector>

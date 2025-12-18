@@ -55,7 +55,7 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/snap/SnapPositionUpdater.cpp
 
     # Interactive
-    src/layout/interactive/ManualLayoutManager.cpp
+    src/layout/interactive/UserLayoutController.cpp
     src/layout/interactive/PathRoutingCoordinator.cpp
     src/layout/interactive/SnapPointController.cpp
     src/layout/interactive/ConstraintManager.cpp
@@ -82,7 +82,6 @@ set(ARBORVIA_LAYOUT_SOURCES
     src/layout/api/LayoutController.cpp
 
     # Routing utilities
-    src/layout/routing/OrthogonalRouter.cpp
     src/layout/routing/CooperativeRerouter.cpp
     src/layout/routing/UnifiedRetryChain.cpp
 )
@@ -119,7 +118,7 @@ set(ARBORVIA_LAYOUT_HEADERS
     include/arborvia/layout/constraints/PositionFinder.h
 
     # Public API - Interactive
-    include/arborvia/layout/interactive/ManualLayoutManager.h
+    include/arborvia/layout/interactive/UserLayoutController.h
     include/arborvia/layout/interactive/PathRoutingCoordinator.h
     include/arborvia/layout/interactive/SnapPointController.h
 

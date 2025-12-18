@@ -7,14 +7,12 @@
 #include "RoutingOptimizer.h"
 #include "EdgeRoutingUtils.h"
 #include "../../snap/GridSnapCalculator.h"
-#include "../../snap/GridCoordinates.h"
 #include "ChannelRouter.h"
 #include "../../snap/SnapIndexManager.h"
 #include "../../pathfinding/ObstacleMap.h"
 #include "../../pathfinding/AStarPathFinder.h"
 #include "../../optimization/astar/AStarEdgeOptimizer.h"
 #include "../../optimization/geometric/GeometricEdgeOptimizer.h"
-#include "EdgeValidator.h"
 #include "SelfLoopRouter.h"
 #include "PathCleanup.h"
 #include "arborvia/core/GeometryUtils.h"
@@ -136,19 +134,6 @@ std::pair<int, int> EdgeRouting::countConnectionsOnNodeEdge(
 // =============================================================================
 // Edge Routing Core Methods
 // =============================================================================
-
-// =============================================================================
-// Segment-Node Intersection Detection and Avoidance
-// =============================================================================
-
-bool EdgeRouting::segmentIntersectsNode(
-    const Point& p1,
-    const Point& p2,
-    const NodeLayout& node,
-    float margin) {
-    // Delegate to EdgeValidator
-    return EdgeValidator::segmentIntersectsNode(p1, p2, node, margin);
-}
 
 EdgeRouting::Result EdgeRouting::route(
     const Graph& graph,
@@ -506,37 +491,5 @@ void EdgeRouting::regenerateBendPointsOnly(
         }
     }
 }
-
-// =============================================================================
-// Edge Layout Validation (delegated to EdgeValidator)
-// =============================================================================
-
-std::string EdgeRouting::ValidationResult::getErrorDescription() const {
-    // Create equivalent EdgeValidator result for delegation
-    EdgeValidator::ValidationResult evResult;
-    evResult.valid = valid;
-    evResult.orthogonal = orthogonal;
-    evResult.noNodeIntersection = noNodeIntersection;
-    evResult.sourceDirectionOk = sourceDirectionOk;
-    evResult.targetDirectionOk = targetDirectionOk;
-    return evResult.getErrorDescription();
-}
-
-EdgeRouting::ValidationResult EdgeRouting::validateEdgeLayout(
-    const EdgeLayout& layout,
-    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) {
-    // Delegate to EdgeValidator and convert result
-    auto evResult = EdgeValidator::validate(layout, nodeLayouts);
-
-    ValidationResult result;
-    result.valid = evResult.valid;
-    result.orthogonal = evResult.orthogonal;
-    result.noNodeIntersection = evResult.noNodeIntersection;
-    result.sourceDirectionOk = evResult.sourceDirectionOk;
-    result.targetDirectionOk = evResult.targetDirectionOk;
-    return result;
-}
-
-// Channel routing methods have been moved to ChannelRouter class
 
 }  // namespace arborvia

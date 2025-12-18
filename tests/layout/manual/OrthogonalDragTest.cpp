@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
-#include "../../../src/layout/routing/OrthogonalRouter.h"
+#include <arborvia/layout/interactive/UserLayoutController.h>
 #include <cmath>
 #include <vector>
 #include <iostream>
@@ -67,7 +67,7 @@ std::vector<Point> buildPath(const EdgeLayout& layout) {
 // ============== Drag Orthogonality Tests ==============
 
 // Helper: Calculate orthogonal-constrained position for drag
-// Orthogonal drag constraint tests use OrthogonalRouter::calculateOrthogonalDrag()
+// Orthogonal drag constraint tests use UserLayoutController::calculateOrthogonalDrag()
 
 TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
     ManualLayoutManager manager;
@@ -107,7 +107,7 @@ TEST_F(OrthogonalDragTest, Drag_MaintainsOrthogonalWithPrev) {
     Point dragTarget = {180.0f, 50.0f};  // Would create diagonal if unconstrained
 
     // Calculate what the orthogonal-constrained position should be
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // Apply the constrained move
     manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
@@ -161,7 +161,7 @@ TEST_F(OrthogonalDragTest, Drag_VerticalIncoming_HorizontalConstraint) {
     // (keep X same as source.x)
     Point dragTarget = {80.0f, 100.0f};  // Would create diagonal if X changes
 
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // The constrained position should have X = source.x (since incoming is vertical)
     EXPECT_FLOAT_EQ(dragResult.newCurrentPos.x, source.x)
@@ -219,7 +219,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_HorizontalIncoming_Constrains
     Point next{50, 200};
     Point drag{80, 150};     // diagonal drag attempt
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
 
     // Y should be constrained to prev.y (horizontal constraint)
@@ -239,7 +239,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_VerticalIncoming_ConstrainsX)
     Point next{200, 50};
     Point drag{150, 80};     // diagonal drag attempt
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
 
     // X should be constrained to prev.x (vertical constraint)
@@ -259,7 +259,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_LastBend_HorizontalVertical) 
     Point target{50, 200};    // vertical to target
     Point drag{80, 150};      // try to drag diagonally
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
 
     // Position should be constrained to intersection: X=target.x, Y=prev.y
@@ -275,7 +275,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_LastBend_VerticalHorizontal) 
     Point target{200, 50};    // horizontal to target
     Point drag{150, 80};      // try to drag diagonally
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, target, drag, false, true);
 
     // Position should be constrained to intersection: X=prev.x, Y=target.y
@@ -290,7 +290,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_NoNextBend_NoAdjustment) {
     Point next{100, 100};  // doesn't matter, hasNextBend=false
     Point drag{80, 150};
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, next, drag, false, false);
 
     // Should still constrain position
@@ -308,7 +308,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHori
     Point next{50, 100};
     Point drag{80, 80};
 
-    auto result = OrthogonalRouter::calculateOrthogonalDrag(
+    auto result = UserLayoutController::calculateOrthogonalDrag(
         prev, current, next, drag, true, false);
 
     // Treated as horizontal: Y should be constrained to prev.y
@@ -318,7 +318,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_DiagonalEdgeCase_TreatsAsHori
 
 TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
     // Verify struct is properly initialized
-    OrthogonalRouter::OrthogonalDragResult result;
+    OrthogonalDragResult result;
 
     EXPECT_FLOAT_EQ(result.newCurrentPos.x, 0.0f);
     EXPECT_FLOAT_EQ(result.newCurrentPos.y, 0.0f);
@@ -328,7 +328,7 @@ TEST_F(OrthogonalDragTest, CalculateOrthogonalDrag_ResultDefaultInitialized) {
 }
 
 // ============== TDD: Drag Orthogonality Bug Detection Tests ==============
-// These tests verify OrthogonalRouter::calculateOrthogonalDrag() directly
+// These tests verify UserLayoutController::calculateOrthogonalDrag() directly
 
 // TDD Test 1: Drag first bend point - should maintain orthogonality with source
 TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
@@ -367,7 +367,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_FirstPoint_MaintainsOrthogonalWithSource) {
     // Simulate dragging bp1 to a diagonal position
     Point dragTarget = {80.0f, 100.0f};  // Would break orthogonality if unconstrained
 
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     // Apply the drag
     manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
@@ -422,7 +422,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_MiddlePoint_CascadeAdjustment) {
     // Drag bp2 to new position
     Point dragTarget = {200.0f, 30.0f};
 
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, bp3, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(bp1, bp2, bp3, dragTarget, true, false);
 
     // Apply the drag
     manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.newCurrentPos), gridSize_);
@@ -472,7 +472,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_VerifyEachSegment) {
 
     // Drag bp1 downward
     Point dragTarget = {50.0f, 150.0f};
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
@@ -530,7 +530,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_ConsecutiveDrags) {
         Point bp1 = manager.getBendPoints(e1_)[0].position;
         Point bp2 = manager.getBendPoints(e1_)[1].position;
 
-        auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragPositions[i], true, false);
+        auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragPositions[i], true, false);
 
         manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
         if (dragResult.nextAdjusted) {
@@ -653,7 +653,7 @@ TEST_F(OrthogonalDragTest, TDD_DemoScenario_InsertThenDrag) {
     bp2 = manager.getBendPoints(e1_)[1].position;
 
     Point dragTarget = {bp1.x + 30, bp1.y + 20};
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1, bp2, dragTarget, true, false);
 
     manager.moveBendPoint(e1_, 0, pixelToGrid(dragResult.newCurrentPos), gridSize_);
     if (dragResult.nextAdjusted) {
@@ -753,7 +753,7 @@ TEST_F(OrthogonalDragTest, TDD_VisualFeedbackBug) {
 
     // Calculate drag result
     Point dragTarget = {80.0f, 100.0f};
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(source, bp1_old, bp2_old, dragTarget, true, false);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(source, bp1_old, bp2_old, dragTarget, true, false);
 
     // Update manualManager (correct)
     if (dragResult.nextAdjusted) {
@@ -824,7 +824,7 @@ TEST_F(OrthogonalDragTest, TDD_Drag_LastPoint_NoNextToAdjust) {
     Point dragTarget = {280.0f, 150.0f};
 
     // hasNextBend = false, isLastBend = true
-    auto dragResult = OrthogonalRouter::calculateOrthogonalDrag(bp1, bp2, target, dragTarget, false, true);
+    auto dragResult = UserLayoutController::calculateOrthogonalDrag(bp1, bp2, target, dragTarget, false, true);
 
     // Apply the drag (no next bend to adjust)
     manager.moveBendPoint(e1_, 1, pixelToGrid(dragResult.newCurrentPos), gridSize_);

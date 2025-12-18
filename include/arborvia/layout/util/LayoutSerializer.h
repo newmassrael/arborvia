@@ -6,37 +6,37 @@
 namespace arborvia {
 
 // Forward declarations
-class ManualLayoutManager;
+class UserLayoutController;
 class LayoutResult;
 
 /// Handles JSON serialization and file I/O for layout state
-/// Separates serialization concerns from ManualLayoutManager and LayoutResult
+/// Separates serialization concerns from UserLayoutController and LayoutResult
 class LayoutSerializer {
 public:
-    // === ManualLayoutManager serialization ===
+    // === UserLayoutController serialization ===
 
-    /// Serialize manual layout state to JSON string
-    /// @param manager The ManualLayoutManager to serialize
+    /// Serialize user layout state to JSON string
+    /// @param controller The UserLayoutController to serialize
     /// @return JSON string representation
-    static std::string toJson(const ManualLayoutManager& manager);
+    static std::string toJson(const UserLayoutController& controller);
 
-    /// Deserialize JSON string to manual layout state
-    /// @param manager The ManualLayoutManager to populate
+    /// Deserialize JSON string to user layout state
+    /// @param controller The UserLayoutController to populate
     /// @param json JSON string to parse
     /// @return true if parsing succeeded
-    static bool fromJson(ManualLayoutManager& manager, const std::string& json);
+    static bool fromJson(UserLayoutController& controller, const std::string& json);
 
-    /// Save manual layout state to file
-    /// @param manager The ManualLayoutManager to save
+    /// Save user layout state to file
+    /// @param controller The UserLayoutController to save
     /// @param path File path to write
     /// @return true if save succeeded
-    static bool saveToFile(const ManualLayoutManager& manager, const std::string& path);
+    static bool saveToFile(const UserLayoutController& controller, const std::string& path);
 
-    /// Load manual layout state from file
-    /// @param manager The ManualLayoutManager to populate
+    /// Load user layout state from file
+    /// @param controller The UserLayoutController to populate
     /// @param path File path to read
     /// @return true if load succeeded
-    static bool loadFromFile(ManualLayoutManager& manager, const std::string& path);
+    static bool loadFromFile(UserLayoutController& controller, const std::string& path);
 
     // === LayoutResult serialization ===
 

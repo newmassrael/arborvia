@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <arborvia/arborvia.h>
 #include "../../src/layout/snap/GridSnapCalculator.h"
-#include "../../src/layout/routing/OrthogonalRouter.h"
+#include <arborvia/layout/interactive/UserLayoutController.h>
 #include <cmath>
 #include <vector>
 
@@ -163,7 +163,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_EmptyBends_HorizontalEdge) {
     std::vector<BendPoint> emptyBends;
     Point clickPos = {100.0f, 50.0f};
 
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+    auto result = UserLayoutController::calculateBendPointPair(edge, emptyBends, clickPos, 0);
 
     // Horizontal edge -> vertical step
     EXPECT_EQ(result.insertIndex, 0u);
@@ -181,7 +181,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_EmptyBends_VerticalEdge) {
     std::vector<BendPoint> emptyBends;
     Point clickPos = {50.0f, 100.0f};
 
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+    auto result = UserLayoutController::calculateBendPointPair(edge, emptyBends, clickPos, 0);
 
     // Vertical edge -> horizontal step
     EXPECT_EQ(result.insertIndex, 0u);
@@ -199,7 +199,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_EmptyBends_DiagonalEdge) {
     std::vector<BendPoint> emptyBends;
     Point clickPos = {100.0f, 50.0f};
 
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, emptyBends, clickPos, 0);
+    auto result = UserLayoutController::calculateBendPointPair(edge, emptyBends, clickPos, 0);
 
     // dx(200) > dy(100) -> vertical step
     EXPECT_EQ(result.insertIndex, 0u);
@@ -223,7 +223,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_ExistingBends_MiddleSegment) {
 
     Point clickPos = {100.0f, 100.0f};
 
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, 1);
+    auto result = UserLayoutController::calculateBendPointPair(edge, existingBends, clickPos, 1);
 
     EXPECT_EQ(result.insertIndex, 1u);
     // Vertical segment -> horizontal step
@@ -245,7 +245,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_InvalidSegmentIndex_UsesFallback)
     Point clickPos = {50.0f, 50.0f};
 
     // Test with invalid index (too large)
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, 100);
+    auto result = UserLayoutController::calculateBendPointPair(edge, existingBends, clickPos, 100);
 
     // Should fall back to segment 0
     EXPECT_EQ(result.insertIndex, 0u);
@@ -263,7 +263,7 @@ TEST_F(LayoutUtilsTest, CalculateBendPointPair_NegativeSegmentIndex_UsesFallback
     Point clickPos = {50.0f, 50.0f};
 
     // Test with negative index
-    auto result = OrthogonalRouter::calculateBendPointPair(edge, existingBends, clickPos, -5);
+    auto result = UserLayoutController::calculateBendPointPair(edge, existingBends, clickPos, -5);
 
     // Should fall back to segment 0
     EXPECT_EQ(result.insertIndex, 0u);

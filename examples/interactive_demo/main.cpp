@@ -22,7 +22,6 @@
 #include "../../src/layout/pathfinding/ObstacleMap.h"
 #include "../../src/layout/snap/GridSnapCalculator.h"
 #include "../../src/layout/pathfinding/AStarPathFinder.h"
-#include "../../src/layout/routing/OrthogonalRouter.h"
 #include "../../src/layout/routing/CooperativeRerouter.h"
 #include "CommandServer.h"
 #include <arborvia/core/TaskExecutor.h>

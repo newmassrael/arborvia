@@ -2,6 +2,7 @@
 #include <arborvia/arborvia.h>
 #include <arborvia/layout/api/LayoutController.h>
 #include "../../../src/layout/sugiyama/routing/EdgeRouting.h"
+#include "../../../src/layout/sugiyama/routing/EdgeValidator.h"
 #include "../../../src/layout/snap/GridSnapCalculator.h"
 #include "../../../src/layout/optimization/astar/AStarEdgeOptimizer.h"
 #include <sstream>
@@ -1460,7 +1461,7 @@ TEST(EdgeRoutingTransitionTest, CircularDrag_AllPositionsMustBeOrthogonal) {
         if (!edgeLayout) continue;
 
         // Validate the routed edge using centralized validation
-        auto edgeValidation = EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
+        auto edgeValidation = EdgeValidator::validate(*edgeLayout, nodeLayouts);
         if (!edgeValidation.valid) {
             // Routing algorithm couldn't produce valid path for this configuration
             skippedPositions++;
@@ -1634,7 +1635,7 @@ TEST(EdgeRoutingTransitionTest, StateMachine_CircularDragError_AllOrthogonal) {
             const EdgeLayout* edgeLayout = result.getEdgeLayout(edgeId);
             if (!edgeLayout) continue;
 
-            auto validation = EdgeRouting::validateEdgeLayout(*edgeLayout, nodeLayouts);
+            auto validation = EdgeValidator::validate(*edgeLayout, nodeLayouts);
             if (!validation.valid) {
                 allValid = false;
                 break;
@@ -3285,11 +3286,11 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
         Point p2{100.0f, 350.0f};
 
         // Without margin: should NOT intersect (boundary is excluded)
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f))
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 0.0f))
             << "Segment on boundary should not intersect without margin";
 
         // With margin=10: should intersect (within margin of boundary)
-        EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f))
+        EXPECT_TRUE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 10.0f))
             << "Segment on boundary should intersect with margin";
     }
 
@@ -3299,13 +3300,13 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
         Point p2{95.0f, 350.0f};
 
         // Without margin: should NOT intersect
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 0.0f));
 
         // With margin=10: should intersect (95 > 100-10=90)
-        EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
+        EXPECT_TRUE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 10.0f));
 
         // With margin=3: should NOT intersect (95 < 100-3=97)
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 3.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 3.0f));
     }
 
     // Test 3: Horizontal segment near top boundary (y=200)
@@ -3314,10 +3315,10 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
         Point p2{250.0f, 200.0f};
 
         // Without margin: should NOT intersect
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 0.0f));
 
         // With margin=10: should intersect
-        EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
+        EXPECT_TRUE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 10.0f));
     }
 
     // Test 4: Segment clearly inside node (should always intersect)
@@ -3325,8 +3326,8 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
         Point p1{150.0f, 250.0f};
         Point p2{150.0f, 350.0f};
 
-        EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
-        EXPECT_TRUE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
+        EXPECT_TRUE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 0.0f));
+        EXPECT_TRUE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 10.0f));
     }
 
     // Test 5: Segment clearly outside node (should never intersect)
@@ -3334,9 +3335,9 @@ TEST(EdgeRoutingTransitionTest, SegmentIntersectsNode_WithMargin) {
         Point p1{50.0f, 250.0f};  // Far from node
         Point p2{50.0f, 350.0f};
 
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 0.0f));
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 10.0f));
-        EXPECT_FALSE(EdgeRouting::segmentIntersectsNode(p1, p2, node, 20.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 0.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 10.0f));
+        EXPECT_FALSE(EdgeValidator::segmentIntersectsNode(p1, p2, node, 20.0f));
     }
 }
 
@@ -4228,7 +4229,7 @@ TEST(EdgeRoutingTransitionTest, OrthogonalValidation_DetectsDiagonalSegment) {
     std::cout << "Last segment (60,180)->(20,200) has dx=-40, dy=20 - DIAGONAL!\n";
 
     // Validate this buggy layout
-    auto validation = EdgeRouting::validateEdgeLayout(buggyEdge, nodeLayouts);
+    auto validation = EdgeValidator::validate(buggyEdge, nodeLayouts);
     
     std::cout << "Validation result:\n";
     std::cout << "  valid: " << (validation.valid ? "true" : "false") << "\n";
@@ -4363,7 +4364,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge4_PausedToStopped_Diagonal) 
               << " dy=" << (edge4.targetPoint.y - edge4.sourcePoint.y) << "\n";
 
     // Validate BEFORE update - should detect diagonal
-    auto validationBefore = EdgeRouting::validateEdgeLayout(edge4, nodeLayouts);
+    auto validationBefore = EdgeValidator::validate(edge4, nodeLayouts);
     std::cout << "Validation before: orthogonal=" << (validationBefore.orthogonal ? "true" : "false") << "\n";
     
     EXPECT_FALSE(validationBefore.orthogonal)
@@ -4386,7 +4387,7 @@ TEST(EdgeRoutingTransitionTest, InteractiveDemo_Edge4_PausedToStopped_Diagonal) 
     std::cout << "  Target: (" << result.targetPoint.x << ", " << result.targetPoint.y << ")\n";
 
     // Validate AFTER update
-    auto validationAfter = EdgeRouting::validateEdgeLayout(result, nodeLayouts);
+    auto validationAfter = EdgeValidator::validate(result, nodeLayouts);
     std::cout << "Validation after: orthogonal=" << (validationAfter.orthogonal ? "true" : "false") << "\n";
     std::cout << "======================================\n";
 

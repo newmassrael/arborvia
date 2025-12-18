@@ -35,7 +35,7 @@
 #include "layout/config/LayoutEnums.h"
 #include "layout/config/ManualLayoutState.h"
 #include "layout/config/LayoutTypes.h"
-#include "layout/interactive/ManualLayoutManager.h"
+#include "layout/interactive/UserLayoutController.h"
 #include "layout/util/LayoutUtils.h"
 #include "layout/util/LayoutSerializer.h"
 
