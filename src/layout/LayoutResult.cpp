@@ -1,6 +1,7 @@
 #include "arborvia/layout/config/LayoutResult.h"
 #include "arborvia/layout/util/LayoutSerializer.h"
 #include "arborvia/layout/constraints/PositionFinder.h"
+#include "arborvia/layout/constraints/ValidatedEdgeLayout.h"
 #include "arborvia/core/Graph.h"
 
 #include <algorithm>
@@ -92,7 +93,12 @@ bool LayoutResult::hasNodeLayout(NodeId id) const {
     return nodeLayouts_.find(id) != nodeLayouts_.end();
 }
 
-void LayoutResult::setEdgeLayout(EdgeId id, const EdgeLayout& layout) {
+void LayoutResult::setEdgeLayout(EdgeId id, ValidatedEdgeLayout&& validated) {
+    // Extract the validated layout and store it
+    setEdgeLayoutUnchecked(id, std::move(validated).extract());
+}
+
+void LayoutResult::setEdgeLayoutUnchecked(EdgeId id, const EdgeLayout& layout) {
     // Remove from old index if edge already exists
     auto it = edgeLayouts_.find(id);
     if (it != edgeLayouts_.end()) {

@@ -2,6 +2,7 @@
 #include <arborvia/layout/api/LayoutController.h>
 #include <arborvia/layout/util/LayoutSerializer.h>
 #include <arborvia/layout/constraints/ConstraintGateway.h>
+#include <arborvia/layout/constraints/ValidatedEdgeLayout.h>
 #include <sstream>
 #include <iostream>
 
@@ -211,7 +212,8 @@ void DemoCommandProcessor::handleGetLayout(DemoState& state) {
         currentResult.setNodeLayout(id, layout);
     }
     for (const auto& [id, layout] : *state.edgeLayouts) {
-        currentResult.setEdgeLayout(id, layout);
+        // Demo: trust layouts for JSON export (TEST/DEMO ONLY)
+        currentResult.setEdgeLayout(id, InternalTestAccess::trustUnchecked(layout));
     }
 
     std::string layoutJson = LayoutSerializer::toJson(currentResult);

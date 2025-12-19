@@ -110,4 +110,61 @@ ConstraintGateway::PathValidationResult ConstraintGateway::validatePathResult(
     return result;
 }
 
+// =============================================================================
+// Type-Safe Validation API
+// =============================================================================
+
+std::optional<ValidatedEdgeLayout> ConstraintGateway::validateAndWrap(
+    const EdgeLayout& layout,
+    const EdgeConstraintContext& ctx) const {
+    
+    auto result = validate(layout, ctx);
+    
+    if (!result.passesHardConstraints) {
+        return std::nullopt;
+    }
+    
+    // All hard constraints pass, wrap the layout
+    return ValidatedEdgeLayout(layout);
+}
+
+std::optional<ValidatedEdgeLayout> ConstraintGateway::validateAndWrapRelaxed(
+    const EdgeLayout& layout,
+    const EdgeConstraintContext& ctx,
+    std::vector<ConstraintViolation>* outViolations) const {
+    
+    auto result = validate(layout, ctx);
+    
+    if (!result.passesHardConstraints) {
+        return std::nullopt;
+    }
+    
+    // Output soft constraint violations if requested
+    if (outViolations) {
+        *outViolations = std::move(result.violations);
+    }
+    
+    // Hard constraints pass, wrap the layout
+    return ValidatedEdgeLayout(layout);
+}
+
+std::unordered_map<EdgeId, ValidatedEdgeLayout> ConstraintGateway::validateAllAndWrap(
+    const std::unordered_map<EdgeId, EdgeLayout>& layouts,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+    float gridSize) const {
+    
+    std::unordered_map<EdgeId, ValidatedEdgeLayout> results;
+    
+    EdgeConstraintContext ctx{layouts, nodeLayouts, gridSize, 1.0f};
+    
+    for (const auto& [edgeId, layout] : layouts) {
+        auto validated = validateAndWrap(layout, ctx);
+        if (validated) {
+            results.emplace(edgeId, std::move(*validated));
+        }
+    }
+    
+    return results;
+}
+
 } // namespace arborvia

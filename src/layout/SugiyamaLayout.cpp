@@ -4,6 +4,9 @@
 #include "arborvia/layout/api/ICrossingMinimization.h"
 #include "arborvia/layout/api/ICoordinateAssignment.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include "arborvia/layout/constraints/ConstraintGateway.h"
+#include "arborvia/layout/constraints/ValidatedEdgeLayout.h"
+#include "arborvia/common/Logger.h"
 #include "arborvia/core/GeometryUtils.h"
 #include "sugiyama/phases/CycleRemoval.h"
 #include "sugiyama/phases/LayerAssignment.h"
@@ -230,8 +233,19 @@ void SugiyamaLayout::applyFinalCleanup() {
 
         // Update ALL edges from allEdgeLayouts (not just needsRegeneration)
         // Phase 2 (rip-up-and-reroute) may have modified other edges too
+        // Use validated path to enforce constraint checking
+        ConstraintGateway gateway;
+        EdgeConstraintContext ctx{allEdgeLayouts, state_->result.nodeLayouts(), gridSize, 1.0f};
+        
         for (const auto& [edgeId, layout] : allEdgeLayouts) {
-            state_->result.setEdgeLayout(edgeId, layout);
+            auto validated = gateway.validateAndWrapRelaxed(layout, ctx);
+            if (validated) {
+                state_->result.setEdgeLayout(edgeId, std::move(*validated));
+            } else {
+                // Validation failed - this is a BUG in the optimizer
+                // Do NOT store invalid layout - fix the optimizer instead
+                LOG_ERROR("[SugiyamaLayout] Edge {} REJECTED - failed hard constraint validation after optimization", edgeId);
+            }
         }
 
         // Apply cleanup to all edges
@@ -372,13 +386,25 @@ void SugiyamaLayout::routeEdges() {
     //    When snapIndex is valid, optimizer preserves it and derives positions from it
     routing.optimizeRouting(result, state_->result.nodeLayouts(), options_);
 
+    // Use validated path to enforce constraint checking
+    float gridSize = constants::effectiveGridSize(options_.gridConfig.cellSize);
+    ConstraintGateway gateway;
+    EdgeConstraintContext ctx{result.edgeLayouts, state_->result.nodeLayouts(), gridSize, 1.0f};
+    
     for (auto& [id, layout] : result.edgeLayouts) {
-        state_->result.setEdgeLayout(id, layout);
-
-        // Calculate edge length for stats
-        auto points = layout.allPoints();
-        for (size_t i = 1; i < points.size(); ++i) {
-            stats_.totalEdgeLength += points[i].distanceTo(points[i - 1]);
+        auto validated = gateway.validateAndWrapRelaxed(layout, ctx);
+        if (validated) {
+            state_->result.setEdgeLayout(id, std::move(*validated));
+            
+            // Calculate edge length for stats (only for validated edges)
+            auto points = layout.allPoints();
+            for (size_t i = 1; i < points.size(); ++i) {
+                stats_.totalEdgeLength += points[i].distanceTo(points[i - 1]);
+            }
+        } else {
+            // Validation failed - this is a BUG in the routing/optimizer
+            // Do NOT store invalid layout - fix the routing/optimizer instead
+            LOG_ERROR("[SugiyamaLayout] Edge {} REJECTED - failed hard constraint validation after routing", id);
         }
     }
 }

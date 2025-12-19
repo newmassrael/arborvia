@@ -17,6 +17,7 @@
 #include <arborvia/layout/api/LayoutController.h>
 #include <arborvia/layout/config/ConstraintConfig.h>
 #include <arborvia/layout/constraints/ConstraintGateway.h>
+#include <arborvia/layout/constraints/ValidatedEdgeLayout.h>
 #include "../../src/layout/interactive/ConstraintManager.h"
 #include <arborvia/layout/interactive/SnapPointController.h>
 #include "../../src/layout/pathfinding/ObstacleMap.h"
@@ -303,7 +304,8 @@ public:
             currentResult.setNodeLayout(id, layout);
         }
         for (const auto& [id, layout] : edgeLayouts_) {
-            currentResult.setEdgeLayout(id, layout);
+            // Demo: trust layouts for serialization (TEST/DEMO ONLY)
+            currentResult.setEdgeLayout(id, InternalTestAccess::trustUnchecked(layout));
         }
         currentResult.setLayerCount(layoutResult_.layerCount());
 

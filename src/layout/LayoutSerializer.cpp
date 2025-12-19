@@ -1,6 +1,7 @@
 #include "../../include/arborvia/layout/util/LayoutSerializer.h"
 #include "../../include/arborvia/layout/interactive/UserLayoutController.h"
 #include "../../include/arborvia/layout/config/LayoutResult.h"
+#include "../../include/arborvia/layout/constraints/ValidatedEdgeLayout.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
@@ -272,7 +273,8 @@ LayoutResult LayoutSerializer::layoutResultFromJson(const std::string& jsonStr) 
                         layout.bendPoints.push_back(bp);
                     }
                 }
-                result.setEdgeLayout(layout.id, layout);
+                // Deserialized layouts are trusted - use trustUnchecked
+                result.setEdgeLayout(layout.id, ValidatedEdgeLayout::trustUnchecked(std::move(layout)));
             }
         }
     } catch (const json::exception& e) {

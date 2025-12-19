@@ -3,6 +3,8 @@
 #include "ConstraintRegistry.h"
 #include "ConstraintViolation.h"
 #include "IEdgeConstraint.h"
+#include "ValidatedEdgeLayout.h"
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -56,6 +58,48 @@ public:
     bool passesHardConstraints(
         const EdgeLayout& layout,
         const EdgeConstraintContext& ctx) const;
+
+    // =========================================================================
+    // Type-Safe Validation API (Compile-Time Enforcement)
+    // =========================================================================
+
+    /// Validate and wrap in ValidatedEdgeLayout
+    /// 
+    /// This is the PREFERRED way to validate edge layouts. It returns
+    /// ValidatedEdgeLayout which is required by exit points like
+    /// LayoutResult::setEdgeLayout().
+    /// 
+    /// @param layout The edge layout to validate
+    /// @param ctx Context with other edges and nodes
+    /// @return ValidatedEdgeLayout if validation passes, std::nullopt otherwise
+    std::optional<ValidatedEdgeLayout> validateAndWrap(
+        const EdgeLayout& layout,
+        const EdgeConstraintContext& ctx) const;
+
+    /// Validate and wrap, returning layout even if soft constraints fail
+    /// 
+    /// This method validates but still wraps the layout if only soft
+    /// constraints fail (hard constraints must pass).
+    /// 
+    /// @param layout The edge layout to validate
+    /// @param ctx Context with other edges and nodes
+    /// @param outViolations Optional output for soft constraint violations
+    /// @return ValidatedEdgeLayout if hard constraints pass, std::nullopt otherwise
+    std::optional<ValidatedEdgeLayout> validateAndWrapRelaxed(
+        const EdgeLayout& layout,
+        const EdgeConstraintContext& ctx,
+        std::vector<ConstraintViolation>* outViolations = nullptr) const;
+
+    /// Batch validate and wrap multiple layouts
+    /// 
+    /// @param layouts Edge layouts to validate
+    /// @param nodeLayouts Node layouts for context
+    /// @param gridSize Grid size for context
+    /// @return Map of edge ID to ValidatedEdgeLayout (only includes valid layouts)
+    std::unordered_map<EdgeId, ValidatedEdgeLayout> validateAllAndWrap(
+        const std::unordered_map<EdgeId, EdgeLayout>& layouts,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
+        float gridSize = 20.0f) const;
 
     /// Validate and return PathValidationResult compatible structure
     /// This is for compatibility with existing code during migration

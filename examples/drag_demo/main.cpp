@@ -1,4 +1,5 @@
 #include <arborvia/arborvia.h>
+#include <arborvia/layout/constraints/ValidatedEdgeLayout.h>
 #include <iostream>
 #include <iomanip>
 
@@ -143,7 +144,8 @@ int main() {
         updatedResult.setNodeLayout(id, layout);
     }
     for (const auto& [id, layout] : edgeLayouts) {
-        updatedResult.setEdgeLayout(id, layout);
+        // Demo code: trust layouts for SVG export (TEST/DEMO ONLY)
+        updatedResult.setEdgeLayout(id, InternalTestAccess::trustUnchecked(layout));
     }
     
     svg.exportToFile(graph, updatedResult, "drag_after.svg");

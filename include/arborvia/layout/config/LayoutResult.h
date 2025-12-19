@@ -12,6 +12,7 @@ namespace arborvia {
 
 // Forward declarations
 class Graph;
+class ValidatedEdgeLayout;
 struct ConstraintPlacementResult;
 
 /// Positioned node in the layout result
@@ -201,6 +202,11 @@ struct NodePlacementResult {
 
 /// Complete layout result for a graph
 class LayoutResult {
+    // ========== Friend Classes (Internal Use Only) ==========
+    // These classes can use setEdgeLayoutUnchecked for internal processing.
+    // External code MUST use setEdgeLayout(ValidatedEdgeLayout&&).
+    friend class LayoutSerializer;  // For deserialization
+    
 public:
     LayoutResult() = default;
     
@@ -240,8 +246,15 @@ public:
     NodeLayout* getNodeLayout(NodeId id);
     bool hasNodeLayout(NodeId id) const;
     
-    // Edge layout operations
-    void setEdgeLayout(EdgeId id, const EdgeLayout& layout);
+    // ========== Edge Layout Operations ==========
+    
+    /// Set edge layout (validated) - PUBLIC API
+    /// This method requires ValidatedEdgeLayout, ensuring compile-time constraint enforcement.
+    /// External code MUST use this method to set edge layouts.
+    /// @param id Edge ID
+    /// @param validated Validated edge layout (from ConstraintGateway::validateAndWrap)
+    void setEdgeLayout(EdgeId id, ValidatedEdgeLayout&& validated);
+    
     const EdgeLayout* getEdgeLayout(EdgeId id) const;
     EdgeLayout* getEdgeLayout(EdgeId id);
     bool hasEdgeLayout(EdgeId id) const;
@@ -284,6 +297,12 @@ public:
     void rebuildEdgeIndex();
 
 private:
+    // ========== Internal Edge Layout API (Friend Classes Only) ==========
+    /// Set edge layout without validation - INTERNAL USE ONLY
+    /// This method is private and only accessible to friend classes.
+    /// Friend classes must ensure proper validation before final commit.
+    void setEdgeLayoutUnchecked(EdgeId id, const EdgeLayout& layout);
+    
     void updateEdgeIndex(EdgeId edgeId, const EdgeLayout& layout);
     void removeFromEdgeIndex(EdgeId edgeId);
 
