@@ -395,6 +395,15 @@ void AStarEdgeOptimizer::regenerateBendPoints(
             auto result = selfLoopCalc.calculatePath(layout, nodeLayouts, selfLoopConfig);
             if (result.success) {
                 layout.bendPoints = std::move(result.bendPoints);
+                // Apply new snap state if provided (for loopIndex-based stacking)
+                // This maintains orthogonality between snap points and bend points
+                // IMPORTANT: snapIndex and Point must always be updated together (SSOT)
+                if (result.newSourceSnapIndex && result.newSourcePoint) {
+                    layout.setSourceSnap(*result.newSourceSnapIndex, *result.newSourcePoint);
+                }
+                if (result.newTargetSnapIndex && result.newTargetPoint) {
+                    layout.setTargetSnap(*result.newTargetSnapIndex, *result.newTargetPoint);
+                }
                 routedEdges[edgeId] = layout;
                 continue;
             }

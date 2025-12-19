@@ -5,6 +5,7 @@
 #include "../config/LayoutEnums.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +38,15 @@ struct EdgePathResult {
     bool success = false;
     std::vector<BendPoint> bendPoints;
     std::string failureReason;
+
+    /// Optional: New snap state if path calculation required snap point adjustment
+    /// (e.g., self-loop stacking with loopIndex)
+    /// When set, caller should update the layout's snap state to maintain orthogonality
+    /// IMPORTANT: snapIndex and Point must always be updated together (SSOT)
+    std::optional<int> newSourceSnapIndex;
+    std::optional<Point> newSourcePoint;
+    std::optional<int> newTargetSnapIndex;
+    std::optional<Point> newTargetPoint;
 };
 
 /// Interface for single-edge path calculation

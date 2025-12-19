@@ -104,8 +104,15 @@ EdgePathResult SelfLoopPathCalculator::calculatePathWithRouter(
     EdgeLayout routedLayout = SelfLoopRouter::route(
         layout.id, layout.from, node, loopIndex, options);
 
-    // Extract bend points from routed layout
+    // Extract bend points and NEW snap state from routed layout
+    // SelfLoopRouter calculates snap positions based on loopIndex for proper stacking,
+    // so we must also return these new snap indices and points to maintain orthogonality
+    // IMPORTANT: snapIndex and Point must always be updated together (SSOT)
     result.bendPoints = std::move(routedLayout.bendPoints);
+    result.newSourceSnapIndex = routedLayout.sourceSnapIndex;
+    result.newSourcePoint = routedLayout.sourcePoint;
+    result.newTargetSnapIndex = routedLayout.targetSnapIndex;
+    result.newTargetPoint = routedLayout.targetPoint;
     result.success = true;
 
     return result;
