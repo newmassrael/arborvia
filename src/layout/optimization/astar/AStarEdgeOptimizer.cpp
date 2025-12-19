@@ -375,6 +375,12 @@ void AStarEdgeOptimizer::regenerateBendPoints(
     selfLoopConfig.extensionCells = 2;
     selfLoopConfig.snapToGrid = true;
 
+    // Set context for self-loop stacking (loopIndex calculation)
+    PathCalculatorContext selfLoopContext;
+    selfLoopContext.edgeLayouts = &edgeLayouts;
+    selfLoopContext.gridSize = gridSize;
+    selfLoopCalc.setContext(selfLoopContext);
+
     // Phase 1: Route edges sequentially
     for (EdgeId edgeId : edges) {
         auto it = edgeLayouts.find(edgeId);

@@ -6,26 +6,29 @@ namespace arborvia {
 
 /// Path calculator for self-loop edges (from == to)
 ///
-/// Self-loops use geometric L-shaped routing through a corner point
-/// outside the node. This calculator handles:
-/// - Extension point calculation (perpendicular to each edge)
-/// - Corner point selection (outside node bounds)
-/// - Grid snapping for consistent rendering
+/// DELEGATION PATTERN: This calculator delegates to SelfLoopRouter when
+/// context is set, ensuring consistent routing with loopIndex-based stacking.
+///
+/// When context is set (via setContext):
+/// - Uses SelfLoopRouter::route() for path calculation
+/// - Calculates loopIndex from edgeLayouts for proper stacking
+/// - Always produces 3 bend points (consistent with initial routing)
+///
+/// When context is NOT set (fallback mode):
+/// - Uses simple geometric L-shape routing
+/// - May produce 2-3 bend points
+/// - Does NOT support proper stacking of multiple self-loops
 ///
 /// Valid self-loop combinations are adjacent edges only:
 /// - Top ↔ Left, Top ↔ Right
 /// - Bottom ↔ Left, Bottom ↔ Right
-///
-/// This centralizes self-loop path logic that was previously duplicated in:
-/// - SnapPointController::calculatePreviewPath()
-/// - AStarEdgeOptimizer::regenerateBendPoints()
-/// - GeometricEdgeOptimizer::regenerateBendPoints()
 class SelfLoopPathCalculator : public IEdgePathCalculator {
 public:
     SelfLoopPathCalculator() = default;
     ~SelfLoopPathCalculator() override = default;
 
-    /// Calculate L-shaped path for self-loop
+    /// Calculate path for self-loop
+    /// If context is set, delegates to SelfLoopRouter for consistent stacking
     EdgePathResult calculatePath(
         const EdgeLayout& layout,
         const std::unordered_map<NodeId, NodeLayout>& nodeLayouts,
@@ -36,18 +39,30 @@ public:
 
     const char* name() const override { return "SelfLoopPathCalculator"; }
 
+    /// Set context for proper self-loop stacking (loopIndex calculation)
+    /// @param ctx Must contain edgeLayouts; options is optional (uses gridSize if null)
+    void setContext(const PathCalculatorContext& ctx) override;
+
 private:
-    /// Calculate extension point perpendicular to node edge
+    /// Calculate path using SelfLoopRouter (when context is available)
+    EdgePathResult calculatePathWithRouter(
+        const EdgeLayout& layout,
+        const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const;
+
+    /// Fallback: Calculate extension point perpendicular to node edge
     static Point calculateExtensionPoint(
         const Point& snapPoint,
         NodeEdge edge,
         float offset);
 
-    /// Select corner point that is outside node bounds
+    /// Fallback: Select corner point that is outside node bounds
     static Point selectCornerOutsideNode(
         const Point& srcExt,
         const Point& tgtExt,
         const NodeLayout& node);
+
+    /// Context for delegation to SelfLoopRouter
+    PathCalculatorContext context_;
 };
 
 }  // namespace arborvia

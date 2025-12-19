@@ -1,5 +1,6 @@
 #include "SelfLoopPathCalculator.h"
 #include "../sugiyama/routing/SelfLoopRouter.h"
+#include "arborvia/layout/config/LayoutOptions.h"
 
 #include <cmath>
 
@@ -7,6 +8,10 @@ namespace arborvia {
 
 bool SelfLoopPathCalculator::canHandle(const EdgeLayout& layout) const {
     return layout.from == layout.to;
+}
+
+void SelfLoopPathCalculator::setContext(const PathCalculatorContext& ctx) {
+    context_ = ctx;
 }
 
 EdgePathResult SelfLoopPathCalculator::calculatePath(
@@ -28,7 +33,6 @@ EdgePathResult SelfLoopPathCalculator::calculatePath(
         result.failureReason = "Node not found";
         return result;
     }
-    const NodeLayout& node = nodeIt->second;
 
     // Validate edge combination (must be adjacent edges)
     if (!SelfLoopRouter::isValidSelfLoopCombination(layout.sourceEdge, layout.targetEdge)) {
@@ -36,7 +40,16 @@ EdgePathResult SelfLoopPathCalculator::calculatePath(
         return result;
     }
 
-    // Calculate extension points perpendicular to each edge (in grid cells)
+    // DELEGATION: If context has edgeLayouts, use SelfLoopRouter for consistent stacking
+    // (options is optional - will use default with context.gridSize if null)
+    if (context_.edgeLayouts) {
+        return calculatePathWithRouter(layout, nodeLayouts);
+    }
+
+    // FALLBACK: Simple geometric L-shape (no loopIndex stacking)
+    // Only used when setContext was not called (e.g., standalone usage)
+    const NodeLayout& node = nodeIt->second;
+
     float offset = config.extensionOffset();
     Point srcExt = calculateExtensionPoint(layout.sourcePoint, layout.sourceEdge, offset);
     Point tgtExt = calculateExtensionPoint(layout.targetPoint, layout.targetEdge, offset);
@@ -49,8 +62,7 @@ EdgePathResult SelfLoopPathCalculator::calculatePath(
         tgtExt.y = std::round(tgtExt.y / config.gridSize) * config.gridSize;
     }
 
-    // Check if corner point is needed (srcExt and tgtExt not aligned)
-    // After grid snap, coordinates are exact multiples - no epsilon needed
+    // Check if corner point is needed
     bool needsCorner = (srcExt.x != tgtExt.x && srcExt.y != tgtExt.y);
 
     if (needsCorner) {
@@ -64,6 +76,38 @@ EdgePathResult SelfLoopPathCalculator::calculatePath(
     }
 
     result.success = true;
+    return result;
+}
+
+EdgePathResult SelfLoopPathCalculator::calculatePathWithRouter(
+    const EdgeLayout& layout,
+    const std::unordered_map<NodeId, NodeLayout>& nodeLayouts) const {
+
+    EdgePathResult result;
+
+    // Node existence already validated in calculatePath()
+    const NodeLayout& node = nodeLayouts.at(layout.from);
+
+    // Calculate loopIndex for proper stacking of multiple self-loops
+    int loopIndex = SelfLoopRouter::calculateLoopIndex(
+        layout.id, layout.from, *context_.edgeLayouts);
+
+    // Use provided options or create default with context's gridSize
+    LayoutOptions options;
+    if (context_.options) {
+        options = *context_.options;
+    } else {
+        options.gridConfig.cellSize = context_.gridSize;
+    }
+
+    // Delegate to SelfLoopRouter (Single Source of Truth)
+    EdgeLayout routedLayout = SelfLoopRouter::route(
+        layout.id, layout.from, node, loopIndex, options);
+
+    // Extract bend points from routed layout
+    result.bendPoints = std::move(routedLayout.bendPoints);
+    result.success = true;
+
     return result;
 }
 

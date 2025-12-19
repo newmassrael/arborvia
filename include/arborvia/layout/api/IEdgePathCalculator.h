@@ -11,6 +11,17 @@
 
 namespace arborvia {
 
+// Forward declarations
+struct LayoutOptions;
+
+/// Context for path calculators that need additional information
+/// beyond the basic calculatePath parameters (e.g., for self-loop stacking)
+struct PathCalculatorContext {
+    const std::unordered_map<EdgeId, EdgeLayout>* edgeLayouts = nullptr;
+    const LayoutOptions* options = nullptr;  ///< Optional - if null, default options with gridSize are used
+    float gridSize = 20.0f;  ///< Grid size for creating default options when options is null
+};
+
 /// Configuration for edge path calculation
 struct PathConfig {
     float gridSize = 20.0f;
@@ -66,6 +77,11 @@ public:
 
     /// Get calculator name for debugging/logging
     virtual const char* name() const = 0;
+
+    /// Set context for calculators that need additional information
+    /// (e.g., edgeLayouts for self-loop stacking with loopIndex)
+    /// Default implementation does nothing - override if needed
+    virtual void setContext(const PathCalculatorContext& /*ctx*/) {}
 };
 
 }  // namespace arborvia
