@@ -372,7 +372,8 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
     // - Point nodes: snapIndex=0 at center (SSOT)
     // - Normal nodes: temporary position, SnapDistributor will assign proper snapIndex
     if (fromIsPoint) {
-        layout.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, fromCenter);
+        layout.sourceSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+        layout.sourcePoint = fromCenter;
     } else {
         // Calculate initial snap position - SnapDistributor may reassign later
         Point tempPos = SnapPointCalculator::calculateFromRatio(
@@ -381,11 +382,13 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
             fromLayout, layout.sourceEdge, tempPos, gridSize);
         Point snapPos = GridSnapCalculator::getPositionFromCandidateIndex(
             fromLayout, layout.sourceEdge, snapIdx, gridSize);
-        layout.setSourceSnap(snapIdx, snapPos);
+        layout.sourceSnapIndex = snapIdx;
+        layout.sourcePoint = snapPos;
     }
 
     if (toIsPoint) {
-        layout.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, toCenter);
+        layout.targetSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+        layout.targetPoint = toCenter;
     } else {
         // Calculate initial snap position - SnapDistributor may reassign later
         Point tempPos = SnapPointCalculator::calculateFromRatio(
@@ -394,7 +397,8 @@ EdgeLayout ChannelRouter::routeChannelOrthogonal(
             toLayout, layout.targetEdge, tempPos, gridSize);
         Point snapPos = GridSnapCalculator::getPositionFromCandidateIndex(
             toLayout, layout.targetEdge, snapIdx, gridSize);
-        layout.setTargetSnap(snapIdx, snapPos);
+        layout.targetSnapIndex = snapIdx;
+        layout.targetPoint = snapPos;
     }
 
     // ROOT CAUSE ANALYSIS: Check if snap points are on grid vertices

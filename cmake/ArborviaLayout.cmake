@@ -80,6 +80,8 @@ set(ARBORVIA_LAYOUT_SOURCES
 
     # API (centralized controllers)
     src/layout/api/LayoutController.cpp
+    src/layout/api/EdgeRoutingService.cpp
+    src/layout/api/EdgeLayoutResolver.cpp
 
     # Routing utilities
     src/layout/routing/CooperativeRerouter.cpp

@@ -285,19 +285,23 @@ SnapPointController::DragUpdateResult SnapPointController::updateDrag(
         previewLayout_.bendPoints.clear();  // Clear old bendPoints before recalculating
 
         if (isDraggingSource_) {
-            previewLayout_.setSourceSnap(candidate.candidateIndex, candidate.position);
+            previewLayout_.sourceSnapIndex = candidate.candidateIndex;
+            previewLayout_.sourcePoint = candidate.position;
             previewLayout_.sourceEdge = candidate.edge;
             // Auto-adjust target for self-loop if needed
             if (candidate.requiresOtherEndpointMove) {
-                previewLayout_.setTargetSnap(candidate.suggestedOtherIndex, candidate.suggestedOtherPosition);
+                previewLayout_.targetSnapIndex = candidate.suggestedOtherIndex;
+                previewLayout_.targetPoint = candidate.suggestedOtherPosition;
                 previewLayout_.targetEdge = candidate.suggestedOtherEdge;
             }
         } else {
-            previewLayout_.setTargetSnap(candidate.candidateIndex, candidate.position);
+            previewLayout_.targetSnapIndex = candidate.candidateIndex;
+            previewLayout_.targetPoint = candidate.position;
             previewLayout_.targetEdge = candidate.edge;
             // Auto-adjust source for self-loop if needed
             if (candidate.requiresOtherEndpointMove) {
-                previewLayout_.setSourceSnap(candidate.suggestedOtherIndex, candidate.suggestedOtherPosition);
+                previewLayout_.sourceSnapIndex = candidate.suggestedOtherIndex;
+                previewLayout_.sourcePoint = candidate.suggestedOtherPosition;
                 previewLayout_.sourceEdge = candidate.suggestedOtherEdge;
             }
         }
@@ -409,22 +413,26 @@ SnapPointController::DropResult SnapPointController::completeDrag(
               targetPosition.x, targetPosition.y);
 
     if (isDraggingSource_) {
-        draggedEdge.setSourceSnap(targetSnapIndex, targetPosition);
+        draggedEdge.sourceSnapIndex = targetSnapIndex;
+        draggedEdge.sourcePoint = targetPosition;
         draggedEdge.sourceEdge = targetEdge;
         // Self-loop auto-adjustment: also move target if needed
         if (selectedCandidate && selectedCandidate->requiresOtherEndpointMove) {
-            draggedEdge.setTargetSnap(selectedCandidate->suggestedOtherIndex, selectedCandidate->suggestedOtherPosition);
+            draggedEdge.targetSnapIndex = selectedCandidate->suggestedOtherIndex;
+            draggedEdge.targetPoint = selectedCandidate->suggestedOtherPosition;
             draggedEdge.targetEdge = selectedCandidate->suggestedOtherEdge;
             LOG_DEBUG("[SnapPointController] Self-loop auto-adjusted target to ({},{}) edge={}",
                       draggedEdge.targetPoint.x, draggedEdge.targetPoint.y,
                       static_cast<int>(draggedEdge.targetEdge));
         }
     } else {
-        draggedEdge.setTargetSnap(targetSnapIndex, targetPosition);
+        draggedEdge.targetSnapIndex = targetSnapIndex;
+        draggedEdge.targetPoint = targetPosition;
         draggedEdge.targetEdge = targetEdge;
         // Self-loop auto-adjustment: also move source if needed
         if (selectedCandidate && selectedCandidate->requiresOtherEndpointMove) {
-            draggedEdge.setSourceSnap(selectedCandidate->suggestedOtherIndex, selectedCandidate->suggestedOtherPosition);
+            draggedEdge.sourceSnapIndex = selectedCandidate->suggestedOtherIndex;
+            draggedEdge.sourcePoint = selectedCandidate->suggestedOtherPosition;
             draggedEdge.sourceEdge = selectedCandidate->suggestedOtherEdge;
             LOG_DEBUG("[SnapPointController] Self-loop auto-adjusted source to ({},{}) edge={}",
                       draggedEdge.sourcePoint.x, draggedEdge.sourcePoint.y,
@@ -438,10 +446,12 @@ SnapPointController::DropResult SnapPointController::completeDrag(
     if (occupying.edgeId != INVALID_EDGE) {
         EdgeLayout& swapEdge = edgeLayouts[occupying.edgeId];
         if (occupying.isSource) {
-            swapEdge.setSourceSnap(originalSnapIndex_, originalPosition_);
+            swapEdge.sourceSnapIndex = originalSnapIndex_;
+            swapEdge.sourcePoint = originalPosition_;
             swapEdge.sourceEdge = originalEdge_;
         } else {
-            swapEdge.setTargetSnap(originalSnapIndex_, originalPosition_);
+            swapEdge.targetSnapIndex = originalSnapIndex_;
+            swapEdge.targetPoint = originalPosition_;
             swapEdge.targetEdge = originalEdge_;
         }
         result.swapEdgeId = occupying.edgeId;

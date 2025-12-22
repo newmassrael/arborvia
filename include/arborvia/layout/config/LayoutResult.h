@@ -92,7 +92,7 @@ struct EdgeLayout {
     
     // Snap point indices (SSOT - Single Source of Truth)
     // snapIndex is the authority; Point is derived via GridSnapCalculator::getPositionFromCandidateIndex()
-    // Use setSourceSnap()/setTargetSnap() to ensure snapIndex and Point stay synchronized
+    // Use EdgeLayoutResolver::resolve() to update all derived fields atomically
     int sourceSnapIndex = -1;                 // -1 = uninitialized (routing not yet performed)
     int targetSnapIndex = -1;                 // -1 = uninitialized (routing not yet performed)
     
@@ -154,43 +154,34 @@ struct EdgeLayout {
     }
 
     // =========================================================================
-    // SSOT Invariants (Must be maintained by all code paths)
+    // SSOT Architecture (Single Source of Truth)
     // =========================================================================
+    //
+    // CORE DATA (stored): id, from, to, sourceEdge, targetEdge,
+    //                     sourceSnapIndex, targetSnapIndex, channelY, usedGridSize
+    //
+    // DERIVED DATA (computed by EdgeLayoutResolver):
+    //   - sourcePoint (from sourceSnapIndex + sourceNode)
+    //   - targetPoint (from targetSnapIndex + targetNode)
+    //   - bendPoints (from A* pathfinding)
+    //   - labelPosition (from path midpoint)
+    //
+    // INVARIANTS:
     // 1. snapIndex is authority, Point is derived
-    //    - Use GridSnapCalculator::getPositionFromCandidateIndex() to compute Point
-    //    - Always use setter methods below to maintain synchronization
+    //    - Use EdgeLayoutResolver::resolve() to update ALL derived fields atomically
+    //    - NEVER update sourcePoint/targetPoint directly without updating bendPoints
     //
     // 2. Point nodes: snapIndex = SNAP_INDEX_POINT_NODE_CENTER (0) always
-    //    - All edges share the center point, so same snapIndex is intentional
-    //    - Do NOT compare snapIndex directly for collision detection on Point nodes
-    //    - Use GridSnapCalculator::getCandidateIndexFromPosition() for comparisons
     //
     // 3. snapIndex = -1 means uninitialized (routing not yet performed)
+    //
+    // DELETED METHODS (caused orphaned bend points):
+    // - setSourceSnap() - updated sourcePoint without bendPoints
+    // - setTargetSnap() - updated targetPoint without bendPoints
+    // - copySnapStateFrom() - copied points without recalculating bendPoints
+    //
+    // Use EdgeLayoutResolver::resolve() instead for ALL derived field updates.
     // =========================================================================
-
-    // =========================================================================
-    // SSOT Setter Methods (Single Source of Truth for snap positions)
-    // =========================================================================
-
-    /// Set source snap position (snapIndex + derived Point)
-    void setSourceSnap(int snapIndex, const Point& derivedPoint) {
-        sourceSnapIndex = snapIndex;
-        sourcePoint = derivedPoint;
-    }
-
-    /// Set target snap position (snapIndex + derived Point)
-    void setTargetSnap(int snapIndex, const Point& derivedPoint) {
-        targetSnapIndex = snapIndex;
-        targetPoint = derivedPoint;
-    }
-
-    /// Copy snap state from another layout (preserves SSOT synchronization)
-    void copySnapStateFrom(const EdgeLayout& other) {
-        sourceSnapIndex = other.sourceSnapIndex;
-        sourcePoint = other.sourcePoint;
-        targetSnapIndex = other.targetSnapIndex;
-        targetPoint = other.targetPoint;
-    }
 };
 
 /// Result of node placement validation

@@ -399,10 +399,12 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                 // This maintains orthogonality between snap points and bend points
                 // IMPORTANT: snapIndex and Point must always be updated together (SSOT)
                 if (result.newSourceSnapIndex && result.newSourcePoint) {
-                    layout.setSourceSnap(*result.newSourceSnapIndex, *result.newSourcePoint);
+                    layout.sourceSnapIndex = *result.newSourceSnapIndex;
+                    layout.sourcePoint = *result.newSourcePoint;
                 }
                 if (result.newTargetSnapIndex && result.newTargetPoint) {
-                    layout.setTargetSnap(*result.newTargetSnapIndex, *result.newTargetPoint);
+                    layout.targetSnapIndex = *result.newTargetSnapIndex;
+                    layout.targetPoint = *result.newTargetPoint;
                 }
                 routedEdges[edgeId] = layout;
                 continue;
@@ -450,7 +452,11 @@ void AStarEdgeOptimizer::regenerateBendPoints(
 
         if (result.success) {
             layout.bendPoints = result.layout.bendPoints;
-            layout.copySnapStateFrom(result.layout);
+            // Copy snap state atomically (replaces copySnapStateFrom)
+            layout.sourceSnapIndex = result.layout.sourceSnapIndex;
+            layout.sourcePoint = result.layout.sourcePoint;
+            layout.targetSnapIndex = result.layout.targetSnapIndex;
+            layout.targetPoint = result.layout.targetPoint;
             layout.usedGridSize = effectiveGridSize();
 
             for (const auto& reroutedLayout : result.reroutedEdges) {
@@ -468,6 +474,24 @@ void AStarEdgeOptimizer::regenerateBendPoints(
                       edgeId, layout.bendPoints.size());
             for (size_t i = 0; i < layout.bendPoints.size(); ++i) {
                 LOG_DEBUG("  existing.bend[{}]=({},{})", i,
+                          layout.bendPoints[i].position.x,
+                          layout.bendPoints[i].position.y);
+            }
+
+            // CRITICAL FIX for "orphaned bendPoints" bug:
+            // SnapPositionUpdater Phase 2 may have changed sourcePoint/targetPoint
+            // but retryChain failed to find a new path. The existing bendPoints
+            // were calculated for the OLD sourcePoint/targetPoint, so they don't
+            // match the NEW positions → diagonal segments.
+            //
+            // Call ensureEndpointOrthogonality to insert alignment points that
+            // make the path orthogonal with the current sourcePoint/targetPoint.
+            retryChain.ensureEndpointOrthogonality(layout);
+
+            LOG_DEBUG("[AStarOpt::regenerateBendPoints] Edge {} AFTER orthogonality fix, bendPoints={}",
+                      edgeId, layout.bendPoints.size());
+            for (size_t i = 0; i < layout.bendPoints.size(); ++i) {
+                LOG_DEBUG("  fixed.bend[{}]=({},{})", i,
                           layout.bendPoints[i].position.x,
                           layout.bendPoints[i].position.y);
             }

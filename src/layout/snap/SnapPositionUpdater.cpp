@@ -4,12 +4,10 @@
 #include "GridSnapCalculator.h"
 #include "SnapIndexManager.h"
 #include "../sugiyama/routing/SelfLoopRouter.h"
-#include "../sugiyama/routing/PathCleanup.h"
 #include "arborvia/layout/util/LayoutUtils.h"
+#include "arborvia/layout/api/EdgeLayoutResolver.h"
 #include "arborvia/common/Logger.h"
 #include <algorithm>
-#include <cmath>
-#include <iostream>
 
 
 namespace arborvia {
@@ -69,8 +67,9 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
 
     auto [nodeId, nodeEdge] = key;
 
+    // Use EdgeLayoutResolver::isNodeMoved() for consistent movedNodes check
     auto shouldUpdateNode = [&movedNodes](NodeId nid) -> bool {
-        return movedNodes.empty() || movedNodes.count(nid) > 0;
+        return EdgeLayoutResolver::isNodeMoved(&movedNodes, nid);
     };
 
     auto nodeIt = nodeLayouts.find(nodeId);
@@ -289,27 +288,29 @@ void SnapPositionUpdater::calculateSnapPositionsForNodeEdge(
         LOG_DEBUG("[SNAP-SYNC-DEBUG]   CALCULATED: snapPoint=({},{}) candidateIndex={}",
                   snapPoint.x, snapPoint.y, candidateIndex);
 
-        // NOTE: snapIndex is no longer stored - position is the source of truth
+        // SSOT Architecture: Only update snapIndex here.
+        // snapPoint will be computed later by EdgeLayoutResolver::resolveSnapPointsOnly()
+        // This ensures snapIndex is the Single Source of Truth.
         if (!nodeHasMoved) {
             if (thisEdgeNeedsNewIndex) {
                 if (isSource) {
-                    layout.setSourceSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
+                    layout.sourceSnapIndex = candidateIndex;
                 } else {
-                    layout.setTargetSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
+                    layout.targetSnapIndex = candidateIndex;
                 }
-                LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (needsNewIndex): snapPoint=({},{}) candidateIndex={}",
-                          snapPoint.x, snapPoint.y, candidateIndex);
+                LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED snapIndex only (needsNewIndex): candidateIndex={}",
+                          candidateIndex);
             } else {
                 LOG_DEBUG("[SNAP-SYNC-DEBUG]   SKIPPED: nodeHasMoved=false and !thisEdgeNeedsNewIndex");
             }
         } else {
             if (isSource) {
-                layout.setSourceSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
+                layout.sourceSnapIndex = candidateIndex;
             } else {
-                layout.setTargetSnap(candidateIndex, snapPoint);  // SSOT: snapIndex and Point synchronized
+                layout.targetSnapIndex = candidateIndex;
             }
-            LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED (nodeHasMoved): snapPoint=({},{}) candidateIndex={}",
-                      snapPoint.x, snapPoint.y, candidateIndex);
+            LOG_DEBUG("[SNAP-SYNC-DEBUG]   UPDATED snapIndex only (nodeHasMoved): candidateIndex={}",
+                      candidateIndex);
         }
 
         if (needsRedistribution) {
@@ -404,138 +405,85 @@ SnapUpdateResult SnapPositionUpdater::updateSnapPositions(
     result.processedEdges.insert(affectedEdges.begin(), affectedEdges.end());
     result.processedEdges.insert(result.redistributedEdges.begin(), result.redistributedEdges.end());
 
-    // Check for bidirectional edges
-    std::unordered_set<EdgeId> bidirectionalEdges;
-    auto edgeMap = buildEdgeMapFromLayouts<EdgeRoutingUtils::PairHash>(edgeLayouts);
+    // ==========================================================================
+    // Phase 4: Resolve derived fields from snapIndex (SSOT Architecture)
+    // ==========================================================================
+    //
+    // Two execution paths based on skipBendPointRecalc:
+    //
+    // Path A (skipBendPointRecalc=false):
+    //   Full atomic resolution via EdgeLayoutResolver
+    //   → snapPoint + bendPoints + labelPosition computed together
+    //   → Used for final edge updates (drop events, initial layout)
+    //
+    // Path B (skipBendPointRecalc=true):
+    //   SnapPoints only + optimizer handles bendPoints
+    //   → Used during drag (optimizer provides real-time feedback)
+    //
+    // ==========================================================================
 
+    if (!skipBendPointRecalc) {
+        // Path A: Full atomic resolution
+        // EdgeLayoutResolver computes all derived fields atomically
+        std::vector<EdgeId> processedEdgesList(result.processedEdges.begin(), result.processedEdges.end());
+        auto failedEdges = EdgeLayoutResolver::resolveEdgesWithRetry(
+            edgeLayouts, processedEdgesList, nodeLayouts,
+            gridSizeToUse, pathFinder_, &movedNodes);
+
+        if (!failedEdges.empty()) {
+            LOG_WARN("[SNAP-SYNC] {} edges failed atomic resolution", failedEdges.size());
+        }
+        LOG_DEBUG("[SNAP-SYNC] Atomically resolved {} edges via EdgeLayoutResolver",
+                  result.processedEdges.size() - failedEdges.size());
+
+        return result;
+    }
+
+    // Path B: SnapPoints only (optimizer handles bendPoints)
+    // Step 1: Resolve snapPoints from snapIndex
+    int resolvedCount = 0;
+    int failedCount = 0;
     for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
         if (it == edgeLayouts.end()) continue;
 
-        auto reverseIt = edgeMap.find({it->second.to, it->second.from});
-        if (reverseIt != edgeMap.end()) {
-            bidirectionalEdges.insert(edgeId);
+        auto resolveResult = EdgeLayoutResolver::resolveSnapPointsOnly(
+            it->second, nodeLayouts, gridSizeToUse, &movedNodes);
+        if (resolveResult.success) {
+            ++resolvedCount;
+        } else {
+            ++failedCount;
+            LOG_WARN("[SNAP-SYNC] Edge {} failed to resolve snapPoints: {}",
+                     edgeId, resolveResult.error);
         }
     }
+    LOG_DEBUG("[SNAP-SYNC] Resolved snapPoints only for {} edges ({} failed)",
+              resolvedCount, failedCount);
 
-    // Phase 4: Recalculate bend points
-    if (skipBendPointRecalc) {
+    // Step 2: Regenerate bendPoints via optimizer
+    if (edgeOptimizer) {
         std::unordered_set<EdgeId> affectedSet(affectedEdges.begin(), affectedEdges.end());
         std::vector<EdgeId> edgesToRegenerate;
 
         for (EdgeId edgeId : affectedEdges) {
             edgesToRegenerate.push_back(edgeId);
         }
-
         for (EdgeId edgeId : result.redistributedEdges) {
             if (affectedSet.find(edgeId) == affectedSet.end()) {
                 edgesToRegenerate.push_back(edgeId);
             }
         }
 
-        if (edgeOptimizer && !edgesToRegenerate.empty()) {
+        if (!edgesToRegenerate.empty()) {
             edgeOptimizer->regenerateBendPoints(edgesToRegenerate, edgeLayouts, nodeLayouts, gridSizeToUse);
         }
-
-        for (EdgeId edgeId : result.processedEdges) {
-            auto it = edgeLayouts.find(edgeId);
-            if (it != edgeLayouts.end()) {
-                it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
-            }
-        }
-        return result;
     }
 
-    // Build "other edges" map for overlap detection
-    std::unordered_map<EdgeId, EdgeLayout> otherEdges;
-    for (const auto& [edgeId, layout] : edgeLayouts) {
-        if (result.processedEdges.find(edgeId) == result.processedEdges.end()) {
-            otherEdges[edgeId] = layout;
-        }
-    }
-
-    // Process each edge - movedNodes constraint is enforced at source level in UnifiedRetryChain
+    // Step 3: Update label positions
     for (EdgeId edgeId : result.processedEdges) {
         auto it = edgeLayouts.find(edgeId);
-        if (it == edgeLayouts.end()) continue;
-
-        // 1. A* pathfinding (movedNodes constraint enforced at source level)
-        recalcFunc_(it->second, nodeLayouts, gridSizeToUse, &otherEdges, &movedNodes);
-
-        // 2. Diagonal detection and fix
-        bool needsRetry = false;
-        if (it->second.bendPoints.empty()) {
-            float dx = std::abs(it->second.sourcePoint.x - it->second.targetPoint.x);
-            float dy = std::abs(it->second.sourcePoint.y - it->second.targetPoint.y);
-            needsRetry = (dx > 1.0f && dy > 1.0f);
-        } else {
-            float dx_src = std::abs(it->second.sourcePoint.x - it->second.bendPoints[0].position.x);
-            float dy_src = std::abs(it->second.sourcePoint.y - it->second.bendPoints[0].position.y);
-            const auto& lastBend = it->second.bendPoints.back();
-            float dx_tgt = std::abs(lastBend.position.x - it->second.targetPoint.x);
-            float dy_tgt = std::abs(lastBend.position.y - it->second.targetPoint.y);
-            needsRetry = (dx_src > 1.0f && dy_src > 1.0f) || (dx_tgt > 1.0f && dy_tgt > 1.0f);
-        }
-
-        if (needsRetry) {
-            bool srcMoved = movedNodes.empty() || movedNodes.count(it->second.from) > 0;
-            bool tgtMoved = movedNodes.empty() || movedNodes.count(it->second.to) > 0;
-            if (srcMoved || tgtMoved) {
-                detectFixFunc_(edgeId, edgeLayouts, nodeLayouts, movedNodes, gridSizeToUse, otherEdges);
-            }
-        }
-
-        // 3. PathCleanup
-        std::vector<Point> fullPath;
-        fullPath.push_back(it->second.sourcePoint);
-        for (const auto& bp : it->second.bendPoints) {
-            fullPath.push_back(bp.position);
-        }
-        fullPath.push_back(it->second.targetPoint);
-        PathCleanup::removeSpikesAndDuplicates(fullPath);
-        it->second.bendPoints.clear();
-        for (size_t i = 1; i + 1 < fullPath.size(); ++i) {
-            it->second.bendPoints.push_back({fullPath[i]});
-        }
-
-
-        // 4. Direction validation
-        bool directionWasFixed = validateFixFunc_(it->second, gridSizeToUse);
-        if (directionWasFixed) {
-            // Recalculate with movedNodes constraint enforced at source level
-            recalcFunc_(it->second, nodeLayouts, gridSizeToUse, &otherEdges, &movedNodes);
-        }
-
-        // 5. Update other edges
-        otherEdges[edgeId] = it->second;
-
-        // 6. Update label
-        it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
-    }
-
-    // Note: endpoint restore removed - movedNodes constraint is now enforced at source level
-    // in UnifiedRetryChain, ensuring endpoints are never modified for unmoved nodes.
-
-    // Full re-route handling - delegate to optimizer instead of direct pathfinding
-    if (result.needsFullReroute && !result.edgesNeedingReroute.empty() && edgeOptimizer) {
-        std::vector<EdgeId> edgesToReroute;
-        for (EdgeId edgeId : affectedEdges) {
-            if (edgeLayouts.find(edgeId) != edgeLayouts.end()) {
-                edgesToReroute.push_back(edgeId);
-            }
-        }
-
-        if (!edgesToReroute.empty()) {
-            // Use optimizer for path regeneration (single source of truth)
-            edgeOptimizer->regenerateBendPoints(edgesToReroute, edgeLayouts, nodeLayouts, gridSizeToUse);
-
-            // Update label positions after regeneration
-            for (EdgeId edgeId : edgesToReroute) {
-                auto it = edgeLayouts.find(edgeId);
-                if (it != edgeLayouts.end()) {
-                    it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
-                }
-            }
+        if (it != edgeLayouts.end()) {
+            it->second.labelPosition = LayoutUtils::calculateEdgeLabelPosition(it->second);
         }
     }
 

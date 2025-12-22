@@ -87,6 +87,12 @@ public:
     /// @return Optimal label position
     static Point calculateEdgeLabelPosition(const EdgeLayout& edge);
 
+    /// Check if an edge passes through a node's bounding box
+    /// @param edge The edge layout to check
+    /// @param node The node layout to check against
+    /// @return true if any segment of the edge intersects the node
+    static bool edgePassesThroughNode(const EdgeLayout& edge, const NodeLayout& node);
+
     // ========== Direction Helpers ==========
 
     /// Get required exit direction from source node edge

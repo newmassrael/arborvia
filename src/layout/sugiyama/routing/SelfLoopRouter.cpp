@@ -280,8 +280,10 @@ EdgeLayout SelfLoopRouter::route(
     int tgtSnapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
         nodeLayout, layout.targetEdge, tgtPos, gridSize);
     
-    layout.setSourceSnap(srcSnapIdx, srcPos);
-    layout.setTargetSnap(tgtSnapIdx, tgtPos);
+    layout.sourceSnapIndex = srcSnapIdx;
+    layout.sourcePoint = srcPos;
+    layout.targetSnapIndex = tgtSnapIdx;
+    layout.targetPoint = tgtPos;
     
     LOG_DEBUG("[SNAP-TRACE] SelfLoopRouter::route edge={} SOURCE pos=({},{}) TARGET pos=({},{})",
               edgeId, layout.sourcePoint.x, layout.sourcePoint.y,

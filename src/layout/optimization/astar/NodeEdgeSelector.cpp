@@ -410,7 +410,8 @@ EdgeLayout NodeEdgeSelector::createCandidateLayout(
                 srcIt->second, base.sourceEdge, base.sourcePoint, gridSize);
             Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 srcIt->second, sourceEdge, candidateIdx, gridSize);
-            candidate.setSourceSnap(candidateIdx, derivedPoint);
+            candidate.sourceSnapIndex = candidateIdx;
+            candidate.sourcePoint = derivedPoint;
         }
         startGrid = {
             static_cast<int>(std::round(candidate.sourcePoint.x / gridSize)),
@@ -423,7 +424,8 @@ EdgeLayout NodeEdgeSelector::createCandidateLayout(
         int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
         Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             srcIt->second, sourceEdge, selectedIdx, gridSize);
-        candidate.setSourceSnap(selectedIdx, snapPoint);
+        candidate.sourceSnapIndex = selectedIdx;
+        candidate.sourcePoint = snapPoint;
         startGrid = obstacles.pixelToGrid(candidate.sourcePoint);
     }
     
@@ -434,7 +436,8 @@ EdgeLayout NodeEdgeSelector::createCandidateLayout(
                 tgtIt->second, base.targetEdge, base.targetPoint, gridSize);
             Point derivedPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 tgtIt->second, targetEdge, candidateIdx, gridSize);
-            candidate.setTargetSnap(candidateIdx, derivedPoint);
+            candidate.targetSnapIndex = candidateIdx;
+            candidate.targetPoint = derivedPoint;
         }
         goalGrid = {
             static_cast<int>(std::round(candidate.targetPoint.x / gridSize)),
@@ -447,11 +450,13 @@ EdgeLayout NodeEdgeSelector::createCandidateLayout(
         int selectedIdx = SnapIndexManager::findFirstUnusedIndex(candidateCount, usedIndices);
         Point snapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
             tgtIt->second, targetEdge, selectedIdx, gridSize);
-        candidate.setTargetSnap(selectedIdx, snapPoint);
+        candidate.targetSnapIndex = selectedIdx;
+        candidate.targetPoint = snapPoint;
         goalGrid = obstacles.pixelToGrid(candidate.targetPoint);
     }
 
-    LOG_DEBUG("[CALLER:NodeEdgeSelector.cpp] A* findPath called");
+    LOG_DEBUG("[CALLER:NodeEdgeSelector.cpp] A* findPath called for edge {}->{} srcEdge={} tgtEdge={}",
+              base.from, base.to, static_cast<int>(sourceEdge), static_cast<int>(targetEdge));
     PathResult pathResult = pathFinder.findPath(
         startGrid, goalGrid, obstacles,
         base.from, base.to,
@@ -459,13 +464,44 @@ EdgeLayout NodeEdgeSelector::createCandidateLayout(
         {}, {});
 
     if (!pathResult.found || pathResult.path.size() < 2) {
+        LOG_DEBUG("[ROOT-CAUSE] A* path NOT found for edge {}->{}", base.from, base.to);
         return candidate;
     }
+
+    LOG_DEBUG("[ROOT-CAUSE] A* path found for edge {}->{}. pathLen={} startGrid=({},{}) goalGrid=({},{})",
+              base.from, base.to, pathResult.path.size(),
+              startGrid.x, startGrid.y, goalGrid.x, goalGrid.y);
 
     for (size_t i = 1; i + 1 < pathResult.path.size(); ++i) {
         Point pixelPoint = obstacles.gridToPixel(
             pathResult.path[i].x, pathResult.path[i].y);
         candidate.bendPoints.push_back({pixelPoint});
+        LOG_DEBUG("[ROOT-CAUSE]   bendPoint[{}] = grid({},{}) -> pixel({},{})",
+                  i - 1, pathResult.path[i].x, pathResult.path[i].y,
+                  pixelPoint.x, pixelPoint.y);
+    }
+
+    // Log the path before returning
+    LOG_DEBUG("[ROOT-CAUSE] Final candidate: srcPt=({},{}) bendPts={} tgtPt=({},{})",
+              candidate.sourcePoint.x, candidate.sourcePoint.y,
+              candidate.bendPoints.size(),
+              candidate.targetPoint.x, candidate.targetPoint.y);
+
+    // Check first segment for diagonal
+    if (!candidate.bendPoints.empty()) {
+        float dx = candidate.bendPoints[0].position.x - candidate.sourcePoint.x;
+        float dy = candidate.bendPoints[0].position.y - candidate.sourcePoint.y;
+        if (std::abs(dx) > 1.0f && std::abs(dy) > 1.0f) {
+            LOG_WARN("[ROOT-CAUSE] DIAGONAL detected in A* result! edge {}->{} srcEdge={} dx={} dy={}",
+                      base.from, base.to, static_cast<int>(sourceEdge), dx, dy);
+        }
+    } else {
+        float dx = candidate.targetPoint.x - candidate.sourcePoint.x;
+        float dy = candidate.targetPoint.y - candidate.sourcePoint.y;
+        if (std::abs(dx) > 1.0f && std::abs(dy) > 1.0f) {
+            LOG_WARN("[ROOT-CAUSE] DIAGONAL (no bends)! edge {}->{} srcEdge={} dx={} dy={}",
+                      base.from, base.to, static_cast<int>(sourceEdge), dx, dy);
+        }
     }
 
     pathFound = true;

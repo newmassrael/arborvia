@@ -361,8 +361,9 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
             
             Point newSnapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 srcNode, originalLayout.sourceEdge, newIndex, gridSize);
-            
-            workingLayout.setSourceSnap(newIndex, newSnapPoint);
+
+            workingLayout.sourceSnapIndex = newIndex;
+            workingLayout.sourcePoint = newSnapPoint;
             
             LOG_DEBUG("[UnifiedRetryChain] Edge {} trying source snapIndex {} (was {})",
                       edgeId, newIndex, originalLayout.sourceSnapIndex);
@@ -396,8 +397,9 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::trySnapPointVariations(
             
             Point newSnapPoint = GridSnapCalculator::getPositionFromCandidateIndex(
                 tgtNode, originalLayout.targetEdge, newIndex, gridSize);
-            
-            workingLayout.setTargetSnap(newIndex, newSnapPoint);
+
+            workingLayout.targetSnapIndex = newIndex;
+            workingLayout.targetPoint = newSnapPoint;
             
             LOG_DEBUG("[UnifiedRetryChain] Edge {} trying target snapIndex {} (was {})",
                       edgeId, newIndex, originalLayout.targetSnapIndex);
@@ -513,10 +515,12 @@ UnifiedRetryChain::RetryResult UnifiedRetryChain::tryNodeEdgeSwitch(
             workingLayout.sourceEdge = srcEdge;
             workingLayout.targetEdge = tgtEdge;
             if (canModifySource) {
-                workingLayout.setSourceSnap(srcCandidateIdx, newSrc);
+                workingLayout.sourceSnapIndex = srcCandidateIdx;
+                workingLayout.sourcePoint = newSrc;
             }
             if (canModifyTarget) {
-                workingLayout.setTargetSnap(tgtCandidateIdx, newTgt);
+                workingLayout.targetSnapIndex = tgtCandidateIdx;
+                workingLayout.targetPoint = newTgt;
             }
 
             // Step 4a: Try A*

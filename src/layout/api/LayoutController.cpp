@@ -1,4 +1,5 @@
 #include "arborvia/layout/api/LayoutController.h"
+#include "arborvia/layout/api/EdgeRoutingService.h"
 #include "arborvia/layout/util/LayoutUtils.h"
 #include "arborvia/layout/constraints/PositionFinder.h"
 #include "arborvia/core/GeometryUtils.h"
@@ -34,6 +35,8 @@ LayoutController::LayoutController(const Graph& graph, const LayoutOptions& opti
     
     positionFinder_ = std::make_unique<PositionFinder>(
         PositionFinderConfig{gridSize, CONSTRAINT_SEARCH_RADIUS, gridSize, CONSTRAINT_MAX_ITERATIONS});
+
+    edgeRoutingService_ = std::make_unique<EdgeRoutingService>();
 }
 
 LayoutController::~LayoutController() = default;
@@ -238,7 +241,8 @@ NodeMoveResult LayoutController::setNodeType(NodeId nodeId, NodeType newType) {
         // so they work for both Point and Regular nodes
         if (srcNode.isPointNode()) {
             edge.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(srcNode, tgtNode);
-            edge.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, srcNode.center());
+            edge.sourceSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+            edge.sourcePoint = srcNode.center();
         } else if (edge.from == nodeId) {
             // Source was converted to Regular: recalculate sourceEdge
             edge.sourceEdge = LayoutUtils::calculateSourceEdgeForPointNode(srcNode, tgtNode);
@@ -247,7 +251,8 @@ NodeMoveResult LayoutController::setNodeType(NodeId nodeId, NodeType newType) {
 
         if (tgtNode.isPointNode()) {
             edge.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(srcNode, tgtNode);
-            edge.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, tgtNode.center());
+            edge.targetSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+            edge.targetPoint = tgtNode.center();
         } else if (edge.to == nodeId) {
             // Target was converted to Regular: recalculate targetEdge
             edge.targetEdge = LayoutUtils::calculateTargetEdgeForPointNode(srcNode, tgtNode);
@@ -344,10 +349,22 @@ void LayoutController::updateEdgeRouting(
     const std::vector<EdgeId>& affectedEdges,
     const std::unordered_set<NodeId>& movedNodes) {
 
+    // Use EdgeRoutingService for unified edge routing with constraint validation
     // LayoutController::moveNode()는 항상 "드롭"으로 간주
     // postDragAlgorithm 사용 (dragAlgorithm이 HideUntilDrop이어도 올바르게 동작)
-    LayoutUtils::updateEdgePositions(
+    auto result = edgeRoutingService_->updateAfterNodeMove(
         edgeLayouts_, nodeLayouts_, affectedEdges, options_, movedNodes);
+
+    // Update edge layouts with validated results
+    for (auto& [edgeId, validated] : result.validatedLayouts) {
+        edgeLayouts_[edgeId] = std::move(validated).extract();
+    }
+
+    // Log rejected edges (they will be removed from edgeLayouts)
+    for (EdgeId rejected : result.rejectedEdges) {
+        LOG_ERROR("[LayoutController] Edge {} REJECTED - failed constraint validation", rejected);
+        edgeLayouts_.erase(rejected);
+    }
 }
 
 std::vector<EdgeId> LayoutController::getConnectedEdges(NodeId nodeId) const {

@@ -4,6 +4,7 @@
 #include "arborvia/layout/api/ICrossingMinimization.h"
 #include "arborvia/layout/api/ICoordinateAssignment.h"
 #include "arborvia/layout/api/IPathFinder.h"
+#include "arborvia/layout/api/EdgeRoutingService.h"
 #include "arborvia/layout/constraints/ConstraintGateway.h"
 #include "arborvia/layout/constraints/ValidatedEdgeLayout.h"
 #include "arborvia/common/Logger.h"
@@ -363,49 +364,26 @@ void SugiyamaLayout::assignCoordinates() {
 }
 
 void SugiyamaLayout::routeEdges() {
-    // Create EdgeRouting with injected pathfinder if available
-    EdgeRouting routing(pathFinder_);
+    // Use EdgeRoutingService for unified edge routing with constraint validation
+    EdgeRoutingService service(pathFinder_);
+    auto result = service.routeInitial(
+        *state_->graph, state_->result.nodeLayouts(),
+        state_->reversedEdges, options_);
 
-    // === Integrated Pipeline for Constraint Satisfaction ===
-    // 1. Create initial layouts WITHOUT optimization (snap positions not final yet)
-    auto result = routing.route(*state_->graph,
-                               state_->result.nodeLayouts(),
-                               state_->reversedEdges,
-                               options_,
-                               true);  // skipOptimization=true
+    // Store validated layouts and calculate edge length stats
+    for (auto& [id, validated] : result.validatedLayouts) {
+        // Calculate edge length for stats (before moving)
+        auto points = validated.get().allPoints();
+        for (size_t i = 1; i < points.size(); ++i) {
+            stats_.totalEdgeLength += points[i].distanceTo(points[i - 1]);
+        }
 
-    // 2. Distribute snap points (assigns snapIndex - the Single Source of Truth)
-    //    Optimizer will preserve these indices when possible
-    if (options_.autoSnapPoints) {
-        routing.distributeAutoSnapPoints(
-            result, state_->result.nodeLayouts(),
-            options_.gridConfig.cellSize);
+        state_->result.setEdgeLayout(id, std::move(validated));
     }
 
-    // 3. Run optimizer (may change NodeEdge, sets snapIndex=-1 when NodeEdge changes)
-    //    When snapIndex is valid, optimizer preserves it and derives positions from it
-    routing.optimizeRouting(result, state_->result.nodeLayouts(), options_);
-
-    // Use validated path to enforce constraint checking
-    float gridSize = constants::effectiveGridSize(options_.gridConfig.cellSize);
-    ConstraintGateway gateway;
-    EdgeConstraintContext ctx{result.edgeLayouts, state_->result.nodeLayouts(), gridSize, 1.0f};
-    
-    for (auto& [id, layout] : result.edgeLayouts) {
-        auto validated = gateway.validateAndWrapRelaxed(layout, ctx);
-        if (validated) {
-            state_->result.setEdgeLayout(id, std::move(*validated));
-            
-            // Calculate edge length for stats (only for validated edges)
-            auto points = layout.allPoints();
-            for (size_t i = 1; i < points.size(); ++i) {
-                stats_.totalEdgeLength += points[i].distanceTo(points[i - 1]);
-            }
-        } else {
-            // Validation failed - this is a BUG in the routing/optimizer
-            // Do NOT store invalid layout - fix the routing/optimizer instead
-            LOG_ERROR("[SugiyamaLayout] Edge {} REJECTED - failed hard constraint validation after routing", id);
-        }
+    // Log rejected edges
+    for (EdgeId rejected : result.rejectedEdges) {
+        LOG_ERROR("[SugiyamaLayout] Edge {} REJECTED - failed hard constraint validation after routing", rejected);
     }
 }
 

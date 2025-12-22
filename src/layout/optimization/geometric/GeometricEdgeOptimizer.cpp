@@ -109,8 +109,11 @@ std::unordered_map<EdgeId, EdgeLayout> GeometricEdgeOptimizer::optimize(
         EdgeLayout finalLayout = baseLayout;
         finalLayout.sourceEdge = best.layout.sourceEdge;
         finalLayout.targetEdge = best.layout.targetEdge;
-        // Copy snap state from best candidate (preserves SSOT)
-        finalLayout.copySnapStateFrom(best.layout);
+        // Copy snap state from best candidate
+        finalLayout.sourceSnapIndex = best.layout.sourceSnapIndex;
+        finalLayout.sourcePoint = best.layout.sourcePoint;
+        finalLayout.targetSnapIndex = best.layout.targetSnapIndex;
+        finalLayout.targetPoint = best.layout.targetPoint;
         finalLayout.bendPoints = best.layout.bendPoints;
 
         result[edgeId] = finalLayout;
@@ -258,7 +261,8 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         // Calculate snapIndex for new position
         int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
             srcIt->second, sourceEdge, sourcePoint, effectiveGridSize);
-        candidate.setSourceSnap(snapIdx, sourcePoint);
+        candidate.sourceSnapIndex = snapIdx;
+        candidate.sourcePoint = sourcePoint;
     }
 
     if (tgtFixed && targetEdge == base.targetEdge) {
@@ -267,7 +271,8 @@ EdgeLayout GeometricEdgeOptimizer::createCandidateLayout(
         // Calculate snapIndex for new position
         int snapIdx = GridSnapCalculator::getCandidateIndexFromPosition(
             tgtIt->second, targetEdge, targetPoint, effectiveGridSize);
-        candidate.setTargetSnap(snapIdx, targetPoint);
+        candidate.targetSnapIndex = snapIdx;
+        candidate.targetPoint = targetPoint;
     }
 
     candidate.bendPoints = std::move(bendPoints);

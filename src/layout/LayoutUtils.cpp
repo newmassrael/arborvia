@@ -85,18 +85,18 @@ namespace {
         return false;
     }
 
-    // Check if any segment of an edge passes through a node's bounding box
-    bool edgePassesThroughNode(const EdgeLayout& edge, const NodeLayout& node) {
-        bool passes = false;
-        edge.forEachSegment([&](const Point& p1, const Point& p2) {
-            if (!passes && segmentIntersectsRect(p1, p2,
-                    node.position.x, node.position.y,
-                    node.size.width, node.size.height)) {
-                passes = true;
-            }
-        });
-        return passes;
-    }
+}  // namespace
+
+bool LayoutUtils::edgePassesThroughNode(const EdgeLayout& edge, const NodeLayout& node) {
+    bool passes = false;
+    edge.forEachSegment([&](const Point& p1, const Point& p2) {
+        if (!passes && segmentIntersectsRect(p1, p2,
+                node.position.x, node.position.y,
+                node.size.width, node.size.height)) {
+            passes = true;
+        }
+    });
+    return passes;
 }
 
 // ========== Edge Position Updates ==========
@@ -169,9 +169,18 @@ void LayoutUtils::updateEdgePositions(
               static_cast<int>(postDropOptions.optimizationOptions.dragAlgorithm),
               affectedEdges.size(), movedNodes.size());
     for (EdgeId edgeId : affectedEdges) {
-        LOG_DEBUG("[LayoutUtils::updateEdgePositions] affectedEdge={}", edgeId);
+        auto it = edgeLayouts.find(edgeId);
+        if (it != edgeLayouts.end()) {
+            const auto& layout = it->second;
+            LOG_DEBUG("[ROOT-CAUSE] BEFORE optimization: edge={} from={} to={} srcEdge={} tgtEdge={} srcPt=({},{}) tgtPt=({},{}) bendPts={}",
+                      edgeId, layout.from, layout.to,
+                      static_cast<int>(layout.sourceEdge), static_cast<int>(layout.targetEdge),
+                      layout.sourcePoint.x, layout.sourcePoint.y,
+                      layout.targetPoint.x, layout.targetPoint.y,
+                      layout.bendPoints.size());
+        }
     }
-    
+
     // First pass: update directly affected edges (connected to moved nodes)
     routing.updateEdgeRoutingWithOptimization(
         edgeLayouts, nodeLayouts, affectedEdges, postDropOptions, movedNodes);
@@ -835,10 +844,12 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
               static_cast<int>(newEdge), newSnapIndex);
 
     if (isSource) {
-        edge.setSourceSnap(newSnapIndex, result.actualPosition);  // SSOT: snapIndex and Point synchronized
+        edge.sourceSnapIndex = newSnapIndex;
+        edge.sourcePoint = result.actualPosition;
         edge.sourceEdge = newEdge;
     } else {
-        edge.setTargetSnap(newSnapIndex, result.actualPosition);  // SSOT: snapIndex and Point synchronized
+        edge.targetSnapIndex = newSnapIndex;
+        edge.targetPoint = result.actualPosition;
         edge.targetEdge = newEdge;
     }
 
@@ -852,10 +863,12 @@ LayoutUtils::SnapMoveResult LayoutUtils::moveSnapPoint(
         int originalSnapIndex = GridSnapCalculator::getCandidateIndexFromPosition(
             node, originalEdge, originalPosition, gridSize);
         if (swapIsSource) {
-            swapEdge.setSourceSnap(originalSnapIndex, originalPosition);
+            swapEdge.sourceSnapIndex = originalSnapIndex;
+            swapEdge.sourcePoint = originalPosition;
             swapEdge.sourceEdge = originalEdge;
         } else {
-            swapEdge.setTargetSnap(originalSnapIndex, originalPosition);
+            swapEdge.targetSnapIndex = originalSnapIndex;
+            swapEdge.targetPoint = originalPosition;
             swapEdge.targetEdge = originalEdge;
         }
         result.redistributedEdges.push_back(swapEdgeId);
@@ -1055,9 +1068,11 @@ std::vector<EdgeId> LayoutUtils::redistributeSnapPoints(
                                              : edgeIt->second.targetSnapIndex;
         if (currentSnapIndex != newSnapIndex) {
             if (snap.isSource) {
-                edgeIt->second.setSourceSnap(newSnapIndex, newSnapPos);
+                edgeIt->second.sourceSnapIndex = newSnapIndex;
+                edgeIt->second.sourcePoint = newSnapPos;
             } else {
-                edgeIt->second.setTargetSnap(newSnapIndex, newSnapPos);
+                edgeIt->second.targetSnapIndex = newSnapIndex;
+                edgeIt->second.targetPoint = newSnapPos;
             }
             redistributed.push_back(snap.edgeId);
         }

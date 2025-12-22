@@ -18,6 +18,7 @@ namespace arborvia {
 // Forward declarations
 class IEdgeOptimizer;
 class PositionFinder;
+class EdgeRoutingService;
 
 /// Result of a node move operation
 struct NodeMoveResult {
@@ -183,6 +184,7 @@ private:
 
     std::unique_ptr<IConstraintValidator> constraintManager_;
     std::unique_ptr<PositionFinder> positionFinder_;
+    std::unique_ptr<EdgeRoutingService> edgeRoutingService_;
 
     // Saved sizes for nodes converted to Point type (for restoration when converting back)
     std::unordered_map<NodeId, Size> savedSizesBeforePointConversion_;

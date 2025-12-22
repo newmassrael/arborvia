@@ -191,6 +191,25 @@ void DragOptimizationHandler::updateEdgeRoutingWithOptimization(
                               edgeId, layout.sourcePoint.x, layout.sourcePoint.y,
                               layout.bendPoints.size(),
                               layout.targetPoint.x, layout.targetPoint.y);
+
+                    // [ROOT-CAUSE] Check first segment direction matches sourceEdge
+                    Point firstSegEnd = layout.bendPoints.empty()
+                        ? layout.targetPoint
+                        : layout.bendPoints.front().position;
+                    float dxFirst = firstSegEnd.x - layout.sourcePoint.x;
+                    float dyFirst = firstSegEnd.y - layout.sourcePoint.y;
+                    bool isDiagonal = (std::abs(dxFirst) > 1.0f && std::abs(dyFirst) > 1.0f);
+
+                    if (isDiagonal) {
+                        LOG_WARN("[ROOT-CAUSE] Edge {} DIAGONAL FIRST SEGMENT! srcEdge={} srcPt=({},{}) -> ({},{}) dx={} dy={}",
+                                  edgeId, static_cast<int>(layout.sourceEdge),
+                                  layout.sourcePoint.x, layout.sourcePoint.y,
+                                  firstSegEnd.x, firstSegEnd.y, dxFirst, dyFirst);
+                    } else {
+                        LOG_DEBUG("[ROOT-CAUSE] Edge {} first segment OK: srcEdge={} dx={} dy={}",
+                                  edgeId, static_cast<int>(layout.sourceEdge), dxFirst, dyFirst);
+                    }
+
                     it->second = layout;
                 }
             }

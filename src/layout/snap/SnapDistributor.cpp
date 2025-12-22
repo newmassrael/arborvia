@@ -65,11 +65,13 @@ void SnapDistributor::distribute(
             for (const auto& [edgeId, isSource] : connections) {
                 EdgeLayout& layout = result.edgeLayouts[edgeId];
                 if (isSource) {
-                    layout.setSourceSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, center);
+                    layout.sourceSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+                    layout.sourcePoint = center;
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE PointNode={} center=({},{})",
                               edgeId, nodeId, center.x, center.y);
                 } else {
-                    layout.setTargetSnap(constants::SNAP_INDEX_POINT_NODE_CENTER, center);
+                    layout.targetSnapIndex = constants::SNAP_INDEX_POINT_NODE_CENTER;
+                    layout.targetPoint = center;
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET PointNode={} center=({},{})",
                               edgeId, nodeId, center.x, center.y);
                 }
@@ -86,14 +88,16 @@ void SnapDistributor::distribute(
             for (const auto& assignment : assignments) {
                 EdgeLayout& layout = result.edgeLayouts[assignment.edgeId];
 
-                // SSOT: Use setter methods to ensure snapIndex and Point are synchronized
+                // SSOT: Update snapIndex and Point together
                 if (assignment.isSource) {
-                    layout.setSourceSnap(assignment.candidateIndex, assignment.snapPosition);
+                    layout.sourceSnapIndex = assignment.candidateIndex;
+                    layout.sourcePoint = assignment.snapPosition;
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} SOURCE nodeId={} Manhattan snapIdx={} pos=({},{})",
-                              assignment.edgeId, nodeId, assignment.candidateIndex, 
+                              assignment.edgeId, nodeId, assignment.candidateIndex,
                               assignment.snapPosition.x, assignment.snapPosition.y);
                 } else {
-                    layout.setTargetSnap(assignment.candidateIndex, assignment.snapPosition);
+                    layout.targetSnapIndex = assignment.candidateIndex;
+                    layout.targetPoint = assignment.snapPosition;
                     LOG_DEBUG("[SNAP-TRACE] SnapDistributor edge={} TARGET nodeId={} Manhattan snapIdx={} pos=({},{})",
                               assignment.edgeId, nodeId, assignment.candidateIndex,
                               assignment.snapPosition.x, assignment.snapPosition.y);
